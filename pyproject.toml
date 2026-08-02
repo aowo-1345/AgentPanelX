@@ -1,0 +1,87 @@
+[project]
+name = "agentplanex"
+version = "0.1.0"
+description = "A durable project-control plane for coding agents"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.140.13",
+    "jinja2>=3.1.6",
+    "litellm>=1.83.3,<2",
+    "loguru>=0.7.3",
+    "openai>=2.48,<3",
+    "openai-codex>=0.144.4,<0.145",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+    "uvicorn>=0.52.0",
+]
+
+[project.scripts]
+agentplanex = "agentplanex.cli:main"
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.9.1",
+    "mypy>=1.18.2",
+    "pre-commit>=4.6.0",
+    "pytest>=9.1.1",
+    "ruff>=0.15.20",
+    "types-PyYAML>=6.0.12.20250915",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.21,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "agentplanex"
+module-root = "src"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "SIM",
+    "RUF",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "unit: Unit tests (fast, no external dependencies)",
+    "integration: Integration tests (may require external services)",
+    "e2e: User-facing end-to-end tests (full system tests)",
+    "live_model: Optional credentialed live-model smoke tests",
+    "slow: Slow tests that should be run less frequently",
+]
+addopts = [
+    "-m=not live_model",
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+    "--import-mode=importlib",
+]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+strict = true
+show_error_codes = true
+pretty = true
+warn_unused_configs = true
+
+[tool.pyright]
+include = ["src", "tests"]
+extraPaths = ["src"]
+pythonVersion = "3.12"
