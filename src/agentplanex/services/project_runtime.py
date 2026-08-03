@@ -15,6 +15,7 @@ from agentplanex.domains import (
     ProjectRuntimeContext,
     ToolExecutionResult,
     ToolExecutor,
+    UserInteractionAction,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
 from agentplanex.infrastructure.sqlite.repositories import (
@@ -28,6 +29,7 @@ from agentplanex.project_owner_agent.exception import AgentFlowExit
 from agentplanex.project_owner_agent.interactive import InteractiveAgent
 from agentplanex.project_owner_agent.models.jbb import JBBModel
 from agentplanex.project_owner_agent.tools import ToolCatalog
+from agentplanex.services.planning import PlanningService
 from agentplanex.settings import Settings
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -51,6 +53,7 @@ class ProjectRuntimeService:
     approval_mode: ApprovalMode
     tools: ToolCatalog
     execute_tool: ToolExecutor
+    planning: PlanningService
     contexts: SQLiteProjectRuntimeContextRepository = field(
         default_factory=SQLiteProjectRuntimeContextRepository
     )
@@ -71,6 +74,8 @@ class ProjectRuntimeService:
     def run(self, task: str = "") -> AgentExit:
         """Run one turn, restoring the Owner only on first use."""
         try:
+            if task:
+                self._mark_conversation_started()
             if self._session is None:
                 self._session = self._load_session()
             self._session.agent.run(self._session.context, task)
@@ -86,6 +91,43 @@ class ProjectRuntimeService:
         """Execute one explicit action against the persisted project context."""
         context, _messages = self._load_or_create_state()
         return self.execute_tool(context, action)
+
+    def interact(
+        self,
+        *,
+        action: UserInteractionAction = "message",
+        message: str = "",
+    ) -> AgentExit:
+        """Apply one user interaction and resume the Project Owner."""
+        if action not in {"message", "approve", "reject"}:
+            return self._interaction_error(
+                f"Unsupported user interaction: {action!r}"
+            )
+        if action == "message":
+            if not message.strip():
+                return self._interaction_error("User message must not be empty")
+            self._session = None
+            return self.run(message.strip())
+
+        try:
+            context, _messages = self._load_or_create_state()
+            decision = (
+                self.planning.approve_plan(context.triage_id)
+                if action == "approve"
+                else self.planning.reject_plan(context.triage_id, message)
+            )
+        except Exception as error:
+            return self._interaction_error(f"{type(error).__name__}: {error}")
+
+        self._session = None
+        return self.run(decision.resume_message)
+
+    @staticmethod
+    def _interaction_error(content: str) -> AgentExit:
+        return AgentExit(
+            status=AgentExitStatus.UNHANDLED_EXCEPTION,
+            content=content,
+        )
 
     def _load_session(self) -> _OwnerSession:
         context, messages = self._load_or_create_state()
@@ -136,6 +178,23 @@ class ProjectRuntimeService:
             )
         )
         return _OwnerSession(context=context, agent=agent)
+
+    def _mark_conversation_started(self) -> None:
+        context, _messages = self._load_or_create_state()
+        if context.status != "TRIAGE":
+            return
+        with self._database.transaction() as connection:
+            current = self.contexts.get(connection, context.triage_id)
+            if current is None:
+                raise LookupError(
+                    f"Project Runtime Context not found: {context.triage_id}"
+                )
+            if current.status == "TRIAGE":
+                self.contexts.update(
+                    connection,
+                    replace(current, status="TODO"),
+                )
+        self._session = None
 
     def _load_or_create_state(
         self,

@@ -17,6 +17,7 @@ from agentplanex.domains.tools import (
     ToolExecutor,
     ToolSchema,
 )
+from agentplanex.domains.user_interaction import UserInteractionAction
 
 __all__ = [
     "BASH_TOOL_NAME",
@@ -33,4 +34,5 @@ __all__ = [
     "ToolExecutionResult",
     "ToolExecutor",
     "ToolSchema",
+    "UserInteractionAction",
 ]

@@ -9,18 +9,12 @@ REQUEST_PLAN_APPROVAL_TOOL_SCHEMA: ToolSchema = {
     "type": "function",
     "name": REQUEST_PLAN_APPROVAL_TOOL_NAME,
     "description": (
-        "Commit the updated local specification documents as a named Plan version "
-        "and request human approval."
+        "Request human approval for the current architecture.md, requirements.md, "
+        "and roadmap.md specification documents."
     ),
     "parameters": {
         "type": "object",
-        "properties": {
-            "version_name": {
-                "type": "string",
-                "description": "Human-readable name for the new Plan version.",
-            }
-        },
-        "required": ["version_name"],
+        "properties": {},
         "additionalProperties": False,
     },
     "strict": True,

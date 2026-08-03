@@ -1,9 +1,10 @@
-"""Execute explicit Tool Actions against the local project Runtime."""
+"""Drive Tool Actions and user interactions against a project Runtime."""
 
 import argparse
 import json
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO
 from uuid import uuid4
@@ -15,23 +16,36 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 from const import TARGET_PROJECT  # noqa: E402
 
 from agentplanex.bootstrap import create_project_runtime  # noqa: E402
-from agentplanex.domains import Action, ToolExecutionResult  # noqa: E402
+from agentplanex.domains import (  # noqa: E402
+    Action,
+    AgentExit,
+    AgentExitStatus,
+    ToolExecutionResult,
+    UserInteractionAction,
+)
 
 type ToolRunner = Callable[[Action], ToolExecutionResult]
+type InteractionRunner = Callable[[UserInteractionAction, str], AgentExit]
 type InputReader = Callable[[str], str]
+
+
+@dataclass(frozen=True, slots=True)
+class _Interaction:
+    action: UserInteractionAction
+    message: str = ""
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     action_text = " ".join(args.action).strip()
     if args.print_mode and not action_text:
-        _print_error("Tool action must not be empty")
+        _print_error("Command must not be empty")
         return 2
 
-    action: Action | None = None
+    command: Action | _Interaction | None = None
     if args.print_mode:
         try:
-            action = _parse_action(action_text)
+            command = _parse_command(action_text)
         except ValueError as error:
             _print_error(str(error))
             return 2
@@ -45,9 +59,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         _print_error(str(error))
         return 2
 
-    if action is not None:
-        return _execute_once(runtime.execute_action, action)
-    return _run_interactive(runtime.execute_action, action_text)
+    if isinstance(command, _Interaction):
+        return _interact_once(runtime.interact, command)
+    if command is not None:
+        return _execute_once(runtime.execute_action, command)
+    return _run_interactive(
+        runtime.execute_action,
+        runtime.interact,
+        action_text,
+    )
 
 
 def _execute_once(
@@ -74,6 +94,7 @@ def _execute_once(
 
 def _run_interactive(
     execute_tool: ToolRunner,
+    interact: InteractionRunner,
     initial_action: str = "",
     *,
     read_input: InputReader = input,
@@ -92,12 +113,36 @@ def _run_interactive(
             return 0
 
         try:
-            action = _parse_action(action_text)
+            command = _parse_command(action_text)
         except ValueError as error:
             _print_error(str(error), output=stdout)
         else:
-            _execute_once(execute_tool, action, stdout=stdout)
+            if isinstance(command, _Interaction):
+                _interact_once(interact, command, stdout=stdout)
+            else:
+                _execute_once(execute_tool, command, stdout=stdout)
         action_text = ""
+
+
+def _parse_command(command_text: str) -> Action | _Interaction:
+    stripped = command_text.strip()
+    if stripped.startswith("{"):
+        return _parse_action(stripped)
+    if stripped == "tool" or stripped.startswith("tool "):
+        return _parse_action(stripped.removeprefix("tool").strip())
+
+    command, separator, message = stripped.partition(" ")
+    if command == "approve":
+        if separator:
+            raise ValueError("approve does not accept a message")
+        return _Interaction("approve")
+    if command == "reject":
+        return _Interaction("reject", message.strip())
+    if command == "message":
+        if not message.strip():
+            raise ValueError("message content must not be empty")
+        return _Interaction("message", message.strip())
+    return _Interaction("message", stripped)
 
 
 def _parse_action(action_text: str) -> Action:
@@ -123,6 +168,32 @@ def _parse_action(action_text: str) -> Action:
     elif not isinstance(call_id, str) or not call_id.strip():
         raise ValueError("Tool action 'call_id' must be a non-empty string")
     return parsed
+
+
+def _interact_once(
+    interact: InteractionRunner,
+    interaction: _Interaction,
+    *,
+    stdout: TextIO | None = None,
+) -> int:
+    output = stdout if stdout is not None else sys.stdout
+    result = interact(interaction.action, interaction.message)
+    succeeded = result.status is not AgentExitStatus.UNHANDLED_EXCEPTION
+    print(
+        json.dumps(
+            {
+                "action": interaction.action,
+                "ok": succeeded,
+                "result": {
+                    "status": result.status.value,
+                    "content": result.content,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        file=output,
+    )
+    return 0 if succeeded else 1
 
 
 def _succeeded(result: ToolExecutionResult) -> bool:
@@ -181,7 +252,7 @@ def _print_result(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Execute Tool Actions against a project Runtime"
+        description="Debug Tool Actions and user interactions against a project Runtime"
     )
     parser.add_argument("action", nargs="*")
     parser.add_argument(
@@ -189,7 +260,7 @@ def _parser() -> argparse.ArgumentParser:
         "--print",
         dest="print_mode",
         action="store_true",
-        help="execute one Tool Action and exit",
+        help="execute one command and exit",
     )
     parser.add_argument("--cwd", type=Path, default=TARGET_PROJECT)
     return parser

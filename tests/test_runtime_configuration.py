@@ -170,7 +170,10 @@ def test_project_executions_expose_and_dispatch_bash(
         {"tool": "bash", "arguments": {"command": "pwd"}},
     )
 
-    assert [tool.name for tool in executions.tools.tools] == ["bash"]
+    assert [tool.name for tool in executions.tools.tools] == [
+        "bash",
+        "request_plan_approval",
+    ]
     assert result.output["returncode"] == 0
     assert result.output["output"].strip() == str(project_path.resolve())
 

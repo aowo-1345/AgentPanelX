@@ -10,3 +10,4 @@ class SummaryHistory:
     project_owner_session_id: str
     summary_id: str
     summary_content: str
+    covered_through_message_id: str | None = None

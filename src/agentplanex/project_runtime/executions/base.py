@@ -13,6 +13,7 @@ from agentplanex.domains import (
     ToolExecutionResult,
 )
 from agentplanex.project_owner_agent.tools import ToolCatalog, ToolDefinition
+from agentplanex.services.planning import PlanningService
 from agentplanex.settings import RuntimeSettings
 
 
@@ -22,6 +23,7 @@ class ProjectExecutionDependencies:
 
     project_path: Path
     settings: RuntimeSettings
+    planning: PlanningService
 
 
 class ProjectExecution(ABC):

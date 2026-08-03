@@ -19,13 +19,15 @@ class SQLiteSummaryHistoryRepository:
             INSERT INTO summary_history (
                 project_owner_session_id,
                 summary_id,
+                covered_through_message_id,
                 summary_content
             )
-            VALUES (?, ?, ?)
+            VALUES (?, ?, ?, ?)
             """,
             (
                 summary.project_owner_session_id,
                 summary.summary_id,
+                summary.covered_through_message_id,
                 summary.summary_content,
             ),
         )
@@ -37,7 +39,11 @@ class SQLiteSummaryHistoryRepository:
     ) -> SummaryHistory | None:
         row = connection.execute(
             """
-            SELECT project_owner_session_id, summary_id, summary_content
+            SELECT
+                project_owner_session_id,
+                summary_id,
+                covered_through_message_id,
+                summary_content
             FROM summary_history
             WHERE summary_id = ?
             """,
@@ -49,4 +55,8 @@ class SQLiteSummaryHistoryRepository:
             project_owner_session_id=cast(str, row["project_owner_session_id"]),
             summary_id=cast(str, row["summary_id"]),
             summary_content=cast(str, row["summary_content"]),
+            covered_through_message_id=cast(
+                str | None,
+                row["covered_through_message_id"],
+            ),
         )
