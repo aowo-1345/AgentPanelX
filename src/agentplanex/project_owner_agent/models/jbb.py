@@ -58,7 +58,7 @@ class JBBModel:
                 stream=False,
                 service_tier="priority",
                 tool_choice="auto",
-                parallel_tool_calls=True,
+                parallel_tool_calls=False,
             )
         except Exception as error:
             raise JBBModelError(f"JBB gateway request failed: {error}") from error
@@ -66,19 +66,18 @@ class JBBModel:
         message = _serialize(response)
         output = _as_list(_get(response, "output"))
         actions = _parse_actions(output, message, self.tools)
+        if len(actions) > 1:
+            _raise_format_error(
+                "Response must contain at most one tool call.",
+                message,
+            )
         if actions:
             message["extra"] = {"actions": actions}
             return message
 
         reply = _extract_reply(output)
         if reply:
-            message["role"] = "exit"
-            message["content"] = reply
-            message["extra"] = {
-                "exit_status": "ReplyToHuman",
-                "submission": reply,
-            }
-            raise ReplyToHuman(message)
+            raise ReplyToHuman(content=reply, response=message)
 
         _raise_format_error(
             "Response must contain a tool call or a non-empty natural-language reply.",
@@ -174,16 +173,7 @@ def _extract_reply(output: list[object]) -> str:
 
 
 def _raise_format_error(error: str, response: Message) -> NoReturn:
-    raise FormatError(
-        {
-            "role": "user",
-            "content": error,
-            "extra": {
-                "interrupt_type": "FormatError",
-                "response": response,
-            },
-        }
-    )
+    raise FormatError(content=error, response=response)
 
 
 def _render_output(output: ActionOutput) -> str:

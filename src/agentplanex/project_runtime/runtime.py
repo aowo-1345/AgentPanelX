@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from agentplanex.domains import Message
+from agentplanex.domains import AgentExit
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import ProjectRuntimeService
@@ -32,6 +32,6 @@ class ProjectRuntime:
             execute_tool=executions.execute,
         )
 
-    def run(self, task: str = "") -> Message:
+    def run(self, task: str = "") -> AgentExit:
         """Run one Project Owner turn."""
         return self._service.run(task)

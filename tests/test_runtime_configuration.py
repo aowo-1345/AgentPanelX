@@ -7,7 +7,13 @@ from typing import ClassVar
 import pytest
 
 from agentplanex import cli
-from agentplanex.domains import ActionOutput, Message, ProjectRuntimeContext
+from agentplanex.domains import (
+    ActionOutput,
+    AgentExit,
+    AgentExitStatus,
+    Message,
+    ProjectRuntimeContext,
+)
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.project_runtime.executions import create_project_executions
@@ -33,14 +39,8 @@ class _ReplyingModel:
         type(self).queries.append([dict(message) for message in messages])
         task = str(messages[-1].get("content", ""))
         raise ReplyToHuman(
-            {
-                "role": "exit",
-                "content": task,
-                "extra": {
-                    "exit_status": "ReplyToHuman",
-                    "submission": task,
-                },
-            }
+            content=task,
+            response={"role": "assistant", "content": task},
         )
 
     def format_observation_messages(
@@ -74,16 +74,10 @@ class _BashCallingModel:
 
         output = latest["extra"]
         assert isinstance(output, dict)
-        submission = f"{output['output']}\n{output['exception_info']}".strip()
+        content = f"{output['output']}\n{output['exception_info']}".strip()
         raise ReplyToHuman(
-            {
-                "role": "exit",
-                "content": submission,
-                "extra": {
-                    "exit_status": "ReplyToHuman",
-                    "submission": submission,
-                },
-            }
+            content=content,
+            response={"role": "assistant", "content": content},
         )
 
     def format_observation_messages(
@@ -177,8 +171,8 @@ def test_project_executions_expose_and_dispatch_bash(
     )
 
     assert [tool.name for tool in executions.tools.tools] == ["bash"]
-    assert result["returncode"] == 0
-    assert result["output"].strip() == str(project_path.resolve())
+    assert result.output["returncode"] == 0
+    assert result.output["output"].strip() == str(project_path.resolve())
 
 
 def test_cli_only_passes_explicit_runtime_inputs(
@@ -188,8 +182,11 @@ def test_cli_only_passes_explicit_runtime_inputs(
     captured: dict[str, object] = {}
 
     class _Runtime:
-        def run(self, task: str = "") -> Message:
-            return {"exit_status": "ReplyToHuman", "submission": task}
+        def run(self, task: str = "") -> AgentExit:
+            return AgentExit(
+                status=AgentExitStatus.REPLY_TO_HUMAN,
+                content=task,
+            )
 
     def create_runtime(**kwargs: object) -> _Runtime:
         captured.update(kwargs)
@@ -249,9 +246,9 @@ def test_runtime_reuses_and_restores_owner_session(
     )
     third = restarted_runtime.run("third")
 
-    assert first["submission"] == "first"
-    assert second["submission"] == "second"
-    assert third["submission"] == "third"
+    assert first.content == "first"
+    assert second.content == "second"
+    assert third.content == "third"
     assert _ReplyingModel.constructions == 2
     restored_contents = [
         message.get("content") for message in _ReplyingModel.queries[-1]
@@ -293,4 +290,4 @@ def test_runtime_applies_bash_limits(
 
     result = runtime.run(command)
 
-    assert expected in result["submission"]
+    assert expected in result.content

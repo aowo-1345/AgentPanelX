@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import TextIO
 
 from agentplanex.bootstrap import create_project_runtime
-from agentplanex.domains import Message
+from agentplanex.domains import AgentExit, AgentExitStatus
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.exception import JBBModelError
 
-type OwnerRunner = Callable[[str], Message]
+type OwnerRunner = Callable[[str], AgentExit]
 type InputReader = Callable[[str], str]
 
 
@@ -52,10 +52,11 @@ def _run_once(
         print(str(error), file=error_output)
         return 1
 
-    submission = result.get("submission")
-    if isinstance(submission, str) and submission:
-        print(submission, file=output)
-    return 0 if result.get("exit_status") == "ReplyToHuman" else 1
+    if result.status is AgentExitStatus.REPLY_TO_HUMAN:
+        print(result.content, file=output)
+        return 0
+    print(result.content, file=error_output)
+    return 1
 
 
 def _run_interactive(

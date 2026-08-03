@@ -6,6 +6,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from agentplanex.domains import (
+    AgentExit,
+    AgentExitStatus,
     Message,
     MessageHistory,
     ProjectOwnerAgent,
@@ -20,6 +22,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.project_owner_agent.agent import AgentConfig, DefaultAgent
 from agentplanex.project_owner_agent.approval import ApprovalMode, TerminalApproval
+from agentplanex.project_owner_agent.exception import AgentFlowExit
 from agentplanex.project_owner_agent.interactive import InteractiveAgent
 from agentplanex.project_owner_agent.models.jbb import JBBModel
 from agentplanex.project_owner_agent.tools import ToolCatalog
@@ -63,11 +66,19 @@ class ProjectRuntimeService:
             raise ValueError(f"Unknown approval mode: {self.approval_mode!r}")
         self._database = SQLiteDatabase.for_project(self.project_path)
 
-    def run(self, task: str = "") -> Message:
+    def run(self, task: str = "") -> AgentExit:
         """Run one turn, restoring the Owner only on first use."""
-        if self._session is None:
-            self._session = self._load_session()
-        return self._session.agent.run(self._session.context, task)
+        try:
+            if self._session is None:
+                self._session = self._load_session()
+            self._session.agent.run(self._session.context, task)
+        except AgentFlowExit as error:
+            return AgentExit(status=error.status, content=error.content)
+        except Exception as error:
+            return AgentExit(
+                status=AgentExitStatus.UNHANDLED_EXCEPTION,
+                content=f"{type(error).__name__}: {error}",
+            )
 
     def _load_session(self) -> _OwnerSession:
         context, messages = self._load_or_create_state()

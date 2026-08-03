@@ -1,26 +1,74 @@
-"""Control-flow and provider errors for the Project Owner Agent."""
+"""Structured control-flow and provider errors for the Project Owner Agent."""
 
+from agentplanex.domains.agent_exit import AgentExit, AgentExitStatus
 from agentplanex.project_owner_agent.models.base import Message
 
 
 class InterruptAgentFlow(Exception):
-    """Interrupt the current step and append the supplied messages."""
+    """Base class for structured interruptions of the Agent flow."""
 
-    def __init__(self, *messages: Message) -> None:
-        super().__init__()
-        self.messages = list(messages)
+    def __init__(self, *, content: str) -> None:
+        super().__init__(content)
+        self.content = content
 
 
 class FormatError(InterruptAgentFlow):
-    """The model returned a response that cannot drive the Agent loop."""
+    """The model returned a response that the Agent can ask it to repair."""
+
+    def __init__(self, *, content: str, response: Message) -> None:
+        super().__init__(content=content)
+        self.response = response
 
 
-class StepLimitExceeded(InterruptAgentFlow):
+class AgentFlowExit(InterruptAgentFlow):
+    """A terminal Agent interruption with a runtime-visible status."""
+
+    def __init__(
+        self,
+        *,
+        status: AgentExitStatus,
+        content: str,
+    ) -> None:
+        super().__init__(content=content)
+        self.status = status
+
+
+class ReplyToHuman(AgentFlowExit):
+    """The model produced a final natural-language reply."""
+
+    def __init__(self, content: str, response: Message) -> None:
+        super().__init__(
+            status=AgentExitStatus.REPLY_TO_HUMAN,
+            content=content,
+        )
+        self.response = response
+
+
+class StepLimitExceeded(AgentFlowExit):
     """The Agent reached its configured model-call limit."""
 
+    def __init__(self) -> None:
+        super().__init__(
+            status=AgentExitStatus.STEP_LIMIT_EXCEEDED,
+            content=AgentExitStatus.STEP_LIMIT_EXCEEDED.value,
+        )
 
-class ReplyToHuman(InterruptAgentFlow):
-    """The model produced a final natural-language reply."""
+
+class RepeatedFormatError(AgentFlowExit):
+    """The model repeatedly returned responses that cannot drive the Agent."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status=AgentExitStatus.REPEATED_FORMAT_ERROR,
+            content=AgentExitStatus.REPEATED_FORMAT_ERROR.value,
+        )
+
+
+class ToolRequestedExit(AgentFlowExit):
+    """A completed tool execution requested that the Agent Loop stop."""
+
+    def __init__(self, agent_exit: AgentExit) -> None:
+        super().__init__(status=agent_exit.status, content=agent_exit.content)
 
 
 class JBBModelError(RuntimeError):

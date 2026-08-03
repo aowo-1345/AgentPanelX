@@ -2,8 +2,8 @@
 
 from agentplanex.domains import (
     Action,
-    ActionOutput,
     ProjectRuntimeContext,
+    ToolExecutionResult,
     ToolExecutor,
 )
 from agentplanex.project_owner_agent.agent import (
@@ -47,22 +47,22 @@ class InteractiveAgent(DefaultAgent):
         ]
         rejection = self.approval.review(actions)
 
-        outputs: list[ActionOutput]
+        results: list[ToolExecutionResult]
         if rejection is None:
-            outputs = [self.execute_tool(context, action) for action in actions]
+            results = [self.execute_tool(context, action) for action in actions]
         else:
-            outputs = [
-                {
-                    "output": "",
-                    "returncode": -1,
-                    "exception_info": (
-                        f"The user rejected this action. Feedback: {rejection}"
-                    ),
-                }
+            results = [
+                ToolExecutionResult(
+                    output={
+                        "output": "",
+                        "returncode": -1,
+                        "exception_info": (
+                            "The user rejected this action. "
+                            f"Feedback: {rejection}"
+                        ),
+                    }
+                )
                 for _ in actions
             ]
 
-        return self.add_messages(
-            context,
-            *self.model.format_observation_messages(message, outputs)
-        )
+        return self._record_action_results(context, message, results)
