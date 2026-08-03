@@ -6,12 +6,14 @@ from pathlib import Path
 from uuid import uuid4
 
 from agentplanex.domains import (
+    Action,
     AgentExit,
     AgentExitStatus,
     Message,
     MessageHistory,
     ProjectOwnerAgent,
     ProjectRuntimeContext,
+    ToolExecutionResult,
     ToolExecutor,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
@@ -79,6 +81,11 @@ class ProjectRuntimeService:
                 status=AgentExitStatus.UNHANDLED_EXCEPTION,
                 content=f"{type(error).__name__}: {error}",
             )
+
+    def execute_action(self, action: Action) -> ToolExecutionResult:
+        """Execute one explicit action against the persisted project context."""
+        context, _messages = self._load_or_create_state()
+        return self.execute_tool(context, action)
 
     def _load_session(self) -> _OwnerSession:
         context, messages = self._load_or_create_state()

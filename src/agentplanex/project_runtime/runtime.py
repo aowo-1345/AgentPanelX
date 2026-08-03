@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from agentplanex.domains import AgentExit
+from agentplanex.domains import Action, AgentExit, ToolExecutionResult
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import ProjectRuntimeService
@@ -35,3 +35,7 @@ class ProjectRuntime:
     def run(self, task: str = "") -> AgentExit:
         """Run one Project Owner turn."""
         return self._service.run(task)
+
+    def execute_action(self, action: Action) -> ToolExecutionResult:
+        """Execute one explicit tool action without entering the Agent loop."""
+        return self._service.execute_action(action)
