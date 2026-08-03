@@ -154,7 +154,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 3
+    assert schema_version[0] == 4
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -235,7 +235,7 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "event_id",
             "triage_id",
             "event_type",
-            "activation_id",
+            "react_loop_id",
             "message_id",
             "payload",
             "created_at",

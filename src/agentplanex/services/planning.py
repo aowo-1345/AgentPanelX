@@ -5,12 +5,23 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from agentplanex.domains import ProjectRuntimeContext
+from agentplanex.domains import (
+    ExecutionEvent,
+    ExecutionEventType,
+    ProjectRuntimeContext,
+    RuntimeContextChangeReason,
+)
 from agentplanex.infrastructure.git_repository import GitRepository
-from agentplanex.infrastructure.sqlite import SQLiteDatabase
+from agentplanex.infrastructure.sqlite import (
+    SQLiteDatabase,
+    initialize_schema,
+)
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectRuntimeContextRepository,
 )
+from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
+from agentplanex.services.event_bus import EventBus
+from agentplanex.services.runtime_context import RuntimeContextService
 
 SPEC_DOCUMENT_NAMES = ("architecture.md", "requirements.md", "roadmap.md")
 type PlanHardGate = Callable[[tuple[Path, ...]], None]
@@ -27,7 +38,6 @@ def pass_plan_hard_gate(_spec_documents: tuple[Path, ...]) -> None:
 @dataclass(frozen=True, slots=True)
 class PlanDecision:
     context: ProjectRuntimeContext
-    resume_message: str
     commit_sha: str | None = None
 
 
@@ -40,16 +50,29 @@ class PlanningService:
     )
     git: GitRepository | None = None
     review_plan: PlanHardGate = pass_plan_hard_gate
+    event_bus: EventBus = field(default_factory=EventBus)
+    runtime_contexts: RuntimeContextService | None = None
 
     def __post_init__(self) -> None:
         if self.git is None:
             self.git = GitRepository(self.project_path)
+        if self.runtime_contexts is None:
+            self.runtime_contexts = RuntimeContextService(
+                self.database,
+                self.event_bus,
+                self.contexts,
+            )
 
     @classmethod
     def for_project(cls, project_path: Path) -> "PlanningService":
+        database = SQLiteDatabase.for_project(project_path)
+        initialize_schema(database)
+        event_bus = EventBus((SQLiteTimelineRecorder(database),))
         return cls(
             project_path=project_path,
-            database=SQLiteDatabase.for_project(project_path),
+            database=database,
+            event_bus=event_bus,
+            runtime_contexts=RuntimeContextService(database, event_bus),
         )
 
     def request_plan_approval(
@@ -59,8 +82,9 @@ class PlanningService:
         spec_documents = self._spec_documents()
         self.review_plan(spec_documents)
 
-        with self.database.transaction() as connection:
-            current = self._get_context(connection, context.triage_id)
+        runtime_contexts = self._runtime_contexts()
+
+        def request(current: ProjectRuntimeContext) -> ProjectRuntimeContext:
             if current.pending_action is not None:
                 raise PlanningError(
                     "Project already has a pending action: "
@@ -78,7 +102,19 @@ class PlanningService:
                 status=status,
                 pending_action="PLAN_APPROVAL",
             )
-            self.contexts.update(connection, updated)
+            return updated
+
+        updated = runtime_contexts.transition(
+            context.triage_id,
+            reason=RuntimeContextChangeReason.PLAN_APPROVAL_REQUESTED,
+            mutate=request,
+        )
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=context.triage_id,
+                event_type=ExecutionEventType.PLAN_APPROVAL_REQUESTED,
+            )
+        )
         return updated
 
     def approve_plan(self, triage_id: str) -> PlanDecision:
@@ -92,10 +128,9 @@ class PlanningService:
             message="plan: approve specifications",
         )
 
-        with self.database.transaction() as connection:
-            current = self._get_context(connection, triage_id)
+        def approve(current: ProjectRuntimeContext) -> ProjectRuntimeContext:
             self._assert_pending_action(current)
-            updated = replace(
+            return replace(
                 current,
                 status=(
                     "IN_PROGRESS"
@@ -105,22 +140,29 @@ class PlanningService:
                 pending_action=None,
                 current_plan_commit_sha=commit_sha,
             )
-            self.contexts.update(connection, updated)
+
+        updated = self._runtime_contexts().transition(
+            triage_id,
+            reason=RuntimeContextChangeReason.PLAN_APPROVED,
+            mutate=approve,
+        )
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=triage_id,
+                event_type=ExecutionEventType.PLAN_APPROVED,
+                payload={"plan_commit_sha": commit_sha},
+            )
+        )
 
         return PlanDecision(
             context=updated,
             commit_sha=commit_sha,
-            resume_message=(
-                "The user approved the current Plan. "
-                f"The approved Plan commit is {commit_sha}."
-            ),
         )
 
-    def reject_plan(self, triage_id: str, feedback: str = "") -> PlanDecision:
-        with self.database.transaction() as connection:
-            current = self._get_context(connection, triage_id)
+    def reject_plan(self, triage_id: str) -> PlanDecision:
+        def reject(current: ProjectRuntimeContext) -> ProjectRuntimeContext:
             self._assert_pending_action(current)
-            updated = replace(
+            return replace(
                 current,
                 status=(
                     "IN_PROGRESS"
@@ -129,12 +171,20 @@ class PlanningService:
                 ),
                 pending_action=None,
             )
-            self.contexts.update(connection, updated)
 
-        resume_message = "The user rejected the current Plan."
-        if feedback.strip():
-            resume_message = f"{resume_message} Feedback: {feedback.strip()}"
-        return PlanDecision(context=updated, resume_message=resume_message)
+        updated = self._runtime_contexts().transition(
+            triage_id,
+            reason=RuntimeContextChangeReason.PLAN_REJECTED,
+            mutate=reject,
+        )
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=triage_id,
+                event_type=ExecutionEventType.PLAN_REJECTED,
+            )
+        )
+
+        return PlanDecision(context=updated)
 
     def _spec_documents(self) -> tuple[Path, ...]:
         paths = tuple(self.project_path / name for name in SPEC_DOCUMENT_NAMES)
@@ -164,3 +214,8 @@ class PlanningService:
         if context is None:
             raise LookupError(f"Project Runtime Context not found: {triage_id}")
         return context
+
+    def _runtime_contexts(self) -> RuntimeContextService:
+        if self.runtime_contexts is None:
+            raise RuntimeError("Planning Service has no Runtime Context Service")
+        return self.runtime_contexts

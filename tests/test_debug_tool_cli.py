@@ -8,9 +8,17 @@ from typing import ClassVar
 
 import pytest
 
-from agentplanex.domains import ActionOutput, Message, ProjectRuntimeContext
+from agentplanex.bootstrap import create_project_runtime
+from agentplanex.domains import (
+    ActionOutput,
+    ExecutionEvent,
+    Message,
+    MessageHistory,
+    ProjectRuntimeContext,
+)
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteExecutionEventRepository,
     SQLiteMessageHistoryRepository,
     SQLiteProjectRuntimeContextRepository,
 )
@@ -44,6 +52,40 @@ class _ReplyingModel:
         raise AssertionError("Interaction tests do not execute model tool calls")
 
 
+class _PlanRequestingModel:
+    def __init__(self, **_kwargs: object) -> None:
+        pass
+
+    def query(self, messages: list[Message]) -> Message:
+        assert messages[-1].get("role") == "user"
+        return {
+            "role": "assistant",
+            "content": "",
+            "extra": {
+                "actions": [
+                    {
+                        "tool": "request_plan_approval",
+                        "call_id": "request-plan-test",
+                        "arguments": {},
+                    }
+                ]
+            },
+        }
+
+    def format_observation_messages(
+        self,
+        _message: Message,
+        outputs: list[ActionOutput],
+    ) -> list[Message]:
+        return [
+            {
+                "role": "tool",
+                "content": "plan approval requested",
+                "extra": outputs[0],
+            }
+        ]
+
+
 def _write_specs(project_path: Path) -> None:
     for name in ("architecture.md", "requirements.md", "roadmap.md"):
         (project_path / name).write_text(f"# {name}\n", encoding="utf-8")
@@ -68,6 +110,15 @@ def _load_context(project_path: Path):
 
 
 def _loaded_message_contents(project_path: Path) -> list[str]:
+    histories = _loaded_message_histories(project_path)
+    return [
+        str(message.get("content", ""))
+        for history in histories
+        for message in history.message
+    ]
+
+
+def _loaded_message_histories(project_path: Path) -> tuple[MessageHistory, ...]:
     database = SQLiteDatabase.for_project(project_path)
     repository = SQLiteMessageHistoryRepository()
     with database.connection() as connection:
@@ -79,11 +130,70 @@ def _loaded_message_contents(project_path: Path) -> list[str]:
             connection,
             owner["project_owner_session_id"],
         )
-    return [
-        str(message.get("content", ""))
-        for history in histories
-        for message in history.message
+    return histories
+
+
+def _loaded_events(project_path: Path) -> tuple[ExecutionEvent, ...]:
+    database = SQLiteDatabase.for_project(project_path)
+    repository = SQLiteExecutionEventRepository()
+    with database.connection() as connection:
+        context = SQLiteProjectRuntimeContextRepository().list_all(connection)
+        assert len(context) == 1
+        return repository.list_by_triage_id(connection, context[0].triage_id)
+
+
+def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_path = initialize_git_project()
+    _write_specs(project_path)
+    monkeypatch.setattr(project_runtime_service, "JBBModel", _PlanRequestingModel)
+
+    result = create_project_runtime(
+        project_path=project_path,
+        approval_mode="yolo",
+    ).run("Request approval for the current plan")
+
+    histories = _loaded_message_histories(project_path)
+    events = _loaded_events(project_path)
+    assert result.status.value == "PlanApprovalRequested"
+    assert len(histories) == 3
+    assert [event.event_type.value for event in events] == [
+        "REACT_LOOP_ENTERED",
+        "RUNTIME_CONTEXT_UPDATED",
+        "RUNTIME_CONTEXT_UPDATED",
+        "PLAN_APPROVAL_REQUESTED",
+        "REACT_LOOP_EXITED",
     ]
+
+    react_loop_id = events[0].react_loop_id
+    assert react_loop_id is not None
+    assert all(event.react_loop_id == react_loop_id for event in events)
+    assert events[0].payload == {"task_type": "USER_INPUT"}
+    assert events[0].message_id == histories[0].message_id
+    assert events[1].message_id == histories[0].message_id
+    assert events[1].payload == {
+        "reason": "CONVERSATION_STARTED",
+        "changes": {"status": {"from": "TRIAGE", "to": "TODO"}},
+    }
+    assert events[2].message_id == histories[1].message_id
+    assert events[3].message_id == histories[1].message_id
+    assert events[2].payload == {
+        "reason": "PLAN_APPROVAL_REQUESTED",
+        "changes": {
+            "pending_action": {"from": None, "to": "PLAN_APPROVAL"}
+        },
+    }
+    assert events[3].payload == {}
+    assert events[4].message_id == histories[2].message_id
+    assert events[4].payload == {
+        "agent_exit_status": "PlanApprovalRequested"
+    }
+    assistant_action = histories[1].message[0]
+    assert assistant_action["extra"]["actions"][0]["tool"] == (
+        "request_plan_approval"
+    )
 
 
 def test_executes_project_bound_action_without_constructing_a_model(
@@ -288,6 +398,27 @@ def test_request_then_approve_commits_only_specs_and_resumes_owner(
         content.startswith("The user approved the current Plan.")
         for content in _loaded_message_contents(project_path)
     )
+    histories = _loaded_message_histories(project_path)
+    events = _loaded_events(project_path)
+    assert [event.event_type.value for event in events] == [
+        "RUNTIME_CONTEXT_UPDATED",
+        "PLAN_APPROVAL_REQUESTED",
+        "RUNTIME_CONTEXT_UPDATED",
+        "PLAN_APPROVED",
+        "REACT_LOOP_ENTERED",
+        "REACT_LOOP_EXITED",
+    ]
+    assert all(event.react_loop_id is None for event in events[:4])
+    assert all(event.message_id is None for event in events[:2])
+    assert events[2].message_id == histories[0].message_id
+    assert events[3].message_id == histories[0].message_id
+    assert events[3].payload == {
+        "plan_commit_sha": context.current_plan_commit_sha
+    }
+    assert events[4].message_id == histories[0].message_id
+    assert events[4].react_loop_id is not None
+    assert events[5].react_loop_id == events[4].react_loop_id
+    assert events[5].message_id == histories[1].message_id
 
 
 def test_request_then_reject_does_not_commit_and_resumes_owner(
@@ -331,6 +462,19 @@ def test_request_then_reject_does_not_commit_and_resumes_owner(
         "The user rejected the current Plan. "
         "Feedback: requirements are incomplete"
     ) in _loaded_message_contents(project_path)
+    histories = _loaded_message_histories(project_path)
+    events = _loaded_events(project_path)
+    assert [event.event_type.value for event in events] == [
+        "RUNTIME_CONTEXT_UPDATED",
+        "PLAN_APPROVAL_REQUESTED",
+        "RUNTIME_CONTEXT_UPDATED",
+        "PLAN_REJECTED",
+        "REACT_LOOP_ENTERED",
+        "REACT_LOOP_EXITED",
+    ]
+    assert events[2].message_id == histories[0].message_id
+    assert events[3].message_id == histories[0].message_id
+    assert events[3].payload == {}
 
 
 def test_plain_text_defaults_to_message_and_starts_todo(

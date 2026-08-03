@@ -114,6 +114,7 @@ class DefaultAgent:
         message: Message,
     ) -> list[Message]:
         """Execute actions and append their provider-formatted observations."""
+        self.add_messages(context, message)
         extra = message.get("extra")
         raw_actions = extra.get("actions", []) if isinstance(extra, dict) else []
         actions = [action for action in raw_actions if isinstance(action, dict)]
@@ -130,7 +131,7 @@ class DefaultAgent:
             message,
             [result.output for result in results],
         )
-        appended = self.add_messages(context, message, *observations)
+        appended = [message, *self.add_messages(context, *observations)]
         exits = [result.exit for result in results if result.exit is not None]
         if not exits:
             return appended

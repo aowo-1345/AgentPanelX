@@ -9,10 +9,15 @@ from agentplanex.domains import (
     Action,
     AgentExit,
     AgentExitStatus,
+    ExecutionEvent,
+    ExecutionEventType,
     Message,
     MessageHistory,
     ProjectOwnerAgent,
+    ProjectOwnerTask,
+    ProjectOwnerTaskType,
     ProjectRuntimeContext,
+    RuntimeContextChangeReason,
     ToolExecutionResult,
     ToolExecutor,
     UserInteractionAction,
@@ -29,7 +34,9 @@ from agentplanex.project_owner_agent.exception import AgentFlowExit
 from agentplanex.project_owner_agent.interactive import InteractiveAgent
 from agentplanex.project_owner_agent.models.jbb import JBBModel
 from agentplanex.project_owner_agent.tools import ToolCatalog
+from agentplanex.services.event_bus import EventBus
 from agentplanex.services.planning import PlanningService
+from agentplanex.services.runtime_context import RuntimeContextService
 from agentplanex.settings import Settings
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -54,6 +61,8 @@ class ProjectRuntimeService:
     tools: ToolCatalog
     execute_tool: ToolExecutor
     planning: PlanningService
+    event_bus: EventBus
+    runtime_contexts: RuntimeContextService
     contexts: SQLiteProjectRuntimeContextRepository = field(
         default_factory=SQLiteProjectRuntimeContextRepository
     )
@@ -71,21 +80,55 @@ class ProjectRuntimeService:
             raise ValueError(f"Unknown approval mode: {self.approval_mode!r}")
         self._database = SQLiteDatabase.for_project(self.project_path)
 
-    def run(self, task: str = "") -> AgentExit:
-        """Run one turn, restoring the Owner only on first use."""
+    def run(self, task: ProjectOwnerTask) -> AgentExit:
+        """Persist one typed input and run a Project Owner React Loop."""
         try:
-            if task:
-                self._mark_conversation_started()
-            if self._session is None:
-                self._session = self._load_session()
-            self._session.agent.run(self._session.context, task)
-        except AgentFlowExit as error:
-            return AgentExit(status=error.status, content=error.content)
+            self._prepare_task(task)
+            return self._run_prepared(task.type)
         except Exception as error:
             return AgentExit(
                 status=AgentExitStatus.UNHANDLED_EXCEPTION,
                 content=f"{type(error).__name__}: {error}",
             )
+
+    def _run_prepared(self, task_type: ProjectOwnerTaskType) -> AgentExit:
+        session = self._session
+        if session is None:
+            raise RuntimeError("Project Owner task was not prepared")
+
+        triage_id = session.context.triage_id
+        react_loop_id = uuid4().hex
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=triage_id,
+                event_type=ExecutionEventType.REACT_LOOP_ENTERED,
+                react_loop_id=react_loop_id,
+                payload={"task_type": task_type.value},
+            )
+        )
+
+        try:
+            self._mark_conversation_started()
+            session = self._session
+            if session is None:
+                raise RuntimeError("Project Owner session was lost before execution")
+            session.agent.run(session.context)
+        except AgentFlowExit as error:
+            result = AgentExit(status=error.status, content=error.content)
+        except Exception as error:
+            result = AgentExit(
+                status=AgentExitStatus.UNHANDLED_EXCEPTION,
+                content=f"{type(error).__name__}: {error}",
+            )
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=triage_id,
+                event_type=ExecutionEventType.REACT_LOOP_EXITED,
+                react_loop_id=react_loop_id,
+                payload={"agent_exit_status": result.status.value},
+            )
+        )
+        return result
 
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit action against the persisted project context."""
@@ -106,21 +149,36 @@ class ProjectRuntimeService:
         if action == "message":
             if not message.strip():
                 return self._interaction_error("User message must not be empty")
-            self._session = None
-            return self.run(message.strip())
+            return self.run(
+                ProjectOwnerTask(
+                    type=ProjectOwnerTaskType.USER_INPUT,
+                    content=message.strip(),
+                )
+            )
 
         try:
-            context, _messages = self._load_or_create_state()
-            decision = (
-                self.planning.approve_plan(context.triage_id)
-                if action == "approve"
-                else self.planning.reject_plan(context.triage_id, message)
+            task = ProjectOwnerTask(
+                type=ProjectOwnerTaskType.USER_INPUT,
+                content=(
+                    "The user approved the current Plan."
+                    if action == "approve"
+                    else self._plan_rejection_message(message)
+                ),
             )
+            self._prepare_task(task)
+            session = self._session
+            if session is None:
+                raise RuntimeError("Project Owner task was not prepared")
+            decision = (
+                self.planning.approve_plan(session.context.triage_id)
+                if action == "approve"
+                else self.planning.reject_plan(session.context.triage_id)
+            )
+            self._replace_session_context(decision.context)
         except Exception as error:
             return self._interaction_error(f"{type(error).__name__}: {error}")
 
-        self._session = None
-        return self.run(decision.resume_message)
+        return self._run_prepared(task.type)
 
     @staticmethod
     def _interaction_error(content: str) -> AgentExit:
@@ -179,22 +237,56 @@ class ProjectRuntimeService:
         )
         return _OwnerSession(context=context, agent=agent)
 
+    def _prepare_task(self, task: ProjectOwnerTask) -> None:
+        content = task.content.strip()
+        if not content:
+            raise ValueError("Project Owner task content must not be empty")
+        if self._session is None:
+            self._session = self._load_session()
+        session = self._session
+        initial: list[Message] = []
+        if not session.agent.messages:
+            initial.append(
+                {"role": "system", "content": session.agent.config.system_prompt}
+            )
+        initial.append({"role": "user", "content": content})
+        session.agent.add_messages(session.context, *initial)
+
     def _mark_conversation_started(self) -> None:
-        context, _messages = self._load_or_create_state()
-        if context.status != "TRIAGE":
-            return
-        with self._database.transaction() as connection:
-            current = self.contexts.get(connection, context.triage_id)
-            if current is None:
-                raise LookupError(
-                    f"Project Runtime Context not found: {context.triage_id}"
-                )
-            if current.status == "TRIAGE":
-                self.contexts.update(
-                    connection,
-                    replace(current, status="TODO"),
-                )
-        self._session = None
+        session = self._session
+        if session is None:
+            raise RuntimeError("Project Owner session is not loaded")
+
+        def start(current: ProjectRuntimeContext) -> ProjectRuntimeContext:
+            return (
+                replace(current, status="TODO")
+                if current.status == "TRIAGE"
+                else current
+            )
+
+        updated = self.runtime_contexts.transition(
+            session.context.triage_id,
+            reason=RuntimeContextChangeReason.CONVERSATION_STARTED,
+            mutate=start,
+        )
+        self._replace_session_context(updated)
+
+    def _replace_session_context(self, context: ProjectRuntimeContext) -> None:
+        session = self._session
+        if session is None:
+            raise RuntimeError("Project Owner session is not loaded")
+        self._session = _OwnerSession(
+            context=replace(
+                context,
+                project_owner_agent=session.context.project_owner_agent,
+            ),
+            agent=session.agent,
+        )
+
+    @staticmethod
+    def _plan_rejection_message(feedback: str) -> str:
+        message = "The user rejected the current Plan."
+        return f"{message} Feedback: {feedback.strip()}" if feedback.strip() else message
 
     def _load_or_create_state(
         self,

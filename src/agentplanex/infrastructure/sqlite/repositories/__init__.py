@@ -1,5 +1,8 @@
 """SQLite repositories."""
 
+from agentplanex.infrastructure.sqlite.repositories.execution_event import (
+    SQLiteExecutionEventRepository,
+)
 from agentplanex.infrastructure.sqlite.repositories.message_history import (
     SQLiteMessageHistoryRepository,
 )
@@ -14,6 +17,7 @@ from agentplanex.infrastructure.sqlite.repositories.summary_history import (
 )
 
 __all__ = [
+    "SQLiteExecutionEventRepository",
     "SQLiteMessageHistoryRepository",
     "SQLiteProjectOwnerAgentRepository",
     "SQLiteProjectRuntimeContextRepository",

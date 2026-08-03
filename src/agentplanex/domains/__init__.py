@@ -4,6 +4,13 @@ from agentplanex.domains.agent_exit import (
     AgentExit,
     AgentExitStatus,
 )
+from agentplanex.domains.execution_event import (
+    ExecutionEvent,
+    ExecutionEventType,
+    ProjectOwnerTask,
+    ProjectOwnerTaskType,
+    RuntimeContextChangeReason,
+)
 from agentplanex.domains.message_history import Message, MessageHistory
 from agentplanex.domains.project_owner_agent import ProjectOwnerAgent
 from agentplanex.domains.project_runtime_context import ProjectRuntimeContext
@@ -25,10 +32,15 @@ __all__ = [
     "ActionOutput",
     "AgentExit",
     "AgentExitStatus",
+    "ExecutionEvent",
+    "ExecutionEventType",
     "Message",
     "MessageHistory",
     "ProjectOwnerAgent",
+    "ProjectOwnerTask",
+    "ProjectOwnerTaskType",
     "ProjectRuntimeContext",
+    "RuntimeContextChangeReason",
     "SummaryHistory",
     "ToolArguments",
     "ToolExecutionResult",

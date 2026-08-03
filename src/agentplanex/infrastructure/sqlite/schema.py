@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _INITIAL_SCHEMA = (
     """
@@ -109,7 +109,7 @@ _INITIAL_SCHEMA = (
         event_id INTEGER PRIMARY KEY AUTOINCREMENT,
         triage_id TEXT NOT NULL,
         event_type TEXT NOT NULL,
-        activation_id TEXT,
+        react_loop_id TEXT,
         message_id TEXT,
         payload TEXT NOT NULL,
         created_at TEXT NOT NULL

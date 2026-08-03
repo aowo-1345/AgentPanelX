@@ -40,6 +40,7 @@ class InteractiveAgent(DefaultAgent):
         context: ProjectRuntimeContext,
         message: Message,
     ) -> list[Message]:
+        self.add_messages(context, message)
         extra = message.get("extra")
         raw_actions = extra.get("actions", []) if isinstance(extra, dict) else []
         actions: list[Action] = [

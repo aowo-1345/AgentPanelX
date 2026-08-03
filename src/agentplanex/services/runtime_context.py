@@ -1,0 +1,85 @@
+"""Unified project Runtime Context transitions and observable diffs."""
+
+from collections.abc import Callable
+from dataclasses import dataclass, field, fields
+from datetime import datetime
+
+from agentplanex.domains import (
+    ExecutionEvent,
+    ExecutionEventType,
+    ProjectRuntimeContext,
+    RuntimeContextChangeReason,
+)
+from agentplanex.infrastructure.sqlite import SQLiteDatabase
+from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteProjectRuntimeContextRepository,
+)
+from agentplanex.services.event_bus import EventBus
+
+type ContextMutation = Callable[[ProjectRuntimeContext], ProjectRuntimeContext]
+
+_PERSISTED_FIELD_NAMES = tuple(
+    item.name
+    for item in fields(ProjectRuntimeContext)
+    if item.name != "project_owner_agent"
+)
+
+
+@dataclass(slots=True)
+class RuntimeContextService:
+    database: SQLiteDatabase
+    event_bus: EventBus
+    contexts: SQLiteProjectRuntimeContextRepository = field(
+        default_factory=SQLiteProjectRuntimeContextRepository
+    )
+
+    def transition(
+        self,
+        triage_id: str,
+        *,
+        reason: RuntimeContextChangeReason,
+        mutate: ContextMutation,
+    ) -> ProjectRuntimeContext:
+        with self.database.transaction() as connection:
+            current = self.contexts.get(connection, triage_id)
+            if current is None:
+                raise LookupError(f"Project Runtime Context not found: {triage_id}")
+            updated = mutate(current)
+            if updated.triage_id != current.triage_id:
+                raise ValueError("Runtime Context transition cannot change triage_id")
+            changes = _context_changes(current, updated)
+            if changes:
+                self.contexts.update(connection, updated)
+
+        if changes:
+            self.event_bus.publish(
+                ExecutionEvent(
+                    triage_id=triage_id,
+                    event_type=ExecutionEventType.RUNTIME_CONTEXT_UPDATED,
+                    payload={
+                        "reason": reason.value,
+                        "changes": changes,
+                    },
+                )
+            )
+        return updated
+
+
+def _context_changes(
+    current: ProjectRuntimeContext,
+    updated: ProjectRuntimeContext,
+) -> dict[str, object]:
+    changes: dict[str, object] = {}
+    for name in _PERSISTED_FIELD_NAMES:
+        before = getattr(current, name)
+        after = getattr(updated, name)
+        if before != after:
+            changes[name] = {
+                "from": _event_value(before),
+                "to": _event_value(after),
+            }
+    return changes
+
+
+def _event_value(value: object) -> object:
+    return value.isoformat() if isinstance(value, datetime) else value
