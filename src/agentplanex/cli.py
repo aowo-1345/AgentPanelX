@@ -1,0 +1,106 @@
+"""CLI composition root for the standalone Project Owner Agent."""
+
+import argparse
+import sys
+from collections.abc import Callable, Sequence
+from pathlib import Path
+from typing import TextIO
+
+from agentplanex.bootstrap import create_project_runtime
+from agentplanex.domains import Message
+from agentplanex.project_owner_agent.approval import ApprovalMode
+from agentplanex.project_owner_agent.exception import JBBModelError
+
+type OwnerRunner = Callable[[str], Message]
+type InputReader = Callable[[str], str]
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    task = " ".join(args.task).strip()
+    if args.print_mode and not task:
+        print("Task must not be empty", file=sys.stderr)
+        return 2
+
+    approval_mode: ApprovalMode = args.mode
+    try:
+        runtime = create_project_runtime(
+            project_path=args.cwd,
+            approval_mode=approval_mode,
+        )
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return 2
+
+    if args.print_mode:
+        return _run_once(runtime.run, task)
+    return _run_interactive(runtime.run, task)
+
+
+def _run_once(
+    run_owner: OwnerRunner,
+    task: str,
+    *,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    output = stdout if stdout is not None else sys.stdout
+    error_output = stderr if stderr is not None else sys.stderr
+    try:
+        result = run_owner(task)
+    except (JBBModelError, ValueError) as error:
+        print(str(error), file=error_output)
+        return 1
+
+    submission = result.get("submission")
+    if isinstance(submission, str) and submission:
+        print(submission, file=output)
+    return 0 if result.get("exit_status") == "ReplyToHuman" else 1
+
+
+def _run_interactive(
+    run_owner: OwnerRunner,
+    initial_task: str = "",
+    *,
+    read_input: InputReader = input,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
+    task = initial_task
+    while True:
+        if not task:
+            try:
+                task = read_input("> ").strip()
+            except EOFError:
+                return 0
+        if not task:
+            continue
+        if task in {"/exit", "/quit"}:
+            return 0
+
+        _run_once(
+            run_owner,
+            task,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        task = ""
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run the Project Owner Agent")
+    parser.add_argument("task", nargs="*")
+    parser.add_argument(
+        "-p",
+        "--print",
+        dest="print_mode",
+        action="store_true",
+        help="run one task and exit",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("confirm", "yolo"),
+        default="confirm",
+    )
+    parser.add_argument("--cwd", type=Path, default=Path.cwd())
+    return parser

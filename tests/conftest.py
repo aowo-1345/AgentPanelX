@@ -1,53 +1,29 @@
-"""Shared pytest fixtures.
+"""Shared pytest fixtures."""
 
-Keep this file small:
-- Put only cross-suite fixtures here.
-- Put unit/integration/e2e-specific fixtures in that directory's conftest.py.
-- Do not hide business behavior or large mock graphs here.
-"""
-
+import hashlib
+import re
+import shutil
 from collections.abc import Callable
 from pathlib import Path
-from subprocess import run
 
 import pytest
+
+from tests.fixtures import initialize_git_project as _initialize_git_project
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
-def project_root() -> Path:
-    """Return the repository root directory."""
-    return PROJECT_ROOT
+def initialize_git_project(request: pytest.FixtureRequest) -> Callable[[], Path]:
+    """Provide one observable Git project for the current test."""
 
-
-@pytest.fixture
-def fixtures_dir(project_root: Path) -> Path:
-    """Return the shared test fixtures directory."""
-    return project_root / "tests" / "fixtures"
-
-
-@pytest.fixture
-def git_project_factory(tmp_path: Path) -> Callable[[], Path]:
-    """Create independent temporary Git Projects with deterministic identity."""
+    node_id = request.node.nodeid
+    readable_id = re.sub(r"[^A-Za-z0-9._-]+", "_", node_id).strip("._") or "test"
+    digest = hashlib.sha256(node_id.encode("utf-8")).hexdigest()[:10]
+    project_path = PROJECT_ROOT / ".agentplanex" / "tests" / f"{readable_id[:100]}-{digest}"
+    shutil.rmtree(project_path, ignore_errors=True)
 
     def create_project() -> Path:
-        project_path = tmp_path / "project"
-        project_path.mkdir()
-        run(["git", "init", "-b", "main"], cwd=project_path, check=True, capture_output=True)
-        run(
-            ["git", "config", "user.name", "AgentPlaneX Tests"],
-            cwd=project_path,
-            check=True,
-        )
-        run(
-            ["git", "config", "user.email", "agentplanex-tests@example.invalid"],
-            cwd=project_path,
-            check=True,
-        )
-        (project_path / "README.md").write_text("# Test Project\n", encoding="utf-8")
-        run(["git", "add", "README.md"], cwd=project_path, check=True)
-        run(["git", "commit", "-m", "chore: initialize project"], cwd=project_path, check=True)
-        return project_path
+        return _initialize_git_project(project_path)
 
     return create_project

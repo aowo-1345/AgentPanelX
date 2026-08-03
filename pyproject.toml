@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-agentplanex = "agentplanex.cli:main"
+agentplanex-owner = "agentplanex.cli:main"
 
 [dependency-groups]
 dev = [
@@ -62,6 +62,7 @@ markers = [
     "unit: Unit tests (fast, no external dependencies)",
     "integration: Integration tests (may require external services)",
     "e2e: User-facing end-to-end tests (full system tests)",
+    "project_owner_agent: Standalone Project Owner Agent tests",
     "live_model: Optional credentialed live-model smoke tests",
     "slow: Slow tests that should be run less frequently",
 ]

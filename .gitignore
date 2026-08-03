@@ -26,3 +26,5 @@ htmlcov/
 .references/
 
 .omo/
+
+.local/
