@@ -13,6 +13,7 @@ class AgentExitStatus(StrEnum):
     MILESTONE_RUN_QUEUED = "MilestoneRunQueued"
     TRIAGE_DEVELOPMENT_COMPLETED = "TriageDevelopmentCompleted"
     AGENT_TASK_QUEUED = "AgentTaskQueued"
+    MANUAL_DRIVE_FAILED = "ManualDriveFailed"
     REPEATED_FORMAT_ERROR = "RepeatedFormatError"
     STEP_LIMIT_EXCEEDED = "StepLimitExceeded"
     UNHANDLED_EXCEPTION = "UnhandledException"

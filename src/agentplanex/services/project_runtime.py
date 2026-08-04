@@ -7,6 +7,10 @@ from uuid import uuid4
 
 from agentplanex.domains import (
     Action,
+    AgentExit,
+    AgentExitStatus,
+    ExecutionEvent,
+    ExecutionEventType,
     OwnerActivation,
     ProjectOwnerTask,
     ProjectOwnerTaskType,
@@ -31,6 +35,16 @@ from agentplanex.services.project_owner import ProjectOwnerService
 from agentplanex.services.runtime_context import RuntimeContextService
 
 type PlanDecisionAction = Literal["approve", "reject"]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolActivationDriveResult:
+    """One developer-supplied step inside a durable Owner activation."""
+
+    activation: OwnerActivation
+    started: bool
+    tool_result: ToolExecutionResult | None
+    exit: AgentExit | None
 
 
 @dataclass(slots=True)
@@ -89,6 +103,94 @@ class ProjectRuntimeService:
             context = self.owner.ensure_state(connection)
         return self.driver.drive_next(context.triage_id)
 
+    def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult:
+        """Drive one activation step with a supplied Tool Action, without a model."""
+
+        with self.database.transaction() as connection:
+            context = self.owner.ensure_state(connection)
+        claim = self.driver.claim_for_tool(context.triage_id)
+        if claim.started:
+            self._publish_tool_loop_entered(claim.activation)
+
+        try:
+            tool_result = self.owner.execute_activation_action(
+                claim.activation,
+                action,
+            )
+        except Exception as error:
+            return self._fail_tool_activation(
+                claim.activation,
+                claim.started,
+                error,
+            )
+
+        result_exit = tool_result.exit
+        activation = claim.activation
+        if result_exit is not None:
+            activation = self.driver.finish(activation, result_exit)
+            self._publish_tool_loop_exited(activation, result_exit)
+        else:
+            activation = self.driver.release_tool(activation)
+        return ToolActivationDriveResult(
+            activation=activation,
+            started=claim.started,
+            tool_result=tool_result,
+            exit=result_exit,
+        )
+
+    def fail_activation(self, reason: str) -> ToolActivationDriveResult:
+        """Explicitly fail a waiting or interrupted Tool-driven Owner loop."""
+
+        failure = reason.strip()
+        if not failure:
+            raise ValueError("Project Owner failure reason must not be empty")
+        with self.database.transaction() as connection:
+            context = self.owner.ensure_state(connection)
+        claim = self.driver.claim_for_tool_failure(context.triage_id)
+        if claim.started:
+            self._publish_tool_loop_entered(claim.activation)
+        result_exit = AgentExit(
+            status=AgentExitStatus.MANUAL_DRIVE_FAILED,
+            content=failure,
+        )
+        activation = self.driver.finish(claim.activation, result_exit)
+        self._publish_tool_loop_exited(activation, result_exit)
+        return ToolActivationDriveResult(
+            activation=activation,
+            started=claim.started,
+            tool_result=None,
+            exit=result_exit,
+        )
+
+    def reply_to_activation(self, content: str) -> ToolActivationDriveResult:
+        """Finish a Tool-driven activation with a persisted Owner reply."""
+
+        with self.database.transaction() as connection:
+            context = self.owner.ensure_state(connection)
+        claim = self.driver.claim_for_tool(context.triage_id)
+        if claim.started:
+            self._publish_tool_loop_entered(claim.activation)
+        try:
+            result_exit = self.owner.reply_to_activation(
+                claim.activation,
+                content,
+            )
+        except Exception as error:
+            return self._fail_tool_activation(
+                claim.activation,
+                claim.started,
+                error,
+            )
+
+        activation = self.driver.finish(claim.activation, result_exit)
+        self._publish_tool_loop_exited(activation, result_exit)
+        return ToolActivationDriveResult(
+            activation=activation,
+            started=claim.started,
+            tool_result=None,
+            exit=result_exit,
+        )
+
     def start_first_run(self) -> MilestoneRunQueued:
         """Apply the explicit first-Run command through the real Delivery Service."""
         with self.database.transaction() as connection:
@@ -115,7 +217,68 @@ class ProjectRuntimeService:
 
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit Tool Action without starting an Owner Loop."""
+
+        with self.database.transaction() as connection:
+            context = self.owner.ensure_state(connection)
+            unfinished = self.activations.get_unfinished(
+                connection,
+                context.triage_id,
+            )
+        if unfinished is not None:
+            raise ValueError(
+                "Project Owner has an unfinished activation; use drive tool so "
+                f"the Action is bound to {unfinished.activation_id}"
+            )
         return self.owner.execute_action(action)
+
+    def _fail_tool_activation(
+        self,
+        activation: OwnerActivation,
+        started: bool,
+        error: Exception,
+    ) -> ToolActivationDriveResult:
+        result_exit = AgentExit(
+            status=AgentExitStatus.UNHANDLED_EXCEPTION,
+            content=f"{type(error).__name__}: {error}",
+        )
+        failed = self.driver.finish(activation, result_exit)
+        self._publish_tool_loop_exited(failed, result_exit)
+        return ToolActivationDriveResult(
+            activation=failed,
+            started=started,
+            tool_result=None,
+            exit=result_exit,
+        )
+
+    def _publish_tool_loop_entered(self, activation: OwnerActivation) -> None:
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=activation.triage_id,
+                event_type=ExecutionEventType.REACT_LOOP_ENTERED,
+                react_loop_id=activation.activation_id,
+                payload={
+                    "task_type": activation.task_type.value,
+                    "driver_mode": "TOOL",
+                },
+            )
+        )
+
+    def _publish_tool_loop_exited(
+        self,
+        activation: OwnerActivation,
+        result: AgentExit,
+    ) -> None:
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=activation.triage_id,
+                event_type=ExecutionEventType.REACT_LOOP_EXITED,
+                react_loop_id=activation.activation_id,
+                payload={
+                    "agent_exit_status": result.status.value,
+                    "driver_mode": "TOOL",
+                },
+            )
+        )
 
     def _submit_plan_decision(
         self,

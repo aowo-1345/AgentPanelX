@@ -16,6 +16,7 @@ from agentplanex.domains import (
     MilestoneSnapshot,
     MilestoneState,
     OwnerActivation,
+    OwnerActivationMode,
     OwnerActivationStatus,
     ProjectOwnerAgent,
     ProjectOwnerTaskType,
@@ -168,7 +169,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 7
+    assert schema_version[0] == 8
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -254,6 +255,7 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "task_type",
             "message_id",
             "status",
+            "driver_mode",
             "created_at",
             "started_at",
             "finished_at",
@@ -312,11 +314,12 @@ def test_competing_connections_claim_only_one_activation(
 
     def claim():
         with database.transaction() as connection:
-            return activations.claim_next(
-                connection,
-                "triage-claim",
-                datetime.now(UTC),
-            )
+                return activations.claim_next(
+                    connection,
+                    "triage-claim",
+                    datetime.now(UTC),
+                    OwnerActivationMode.MODEL,
+                )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = tuple(executor.submit(claim) for _ in range(2))
@@ -327,6 +330,9 @@ def test_competing_connections_claim_only_one_activation(
         persisted = activations.list_by_triage_id(connection, "triage-claim")
     assert [activation.status for activation in persisted].count(
         OwnerActivationStatus.RUNNING
+    ) == 1
+    assert [activation.driver_mode for activation in persisted].count(
+        OwnerActivationMode.MODEL
     ) == 1
     assert [activation.status for activation in persisted].count(
         OwnerActivationStatus.PENDING

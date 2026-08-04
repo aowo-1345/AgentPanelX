@@ -19,6 +19,7 @@ from agentplanex.bootstrap import create_project_runtime  # noqa: E402
 from agentplanex.domains import (  # noqa: E402
     Action,
     AgentExit,
+    AgentExitStatus,
     OwnerActivation,
     OwnerActivationStatus,
     StageRun,
@@ -29,6 +30,9 @@ from agentplanex.services.delivery_runner import DeliveryDriveResult  # noqa: E4
 from agentplanex.services.owner_activation import ActivationDriveResult  # noqa: E402
 from agentplanex.services.planning import PlanDecision  # noqa: E402
 from agentplanex.services.project_control import ProjectControlView  # noqa: E402
+from agentplanex.services.project_runtime import (  # noqa: E402
+    ToolActivationDriveResult,
+)
 
 type ToolRunner = Callable[[Action], ToolExecutionResult]
 type InputReader = Callable[[str], str]
@@ -37,6 +41,9 @@ type InteractionAction = Literal[
     "approve",
     "reject",
     "drive",
+    "drive-tool",
+    "drive-reply",
+    "drive-fail",
     "start",
     "drive-delivery",
     "view",
@@ -52,6 +59,12 @@ class RuntimeCommands(Protocol):
 
     def drive_next_activation(self) -> ActivationDriveResult: ...
 
+    def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult: ...
+
+    def reply_to_activation(self, content: str) -> ToolActivationDriveResult: ...
+
+    def fail_activation(self, reason: str) -> ToolActivationDriveResult: ...
+
     def start_first_run(self) -> MilestoneRunQueued: ...
 
     def drive_delivery(self) -> DeliveryDriveResult: ...
@@ -65,6 +78,7 @@ class RuntimeCommands(Protocol):
 class _Interaction:
     action: InteractionAction
     message: str = ""
+    tool_action: Action | None = None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -167,6 +181,14 @@ def _dispatch(
         )
     if command.action == "drive":
         return _drive_once(runtime, stdout=stdout)
+    if command.action == "drive-tool":
+        if command.tool_action is None:
+            raise RuntimeError("Tool drive is missing its Tool Action")
+        return _drive_tool_once(runtime, command.tool_action, stdout=stdout)
+    if command.action == "drive-reply":
+        return _drive_reply_once(runtime, command.message, stdout=stdout)
+    if command.action == "drive-fail":
+        return _drive_fail_once(runtime, command.message, stdout=stdout)
     if command.action == "start":
         return _start_first_run(runtime, stdout=stdout)
     if command.action == "drive-delivery":
@@ -193,9 +215,29 @@ def _parse_command(command_text: str) -> Action | _Interaction:
             raise ValueError("message content must not be empty")
         return _Interaction("message", message.strip())
     if command == "drive":
-        if separator:
-            raise ValueError("drive does not accept a message")
-        return _Interaction("drive")
+        if not separator:
+            return _Interaction("drive")
+        driver, driver_separator, payload = message.strip().partition(" ")
+        if driver == "model":
+            if driver_separator:
+                raise ValueError("drive model does not accept a message")
+            return _Interaction("drive")
+        if driver == "tool":
+            if not driver_separator or not payload.strip():
+                raise ValueError("drive tool requires a Tool Action JSON object")
+            return _Interaction(
+                "drive-tool",
+                tool_action=_parse_action(payload.strip()),
+            )
+        if driver == "reply":
+            if not driver_separator or not payload.strip():
+                raise ValueError("drive reply content must not be empty")
+            return _Interaction("drive-reply", payload.strip())
+        if driver == "fail":
+            if not driver_separator or not payload.strip():
+                raise ValueError("drive fail reason must not be empty")
+            return _Interaction("drive-fail", payload.strip())
+        raise ValueError("drive mode must be model, tool, reply, or fail")
     if command == "start":
         if separator:
             raise ValueError("start does not accept a message")
@@ -317,6 +359,7 @@ def _drive_once(
         json.dumps(
             {
                 "action": "drive",
+                "driver_mode": "MODEL",
                 "ok": succeeded,
                 "claimed": driven.activation is not None,
                 "activation": (
@@ -324,6 +367,113 @@ def _drive_once(
                     if driven.activation is not None
                     else None
                 ),
+                "result": _agent_exit_json(driven.exit),
+            },
+            ensure_ascii=False,
+        ),
+        file=output,
+    )
+    return 0 if succeeded else 1
+
+
+def _drive_tool_once(
+    runtime: RuntimeCommands,
+    action: Action,
+    *,
+    stdout: TextIO | None = None,
+) -> int:
+    output = stdout if stdout is not None else sys.stdout
+    try:
+        driven = runtime.drive_activation_tool(action)
+    except Exception as error:
+        _print_command_error("drive tool", error, output)
+        return 1
+
+    tool_result = driven.tool_result
+    succeeded = (
+        tool_result is not None
+        and _succeeded(tool_result)
+        and driven.activation.status is not OwnerActivationStatus.FAILED
+    )
+    print(
+        json.dumps(
+            {
+                "action": "drive",
+                "driver_mode": "TOOL",
+                "step": "tool",
+                "ok": succeeded,
+                "started": driven.started,
+                "activation": _activation_json(driven.activation),
+                "tool_action": {
+                    "call_id": action.get("call_id"),
+                    "tool": action.get("tool"),
+                },
+                "result": (
+                    tool_result.output if tool_result is not None else None
+                ),
+                "exit": _agent_exit_json(driven.exit),
+            },
+            ensure_ascii=False,
+        ),
+        file=output,
+    )
+    return 0 if succeeded else 1
+
+
+def _drive_reply_once(
+    runtime: RuntimeCommands,
+    content: str,
+    *,
+    stdout: TextIO | None = None,
+) -> int:
+    return _finish_tool_drive(
+        "reply",
+        lambda: runtime.reply_to_activation(content),
+        stdout=stdout,
+    )
+
+
+def _drive_fail_once(
+    runtime: RuntimeCommands,
+    reason: str,
+    *,
+    stdout: TextIO | None = None,
+) -> int:
+    return _finish_tool_drive(
+        "fail",
+        lambda: runtime.fail_activation(reason),
+        stdout=stdout,
+    )
+
+
+def _finish_tool_drive(
+    step: Literal["reply", "fail"],
+    finish: Callable[[], ToolActivationDriveResult],
+    *,
+    stdout: TextIO | None = None,
+) -> int:
+    output = stdout if stdout is not None else sys.stdout
+    try:
+        driven = finish()
+    except Exception as error:
+        _print_command_error(f"drive {step}", error, output)
+        return 1
+
+    expected_status = (
+        AgentExitStatus.REPLY_TO_HUMAN
+        if step == "reply"
+        else AgentExitStatus.MANUAL_DRIVE_FAILED
+    )
+    succeeded = driven.exit is not None and driven.exit.status is expected_status
+    print(
+        json.dumps(
+            {
+                "action": "drive",
+                "driver_mode": "TOOL",
+                "step": step,
+                "ok": succeeded,
+                "started": driven.started,
+                "activation": _activation_json(driven.activation),
                 "result": _agent_exit_json(driven.exit),
             },
             ensure_ascii=False,
@@ -436,6 +586,11 @@ def _activation_json(activation: OwnerActivation) -> dict[str, object]:
         "task_type": activation.task_type.value,
         "message_id": activation.message_id,
         "status": activation.status.value,
+        "driver_mode": (
+            activation.driver_mode.value
+            if activation.driver_mode is not None
+            else None
+        ),
         "created_at": activation.created_at.isoformat(),
         "started_at": (
             activation.started_at.isoformat()

@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _INITIAL_SCHEMA = (
     """
@@ -122,10 +122,19 @@ _INITIAL_SCHEMA = (
         message_id TEXT NOT NULL,
         status TEXT NOT NULL
             CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED')),
+        driver_mode TEXT
+            CHECK (driver_mode IN ('MODEL', 'TOOL')),
         created_at TEXT NOT NULL,
         started_at TEXT,
         finished_at TEXT,
-        failure TEXT
+        failure TEXT,
+        CHECK (
+            (
+                status = 'PENDING'
+                AND (driver_mode IS NULL OR driver_mode = 'TOOL')
+            )
+            OR (status != 'PENDING' AND driver_mode IS NOT NULL)
+        )
     )
     """,
     """

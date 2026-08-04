@@ -10,7 +10,10 @@ from agentplanex.services.owner_activation import (
 from agentplanex.services.planning import PlanningService
 from agentplanex.services.project_control import ProjectControlQuery, ProjectControlView
 from agentplanex.services.project_owner import ProjectOwnerService
-from agentplanex.services.project_runtime import ProjectRuntimeService
+from agentplanex.services.project_runtime import (
+    ProjectRuntimeService,
+    ToolActivationDriveResult,
+)
 from agentplanex.services.runtime_context import RuntimeContextService
 
 __all__ = [
@@ -25,4 +28,5 @@ __all__ = [
     "ProjectOwnerService",
     "ProjectRuntimeService",
     "RuntimeContextService",
+    "ToolActivationDriveResult",
 ]

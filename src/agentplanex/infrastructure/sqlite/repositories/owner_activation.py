@@ -6,6 +6,7 @@ from typing import cast
 
 from agentplanex.domains import (
     OwnerActivation,
+    OwnerActivationMode,
     OwnerActivationStatus,
     ProjectOwnerTaskType,
 )
@@ -27,12 +28,13 @@ class SQLiteOwnerActivationRepository:
                 task_type,
                 message_id,
                 status,
+                driver_mode,
                 created_at,
                 started_at,
                 finished_at,
                 failure
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             self._values(activation),
         )
@@ -84,6 +86,7 @@ class SQLiteOwnerActivationRepository:
         connection: sqlite3.Connection,
         triage_id: str,
         started_at: datetime,
+        driver_mode: OwnerActivationMode,
     ) -> OwnerActivation | None:
         """Claim the oldest pending activation when this Triage is idle.
 
@@ -94,12 +97,19 @@ class SQLiteOwnerActivationRepository:
         row = connection.execute(
             f"""
             UPDATE owner_activation
-            SET status = ?, started_at = ?
+            SET status = ?, driver_mode = ?, started_at = COALESCE(started_at, ?)
             WHERE activation_id = (
                 SELECT candidate.activation_id
                 FROM owner_activation AS candidate
                 WHERE candidate.triage_id = ?
                   AND candidate.status = ?
+                  AND (
+                      candidate.driver_mode IS NULL
+                      OR (
+                          ? = ?
+                          AND candidate.driver_mode = ?
+                      )
+                  )
                   AND NOT EXISTS (
                       SELECT 1
                       FROM owner_activation AS running
@@ -114,9 +124,13 @@ class SQLiteOwnerActivationRepository:
             """,
             (
                 OwnerActivationStatus.RUNNING.value,
+                driver_mode.value,
                 _encode_datetime(started_at),
                 triage_id,
                 OwnerActivationStatus.PENDING.value,
+                driver_mode.value,
+                OwnerActivationMode.TOOL.value,
+                OwnerActivationMode.TOOL.value,
                 triage_id,
                 OwnerActivationStatus.RUNNING.value,
                 OwnerActivationStatus.PENDING.value,
@@ -185,12 +199,42 @@ class SQLiteOwnerActivationRepository:
             )
         return self._from_row(row)
 
+    def release_tool(
+        self,
+        connection: sqlite3.Connection,
+        activation_id: str,
+    ) -> OwnerActivation:
+        """Release a non-terminal manual step for the next explicit Tool Action."""
+
+        row = connection.execute(
+            f"""
+            UPDATE owner_activation
+            SET status = ?
+            WHERE activation_id = ?
+              AND status = ?
+              AND driver_mode = ?
+            RETURNING {self._COLUMNS}
+            """,
+            (
+                OwnerActivationStatus.PENDING.value,
+                activation_id,
+                OwnerActivationStatus.RUNNING.value,
+                OwnerActivationMode.TOOL.value,
+            ),
+        ).fetchone()
+        if row is None:
+            raise LookupError(
+                f"Running Tool Owner activation not found: {activation_id}"
+            )
+        return self._from_row(row)
+
     _COLUMNS = """
         activation_id,
         triage_id,
         task_type,
         message_id,
         status,
+        driver_mode,
         created_at,
         started_at,
         finished_at,
@@ -206,6 +250,7 @@ class SQLiteOwnerActivationRepository:
             activation.task_type.value,
             activation.message_id,
             activation.status.value,
+            activation.driver_mode.value if activation.driver_mode is not None else None,
             _encode_datetime(activation.created_at),
             _encode_datetime(activation.started_at),
             _encode_datetime(activation.finished_at),
@@ -220,6 +265,11 @@ class SQLiteOwnerActivationRepository:
             task_type=ProjectOwnerTaskType(cast(str, row["task_type"])),
             message_id=cast(str, row["message_id"]),
             status=OwnerActivationStatus(cast(str, row["status"])),
+            driver_mode=(
+                OwnerActivationMode(cast(str, row["driver_mode"]))
+                if row["driver_mode"] is not None
+                else None
+            ),
             created_at=_decode_datetime(cast(str, row["created_at"])),
             started_at=_decode_optional_datetime(row["started_at"]),
             finished_at=_decode_optional_datetime(row["finished_at"]),

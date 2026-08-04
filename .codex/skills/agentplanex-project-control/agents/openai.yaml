@@ -1,4 +1,4 @@
 interface:
-  display_name: "AgentPlaneX 项目控制"
-  short_description: "检查并控制 AgentPlaneX 项目运行时"
-  default_prompt: "使用 $agentplanex-project-control 检查这个 AgentPlaneX 项目，并执行已授权的 Runtime 操作。"
+  display_name: "AgentPlaneX 项目介入"
+  short_description: "通过真实 Runtime 安全介入并验证项目开发流程状态"
+  default_prompt: "使用 $agentplanex-project-control 通过真实 Runtime 手动驱动并验证当前 AgentPlaneX 项目。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentPlaneX 项目观测"
+  short_description: "理解 AgentPlaneX 项目运行状态与交付历史上下文"
+  default_prompt: "使用 $agentplanex-project-observe 定位当前 AgentPlaneX 项目的运行状态和交付上下文。"

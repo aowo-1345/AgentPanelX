@@ -94,13 +94,39 @@ class JBBModel:
         if len(actions) != len(outputs):
             raise JBBModelError("every tool action must have exactly one observation")
         return [
-            {
-                "type": "function_call_output",
-                "call_id": action["call_id"],
-                "output": _render_output(output),
-            }
+            format_tool_output_message(action, output)
             for action, output in zip(actions, outputs, strict=True)
         ]
+
+
+def format_tool_call_message(action: Action) -> Message:
+    """Encode one explicit Action as a Responses API function-call input."""
+
+    tool, call_id, arguments = _action_parts(action)
+    return {
+        "type": "function_call",
+        "call_id": call_id,
+        "name": tool,
+        "arguments": json.dumps(
+            arguments,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    }
+
+
+def format_tool_output_message(
+    action: Action,
+    output: ActionOutput,
+) -> Message:
+    """Encode one Tool observation for persisted Responses API history."""
+
+    _, call_id, _ = _action_parts(action)
+    return {
+        "type": "function_call_output",
+        "call_id": call_id,
+        "output": _render_output(output),
+    }
 
 
 def _prepare_input(messages: list[Message]) -> tuple[str, list[Message]]:
@@ -178,6 +204,19 @@ def _raise_format_error(error: str, response: Message) -> NoReturn:
 
 def _render_output(output: ActionOutput) -> str:
     return json.dumps(output, ensure_ascii=False)
+
+
+def _action_parts(action: Action) -> tuple[str, str, dict[str, Any]]:
+    tool = action.get("tool")
+    call_id = action.get("call_id")
+    arguments = action.get("arguments")
+    if not isinstance(tool, str) or not tool.strip():
+        raise ValueError("Tool action must contain a non-empty string 'tool'")
+    if not isinstance(call_id, str) or not call_id.strip():
+        raise ValueError("Tool action must contain a non-empty string 'call_id'")
+    if not isinstance(arguments, dict):
+        raise ValueError("Tool action must contain an object 'arguments'")
+    return tool, call_id, arguments
 
 
 def _without_extra(message: Message) -> Message:

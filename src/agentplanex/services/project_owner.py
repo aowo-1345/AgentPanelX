@@ -31,7 +31,11 @@ from agentplanex.project_owner_agent.agent import AgentConfig, DefaultAgent
 from agentplanex.project_owner_agent.approval import ApprovalMode, TerminalApproval
 from agentplanex.project_owner_agent.exception import AgentFlowExit
 from agentplanex.project_owner_agent.interactive import InteractiveAgent
-from agentplanex.project_owner_agent.models.jbb import JBBModel
+from agentplanex.project_owner_agent.models.jbb import (
+    JBBModel,
+    format_tool_call_message,
+    format_tool_output_message,
+)
 from agentplanex.project_owner_agent.tools import ToolCatalog
 from agentplanex.services.event_bus import EventBus
 from agentplanex.settings import Settings
@@ -126,13 +130,16 @@ class ProjectOwnerService:
         except Exception as error:
             return _unhandled_exit(error)
 
-        react_loop_id = uuid4().hex
+        react_loop_id = activation.activation_id
         self.event_bus.publish(
             ExecutionEvent(
                 triage_id=context.triage_id,
                 event_type=ExecutionEventType.REACT_LOOP_ENTERED,
                 react_loop_id=react_loop_id,
-                payload={"task_type": activation.task_type.value},
+                payload={
+                    "task_type": activation.task_type.value,
+                    "driver_mode": "MODEL",
+                },
             )
         )
         try:
@@ -146,7 +153,10 @@ class ProjectOwnerService:
                 triage_id=context.triage_id,
                 event_type=ExecutionEventType.REACT_LOOP_EXITED,
                 react_loop_id=react_loop_id,
-                payload={"agent_exit_status": result.status.value},
+                payload={
+                    "agent_exit_status": result.status.value,
+                    "driver_mode": "MODEL",
+                },
             )
         )
         return result
@@ -157,9 +167,62 @@ class ProjectOwnerService:
             context = self.ensure_state(connection)
         return self.tool_executor(context, action)
 
+    def execute_activation_action(
+        self,
+        activation: OwnerActivation,
+        action: Action,
+    ) -> ToolExecutionResult:
+        """Execute and persist one Tool step inside a claimed manual Owner loop."""
+
+        context, _ = self._load_state_for_activation(
+            activation,
+            allow_advanced_checkpoint=True,
+        )
+        self.append_messages(context, (format_tool_call_message(action),))
+        try:
+            result = self._execute_latest_context(context, action)
+        except Exception as error:
+            self.append_messages(
+                context,
+                (
+                    format_tool_output_message(
+                        action,
+                        {
+                            "ok": False,
+                            "error": f"{type(error).__name__}: {error}",
+                        }
+                    ),
+                ),
+            )
+            raise
+        self.append_messages(
+            context,
+            (format_tool_output_message(action, result.output),),
+        )
+        return result
+
+    def reply_to_activation(
+        self,
+        activation: OwnerActivation,
+        content: str,
+    ) -> AgentExit:
+        """Persist a manual Owner reply and end the claimed loop."""
+
+        reply = content.strip()
+        if not reply:
+            raise ValueError("Project Owner reply must not be empty")
+        context, _ = self._load_state_for_activation(
+            activation,
+            allow_advanced_checkpoint=True,
+        )
+        self.append_messages(context, ({"role": "assistant", "content": reply},))
+        return AgentExit(status=AgentExitStatus.REPLY_TO_HUMAN, content=reply)
+
     def _load_state_for_activation(
         self,
         activation: OwnerActivation,
+        *,
+        allow_advanced_checkpoint: bool = False,
     ) -> tuple[ProjectRuntimeContext, tuple[Message, ...]]:
         if activation.status is not OwnerActivationStatus.RUNNING:
             raise ValueError(
@@ -175,7 +238,10 @@ class ProjectOwnerService:
             owner = context.project_owner_agent
             if owner is None:
                 raise RuntimeError("Project Owner was not created")
-            if owner.message_id != activation.message_id:
+            if (
+                owner.message_id != activation.message_id
+                and not allow_advanced_checkpoint
+            ):
                 raise RuntimeError(
                     "Owner activation checkpoint is not the current message: "
                     f"{activation.message_id} != {owner.message_id}"

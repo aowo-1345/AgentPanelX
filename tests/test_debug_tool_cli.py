@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
@@ -426,7 +427,10 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
     react_loop_id = events[1].react_loop_id
     assert react_loop_id is not None
     assert all(event.react_loop_id == react_loop_id for event in events[1:])
-    assert events[1].payload == {"task_type": "USER_INPUT"}
+    assert events[1].payload == {
+        "task_type": "USER_INPUT",
+        "driver_mode": "MODEL",
+    }
     assert events[1].message_id == histories[0].message_id
     invocation_id = events[2].payload["invocation_id"]
     assert isinstance(invocation_id, str)
@@ -457,7 +461,8 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
     assert events[5].payload == {}
     assert events[6].message_id == histories[2].message_id
     assert events[6].payload == {
-        "agent_exit_status": "PlanApprovalRequested"
+        "agent_exit_status": "PlanApprovalRequested",
+        "driver_mode": "MODEL",
     }
     assistant_action = histories[1].message[0]
     assert assistant_action["extra"]["actions"][0]["tool"] == (
@@ -509,6 +514,253 @@ def test_executes_project_bound_action_without_constructing_a_model(
         "exit": None,
     }
     assert (project_path / ".agentplanex" / "agentplanex.sqlite3").is_file()
+
+
+def test_tool_driven_delivery_uses_same_activation_without_owner_model(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    _write_specs(project_path)
+
+    class _UnexpectedModel:
+        def __init__(self, **_kwargs: object) -> None:
+            raise AssertionError("Tool-driven activation must not construct a model")
+
+    monkeypatch.setattr(project_owner_service, "JBBModel", _UnexpectedModel)
+
+    request_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"request_plan_approval","arguments":{}}',
+        ]
+    )
+    capfd.readouterr()
+    assert request_code == 0
+
+    approve_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "approve"]
+    )
+    approval = json.loads(capfd.readouterr().out)
+    assert approve_code == 0
+    activation_id = approval["activation"]["activation_id"]
+    assert approval["activation"]["driver_mode"] is None
+
+    update_action = {
+        "tool": "update_milestones",
+        "call_id": "manual-update",
+        "arguments": {
+            "reason": "Publish one observable manual delivery step.",
+            "milestones": [
+                {
+                    "key": "milestone-1",
+                    "objective": "Exercise Tool-driven Owner delivery.",
+                    "state": "pending",
+                    "stages": [
+                        {
+                            "key": "stage-1",
+                            "objective": "Produce the delivery artifact.",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    update_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            "drive",
+            "tool",
+            json.dumps(update_action),
+        ]
+    )
+    updated = json.loads(capfd.readouterr().out)
+
+    assert update_code == 0
+    assert updated["driver_mode"] == "TOOL"
+    assert updated["started"] is True
+    assert updated["activation"]["activation_id"] == activation_id
+    assert updated["activation"]["status"] == "PENDING"
+    assert updated["activation"]["driver_mode"] == "TOOL"
+    assert updated["result"]["accepted"] is True
+    assert updated["exit"] is None
+
+    bypass_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"bash","arguments":{"command":"pwd"}}',
+        ]
+    )
+    bypass = json.loads(capfd.readouterr().out)
+    assert bypass_code == 1
+    assert "use drive tool" in bypass["error"]
+
+    model_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive", "model"]
+    )
+    model_drive = json.loads(capfd.readouterr().out)
+    assert model_code == 1
+    assert "bound to Tool mode" in model_drive["error"]
+
+    next_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            "drive",
+            "tool",
+            '{"tool":"run_next_milestone","call_id":"manual-next",'
+            '"arguments":{}}',
+        ]
+    )
+    next_result = json.loads(capfd.readouterr().out)
+
+    assert next_code == 0
+    assert next_result["started"] is False
+    assert next_result["activation"]["activation_id"] == activation_id
+    assert next_result["activation"]["status"] == "COMPLETED"
+    assert next_result["activation"]["driver_mode"] == "TOOL"
+    assert next_result["result"]["state"] == "FIRST_RUN_APPROVAL_REQUESTED"
+    assert next_result["exit"]["status"] == "FirstRunApprovalRequested"
+
+    histories = _loaded_message_histories(project_path)
+    messages = [message for history in histories for message in history.message]
+    calls = [message for message in messages if message.get("type") == "function_call"]
+    outputs = [
+        message
+        for message in messages
+        if message.get("type") == "function_call_output"
+    ]
+    assert [message["name"] for message in calls[-2:]] == [
+        "update_milestones",
+        "run_next_milestone",
+    ]
+    assert [message["call_id"] for message in outputs[-2:]] == [
+        "manual-update",
+        "manual-next",
+    ]
+
+    react_events = [
+        event
+        for event in _loaded_events(project_path)
+        if event.event_type.value in {"REACT_LOOP_ENTERED", "REACT_LOOP_EXITED"}
+    ]
+    assert [event.react_loop_id for event in react_events] == [
+        activation_id,
+        activation_id,
+    ]
+    assert react_events[0].payload == {
+        "task_type": "PLAN_DECISION",
+        "driver_mode": "TOOL",
+    }
+    assert react_events[1].payload == {
+        "agent_exit_status": "FirstRunApprovalRequested",
+        "driver_mode": "TOOL",
+    }
+
+    start_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "start"]
+    )
+    started = json.loads(capfd.readouterr().out)
+    assert start_code == 0
+    assert started["result"]["status"] == "IN_PROGRESS"
+
+
+def test_tool_driven_activation_recovers_across_cli_processes(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    script = Path(debug_tool_cli.__file__).resolve()
+
+    def invoke(*action: str) -> dict[str, object]:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--cwd",
+                str(project_path),
+                "--print",
+                *action,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert completed.stderr == ""
+        parsed = json.loads(completed.stdout)
+        assert isinstance(parsed, dict)
+        return parsed
+
+    submitted = invoke("message", "Inspect status")
+    activation = submitted["activation"]
+    assert isinstance(activation, dict)
+    activation_id = activation["activation_id"]
+
+    driven = invoke(
+        "drive",
+        "tool",
+        json.dumps(
+            {
+                "tool": "bash",
+                "call_id": "cross-process-tool",
+                "arguments": {"command": "printf manual-step"},
+            }
+        ),
+    )
+    driven_activation = driven["activation"]
+    assert isinstance(driven_activation, dict)
+    assert driven["started"] is True
+    assert driven_activation["activation_id"] == activation_id
+    assert driven_activation["status"] == "PENDING"
+    assert driven_activation["driver_mode"] == "TOOL"
+    result = driven["result"]
+    assert isinstance(result, dict)
+    assert result["output"] == "manual-step"
+
+    replied = invoke("drive", "reply", "No change is needed.")
+    replied_activation = replied["activation"]
+    assert isinstance(replied_activation, dict)
+
+    assert replied["started"] is False
+    assert replied_activation["activation_id"] == activation_id
+    assert replied_activation["status"] == "COMPLETED"
+    assert replied_activation["driver_mode"] == "TOOL"
+    assert replied["result"] == {
+        "status": "ReplyToHuman",
+        "content": "No change is needed.",
+    }
+    messages = [
+        message
+        for history in _loaded_message_histories(project_path)
+        for message in history.message
+    ]
+    assert messages[-1] == {
+        "role": "assistant",
+        "content": "No change is needed.",
+    }
+
+    invoke("message", "Retry manually")
+    failed = invoke(
+        "drive",
+        "fail",
+        "Manual inspection found an unrecoverable debug state.",
+    )
+    failed_activation = failed["activation"]
+    assert isinstance(failed_activation, dict)
+    assert failed_activation["status"] == "FAILED"
+    assert failed_activation["failure"] == (
+        "Manual inspection found an unrecoverable debug state."
+    )
+    failed_result = failed["result"]
+    assert isinstance(failed_result, dict)
+    assert failed_result["status"] == "ManualDriveFailed"
 
 
 def test_talk_task_keeps_workspace_and_publishes_document_uri(

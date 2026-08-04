@@ -25,6 +25,7 @@ from agentplanex.services import (
     ProjectOwnerService,
     ProjectRuntimeService,
     RuntimeContextService,
+    ToolActivationDriveResult,
 )
 from agentplanex.services.delivery import MilestoneRunQueued
 from agentplanex.services.delivery_runner import DeliveryDriveResult, DeliveryRunner
@@ -136,6 +137,21 @@ class ProjectRuntime:
     def drive_next_activation(self) -> ActivationDriveResult:
         """Claim and process one pending Owner activation."""
         return self._service.drive_next_activation()
+
+    def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult:
+        """Drive one Owner activation step with a supplied Tool Action."""
+
+        return self._service.drive_activation_tool(action)
+
+    def reply_to_activation(self, content: str) -> ToolActivationDriveResult:
+        """Finish a Tool-driven Owner activation with a persisted reply."""
+
+        return self._service.reply_to_activation(content)
+
+    def fail_activation(self, reason: str) -> ToolActivationDriveResult:
+        """Explicitly fail a Tool-driven Owner activation."""
+
+        return self._service.fail_activation(reason)
 
     def start_first_run(self) -> MilestoneRunQueued:
         """Apply the first explicit Run approval and queue its first Stage."""

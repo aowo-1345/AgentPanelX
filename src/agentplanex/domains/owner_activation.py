@@ -16,6 +16,13 @@ class OwnerActivationStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class OwnerActivationMode(StrEnum):
+    """The actor currently responsible for consuming an activation."""
+
+    MODEL = "MODEL"
+    TOOL = "TOOL"
+
+
 @dataclass(frozen=True, slots=True)
 class OwnerActivation:
     """A durable pointer to one external input that needs Owner processing."""
@@ -25,6 +32,7 @@ class OwnerActivation:
     task_type: ProjectOwnerTaskType
     message_id: str
     status: OwnerActivationStatus = OwnerActivationStatus.PENDING
+    driver_mode: OwnerActivationMode | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -35,12 +43,24 @@ class OwnerActivation:
             if not getattr(self, field_name).strip():
                 raise ValueError(f"{field_name} must not be empty")
         if self.status is OwnerActivationStatus.PENDING:
-            if any(
-                value is not None
-                for value in (self.started_at, self.finished_at, self.failure)
-            ):
-                raise ValueError("Pending activation cannot have lifecycle results")
+            if self.driver_mode is None:
+                if any(
+                    value is not None
+                    for value in (self.started_at, self.finished_at, self.failure)
+                ):
+                    raise ValueError(
+                        "New pending activation cannot have lifecycle results"
+                    )
+                return
+            if self.driver_mode is not OwnerActivationMode.TOOL:
+                raise ValueError("Only a Tool activation can wait for another step")
+            if self.started_at is None:
+                raise ValueError("Resumable Tool activation must have started_at")
+            if self.finished_at is not None or self.failure is not None:
+                raise ValueError("Resumable Tool activation cannot have a terminal result")
             return
+        if self.driver_mode is None:
+            raise ValueError("Started activation must have a driver mode")
         if self.started_at is None:
             raise ValueError("Started activation must have started_at")
         if self.status is OwnerActivationStatus.RUNNING:
