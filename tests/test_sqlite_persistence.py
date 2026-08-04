@@ -3,6 +3,7 @@
 import shutil
 import subprocess
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,13 +12,17 @@ import pytest
 
 from agentplanex.domains import (
     MessageHistory,
+    OwnerActivation,
+    OwnerActivationStatus,
     ProjectOwnerAgent,
+    ProjectOwnerTaskType,
     ProjectRuntimeContext,
     SummaryHistory,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
+    SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteProjectRuntimeContextRepository,
     SQLiteSummaryHistoryRepository,
@@ -154,7 +159,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 4
+    assert schema_version[0] == 5
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -231,6 +236,17 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "started_at",
             "finished_at",
         ),
+        "owner_activation": (
+            "activation_id",
+            "triage_id",
+            "task_type",
+            "message_id",
+            "status",
+            "created_at",
+            "started_at",
+            "finished_at",
+            "failure",
+        ),
         "execution_event": (
             "event_id",
             "triage_id",
@@ -262,3 +278,44 @@ def test_schema_contains_current_control_plane_tables_and_columns(
                 ).fetchall()
             )
             assert actual_columns == columns
+
+
+def test_competing_connections_claim_only_one_activation(
+    project_path: Path,
+) -> None:
+    database = SQLiteDatabase.for_project(project_path)
+    activations = SQLiteOwnerActivationRepository()
+    initialize_schema(database)
+    with database.transaction() as connection:
+        for index in range(2):
+            activations.insert(
+                connection,
+                OwnerActivation(
+                    activation_id=f"activation-{index}",
+                    triage_id="triage-claim",
+                    task_type=ProjectOwnerTaskType.USER_INPUT,
+                    message_id=f"message-{index}",
+                ),
+            )
+
+    def claim():
+        with database.transaction() as connection:
+            return activations.claim_next(
+                connection,
+                "triage-claim",
+                datetime.now(UTC),
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(executor.submit(claim) for _ in range(2))
+        results = tuple(future.result() for future in futures)
+
+    assert sum(result is not None for result in results) == 1
+    with database.connection() as connection:
+        persisted = activations.list_by_triage_id(connection, "triage-claim")
+    assert [activation.status for activation in persisted].count(
+        OwnerActivationStatus.RUNNING
+    ) == 1
+    assert [activation.status for activation in persisted].count(
+        OwnerActivationStatus.PENDING
+    ) == 1

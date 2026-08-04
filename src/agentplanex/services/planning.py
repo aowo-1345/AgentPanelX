@@ -4,10 +4,13 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from uuid import uuid4
 
 from agentplanex.domains import (
     ExecutionEvent,
     ExecutionEventType,
+    OwnerActivation,
+    ProjectOwnerTaskType,
     ProjectRuntimeContext,
     RuntimeContextChangeReason,
 )
@@ -17,6 +20,7 @@ from agentplanex.infrastructure.sqlite import (
     initialize_schema,
 )
 from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteOwnerActivationRepository,
     SQLiteProjectRuntimeContextRepository,
 )
 from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
@@ -25,6 +29,7 @@ from agentplanex.services.runtime_context import RuntimeContextService
 
 SPEC_DOCUMENT_NAMES = ("architecture.md", "requirements.md", "roadmap.md")
 type PlanHardGate = Callable[[tuple[Path, ...]], None]
+type PlanDecisionMessageWriter = Callable[[sqlite3.Connection], str]
 
 
 class PlanningError(ValueError):
@@ -38,6 +43,7 @@ def pass_plan_hard_gate(_spec_documents: tuple[Path, ...]) -> None:
 @dataclass(frozen=True, slots=True)
 class PlanDecision:
     context: ProjectRuntimeContext
+    activation: OwnerActivation
     commit_sha: str | None = None
 
 
@@ -47,6 +53,9 @@ class PlanningService:
     database: SQLiteDatabase
     contexts: SQLiteProjectRuntimeContextRepository = field(
         default_factory=SQLiteProjectRuntimeContextRepository
+    )
+    activations: SQLiteOwnerActivationRepository = field(
+        default_factory=SQLiteOwnerActivationRepository
     )
     git: GitRepository | None = None
     review_plan: PlanHardGate = pass_plan_hard_gate
@@ -117,7 +126,12 @@ class PlanningService:
         )
         return updated
 
-    def approve_plan(self, triage_id: str) -> PlanDecision:
+    def approve_plan(
+        self,
+        triage_id: str,
+        *,
+        append_message: PlanDecisionMessageWriter,
+    ) -> PlanDecision:
         spec_documents = self._spec_documents()
         self._assert_plan_pending(triage_id)
         git = self.git
@@ -141,8 +155,9 @@ class PlanningService:
                 current_plan_commit_sha=commit_sha,
             )
 
-        updated = self._runtime_contexts().transition(
+        updated, activation = self._apply_decision(
             triage_id,
+            append_message=append_message,
             reason=RuntimeContextChangeReason.PLAN_APPROVED,
             mutate=approve,
         )
@@ -156,10 +171,16 @@ class PlanningService:
 
         return PlanDecision(
             context=updated,
+            activation=activation,
             commit_sha=commit_sha,
         )
 
-    def reject_plan(self, triage_id: str) -> PlanDecision:
+    def reject_plan(
+        self,
+        triage_id: str,
+        *,
+        append_message: PlanDecisionMessageWriter,
+    ) -> PlanDecision:
         def reject(current: ProjectRuntimeContext) -> ProjectRuntimeContext:
             self._assert_pending_action(current)
             return replace(
@@ -172,8 +193,9 @@ class PlanningService:
                 pending_action=None,
             )
 
-        updated = self._runtime_contexts().transition(
+        updated, activation = self._apply_decision(
             triage_id,
+            append_message=append_message,
             reason=RuntimeContextChangeReason.PLAN_REJECTED,
             mutate=reject,
         )
@@ -184,7 +206,34 @@ class PlanningService:
             )
         )
 
-        return PlanDecision(context=updated)
+        return PlanDecision(context=updated, activation=activation)
+
+    def _apply_decision(
+        self,
+        triage_id: str,
+        *,
+        append_message: PlanDecisionMessageWriter,
+        reason: RuntimeContextChangeReason,
+        mutate: Callable[[ProjectRuntimeContext], ProjectRuntimeContext],
+    ) -> tuple[ProjectRuntimeContext, OwnerActivation]:
+        with self.database.transaction() as connection:
+            updated, context_event = self._runtime_contexts().transition_in_transaction(
+                connection,
+                triage_id,
+                reason=reason,
+                mutate=mutate,
+            )
+            message_id = append_message(connection)
+            activation = OwnerActivation(
+                activation_id=uuid4().hex,
+                triage_id=triage_id,
+                task_type=ProjectOwnerTaskType.PLAN_DECISION,
+                message_id=message_id,
+            )
+            self.activations.insert(connection, activation)
+        if context_event is not None:
+            self.event_bus.publish(context_event)
+        return updated, activation
 
     def _spec_documents(self) -> tuple[Path, ...]:
         paths = tuple(self.project_path / name for name in SPEC_DOCUMENT_NAMES)

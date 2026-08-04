@@ -4,27 +4,33 @@ from pathlib import Path
 
 from agentplanex.domains import (
     Action,
-    AgentExit,
-    ProjectOwnerTask,
-    ProjectOwnerTaskType,
+    OwnerActivation,
     ToolExecutionResult,
-    UserInteractionAction,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
+from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteOwnerActivationRepository,
+)
 from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import (
     EventBus,
     PlanningService,
+    ProjectOwnerService,
     ProjectRuntimeService,
     RuntimeContextService,
 )
+from agentplanex.services.owner_activation import (
+    ActivationDriveResult,
+    OwnerActivationDriver,
+)
+from agentplanex.services.planning import PlanDecision
 from agentplanex.settings import Settings
 
 
 class ProjectRuntime:
-    """Expose one long-lived Project Owner over project-scoped tools."""
+    """Expose one persisted Project Owner through project-scoped commands."""
 
     def __init__(
         self,
@@ -41,45 +47,58 @@ class ProjectRuntime:
         initialize_schema(database)
         event_bus = EventBus((SQLiteTimelineRecorder(database),))
         runtime_contexts = RuntimeContextService(database, event_bus)
+        activations = SQLiteOwnerActivationRepository()
         planning = PlanningService(
             project_path=project_path,
             database=database,
             event_bus=event_bus,
             runtime_contexts=runtime_contexts,
+            activations=activations,
         )
         executions = create_project_executions(
             project_path,
             settings.runtime,
             planning,
         )
-        self._service = ProjectRuntimeService(
-            project_path=project_path,
+        owner = ProjectOwnerService(
+            database=database,
             settings=settings,
             approval_mode=approval_mode,
             tools=executions.tools,
-            execute_tool=executions.execute,
+            tool_executor=executions.execute,
+            event_bus=event_bus,
+        )
+        driver = OwnerActivationDriver(
+            database=database,
+            run_owner=owner.run_activation,
+            activations=activations,
+        )
+        self._service = ProjectRuntimeService(
+            database=database,
+            owner=owner,
             planning=planning,
             event_bus=event_bus,
             runtime_contexts=runtime_contexts,
+            activations=activations,
+            driver=driver,
         )
 
-    def run(self, task: str = "") -> AgentExit:
-        """Run one Project Owner turn."""
-        return self._service.run(
-            ProjectOwnerTask(
-                type=ProjectOwnerTaskType.USER_INPUT,
-                content=task,
-            )
-        )
+    def submit_message(self, content: str) -> OwnerActivation:
+        """Persist user input and enqueue one durable Owner activation."""
+        return self._service.submit_user_message(content)
+
+    def approve_plan(self) -> PlanDecision:
+        """Approve the pending Plan and enqueue the Owner decision input."""
+        return self._service.approve_plan()
+
+    def reject_plan(self, feedback: str = "") -> PlanDecision:
+        """Reject the pending Plan and enqueue the Owner decision input."""
+        return self._service.reject_plan(feedback)
+
+    def drive_next_activation(self) -> ActivationDriveResult:
+        """Claim and process one pending Owner activation."""
+        return self._service.drive_next_activation()
 
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit tool action without entering the Agent loop."""
         return self._service.execute_action(action)
-
-    def interact(
-        self,
-        action: UserInteractionAction = "message",
-        message: str = "",
-    ) -> AgentExit:
-        """Apply one external user interaction and resume the Owner."""
-        return self._service.interact(action=action, message=message)

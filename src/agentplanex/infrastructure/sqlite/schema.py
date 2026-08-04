@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _INITIAL_SCHEMA = (
     """
@@ -103,6 +103,30 @@ _INITIAL_SCHEMA = (
     """
     CREATE INDEX stage_run_snapshot_milestone_idx
     ON stage_run (snapshot_id, milestone_key, stage_key)
+    """,
+    """
+    CREATE TABLE owner_activation (
+        activation_id TEXT PRIMARY KEY,
+        triage_id TEXT NOT NULL,
+        task_type TEXT NOT NULL
+            CHECK (task_type IN ('USER_INPUT', 'PLAN_DECISION', 'EXECUTION_RESULT')),
+        message_id TEXT NOT NULL,
+        status TEXT NOT NULL
+            CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED')),
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        failure TEXT
+    )
+    """,
+    """
+    CREATE INDEX owner_activation_triage_status_idx
+    ON owner_activation (triage_id, status, created_at, activation_id)
+    """,
+    """
+    CREATE UNIQUE INDEX owner_activation_one_running_idx
+    ON owner_activation (triage_id)
+    WHERE status = 'RUNNING'
     """,
     """
     CREATE TABLE execution_event (

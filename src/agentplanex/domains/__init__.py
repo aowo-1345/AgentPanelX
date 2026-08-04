@@ -12,6 +12,7 @@ from agentplanex.domains.execution_event import (
     RuntimeContextChangeReason,
 )
 from agentplanex.domains.message_history import Message, MessageHistory
+from agentplanex.domains.owner_activation import OwnerActivation, OwnerActivationStatus
 from agentplanex.domains.project_owner_agent import ProjectOwnerAgent
 from agentplanex.domains.project_runtime_context import ProjectRuntimeContext
 from agentplanex.domains.summary_history import SummaryHistory
@@ -24,7 +25,6 @@ from agentplanex.domains.tools import (
     ToolExecutor,
     ToolSchema,
 )
-from agentplanex.domains.user_interaction import UserInteractionAction
 
 __all__ = [
     "BASH_TOOL_NAME",
@@ -36,6 +36,8 @@ __all__ = [
     "ExecutionEventType",
     "Message",
     "MessageHistory",
+    "OwnerActivation",
+    "OwnerActivationStatus",
     "ProjectOwnerAgent",
     "ProjectOwnerTask",
     "ProjectOwnerTaskType",
@@ -46,5 +48,4 @@ __all__ = [
     "ToolExecutionResult",
     "ToolExecutor",
     "ToolSchema",
-    "UserInteractionAction",
 ]

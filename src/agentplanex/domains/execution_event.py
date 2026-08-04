@@ -23,6 +23,7 @@ class RuntimeContextChangeReason(StrEnum):
 
 class ProjectOwnerTaskType(StrEnum):
     USER_INPUT = "USER_INPUT"
+    PLAN_DECISION = "PLAN_DECISION"
     EXECUTION_RESULT = "EXECUTION_RESULT"
 
 

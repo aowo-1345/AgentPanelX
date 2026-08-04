@@ -1,5 +1,6 @@
 """Unified project Runtime Context transitions and observable diffs."""
 
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from datetime import datetime
@@ -17,6 +18,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.services.event_bus import EventBus
 
 type ContextMutation = Callable[[ProjectRuntimeContext], ProjectRuntimeContext]
+type ContextTransition = tuple[ProjectRuntimeContext, ExecutionEvent | None]
 
 _PERSISTED_FIELD_NAMES = tuple(
     item.name
@@ -41,28 +43,49 @@ class RuntimeContextService:
         mutate: ContextMutation,
     ) -> ProjectRuntimeContext:
         with self.database.transaction() as connection:
-            current = self.contexts.get(connection, triage_id)
-            if current is None:
-                raise LookupError(f"Project Runtime Context not found: {triage_id}")
-            updated = mutate(current)
-            if updated.triage_id != current.triage_id:
-                raise ValueError("Runtime Context transition cannot change triage_id")
-            changes = _context_changes(current, updated)
-            if changes:
-                self.contexts.update(connection, updated)
-
-        if changes:
-            self.event_bus.publish(
-                ExecutionEvent(
-                    triage_id=triage_id,
-                    event_type=ExecutionEventType.RUNTIME_CONTEXT_UPDATED,
-                    payload={
-                        "reason": reason.value,
-                        "changes": changes,
-                    },
-                )
+            updated, event = self.transition_in_transaction(
+                connection,
+                triage_id,
+                reason=reason,
+                mutate=mutate,
             )
+
+        if event is not None:
+            self.event_bus.publish(event)
         return updated
+
+    def transition_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+        *,
+        reason: RuntimeContextChangeReason,
+        mutate: ContextMutation,
+    ) -> ContextTransition:
+        """Persist one transition inside a caller-owned transaction.
+
+        The returned event must be published only after that transaction commits;
+        Timeline handlers use a separate SQLite connection by design.
+        """
+        current = self.contexts.get(connection, triage_id)
+        if current is None:
+            raise LookupError(f"Project Runtime Context not found: {triage_id}")
+        updated = mutate(current)
+        if updated.triage_id != current.triage_id:
+            raise ValueError("Runtime Context transition cannot change triage_id")
+        changes = _context_changes(current, updated)
+        if not changes:
+            return updated, None
+
+        self.contexts.update(connection, updated)
+        return updated, ExecutionEvent(
+            triage_id=triage_id,
+            event_type=ExecutionEventType.RUNTIME_CONTEXT_UPDATED,
+            payload={
+                "reason": reason.value,
+                "changes": changes,
+            },
+        )
 
 
 def _context_changes(

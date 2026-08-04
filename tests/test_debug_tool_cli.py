@@ -8,24 +8,25 @@ from typing import ClassVar
 
 import pytest
 
-from agentplanex.bootstrap import create_project_runtime
 from agentplanex.domains import (
     ActionOutput,
     ExecutionEvent,
     Message,
     MessageHistory,
+    OwnerActivationStatus,
     ProjectRuntimeContext,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteExecutionEventRepository,
     SQLiteMessageHistoryRepository,
+    SQLiteOwnerActivationRepository,
     SQLiteProjectRuntimeContextRepository,
 )
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import PlanningService
-from agentplanex.services import project_runtime as project_runtime_service
+from agentplanex.services import project_owner as project_owner_service
 from agentplanex.settings import BashSettings, RuntimeSettings
 from scripts import debug_tool_cli
 
@@ -142,41 +143,79 @@ def _loaded_events(project_path: Path) -> tuple[ExecutionEvent, ...]:
         return repository.list_by_triage_id(connection, context[0].triage_id)
 
 
+def _loaded_activations(project_path: Path):
+    database = SQLiteDatabase.for_project(project_path)
+    repository = SQLiteOwnerActivationRepository()
+    with database.connection() as connection:
+        context = SQLiteProjectRuntimeContextRepository().list_all(connection)
+        assert len(context) == 1
+        return repository.list_by_triage_id(connection, context[0].triage_id)
+
+
 def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
     _write_specs(project_path)
-    monkeypatch.setattr(project_runtime_service, "JBBModel", _PlanRequestingModel)
+    monkeypatch.setattr(project_owner_service, "JBBModel", _PlanRequestingModel)
 
-    result = create_project_runtime(
-        project_path=project_path,
-        approval_mode="yolo",
-    ).run("Request approval for the current plan")
+    submit_result = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            "Request approval for the current plan",
+        ]
+    )
+    submit_response = json.loads(capfd.readouterr().out)
+
+    assert submit_result == 0
+    assert submit_response["activation"]["status"] == "PENDING"
+    assert [event.event_type.value for event in _loaded_events(project_path)] == [
+        "RUNTIME_CONTEXT_UPDATED"
+    ]
+
+    blocked_result = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "message", "too soon"]
+    )
+    blocked_response = json.loads(capfd.readouterr().out)
+    assert blocked_result == 1
+    assert "unfinished activation" in blocked_response["error"]
+    assert len(_loaded_message_histories(project_path)) == 1
+    assert len(_loaded_activations(project_path)) == 1
+
+    drive_result = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    )
+    drive_response = json.loads(capfd.readouterr().out)
 
     histories = _loaded_message_histories(project_path)
     events = _loaded_events(project_path)
-    assert result.status.value == "PlanApprovalRequested"
+    assert drive_result == 0
+    assert drive_response["result"]["status"] == "PlanApprovalRequested"
+    assert drive_response["activation"]["status"] == "COMPLETED"
     assert len(histories) == 3
     assert [event.event_type.value for event in events] == [
-        "REACT_LOOP_ENTERED",
         "RUNTIME_CONTEXT_UPDATED",
+        "REACT_LOOP_ENTERED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "REACT_LOOP_EXITED",
     ]
 
-    react_loop_id = events[0].react_loop_id
-    assert react_loop_id is not None
-    assert all(event.react_loop_id == react_loop_id for event in events)
-    assert events[0].payload == {"task_type": "USER_INPUT"}
+    assert events[0].react_loop_id is None
     assert events[0].message_id == histories[0].message_id
-    assert events[1].message_id == histories[0].message_id
-    assert events[1].payload == {
+    assert events[0].payload == {
         "reason": "CONVERSATION_STARTED",
         "changes": {"status": {"from": "TRIAGE", "to": "TODO"}},
     }
+    react_loop_id = events[1].react_loop_id
+    assert react_loop_id is not None
+    assert all(event.react_loop_id == react_loop_id for event in events[1:])
+    assert events[1].payload == {"task_type": "USER_INPUT"}
+    assert events[1].message_id == histories[0].message_id
     assert events[2].message_id == histories[1].message_id
     assert events[3].message_id == histories[1].message_id
     assert events[2].payload == {
@@ -207,7 +246,7 @@ def test_executes_project_bound_action_without_constructing_a_model(
         def __init__(self, **_kwargs: object) -> None:
             raise AssertionError("tool debug entry must not construct a model")
 
-    monkeypatch.setattr(project_runtime_service, "JBBModel", _UnexpectedModel)
+    monkeypatch.setattr(project_owner_service, "JBBModel", _UnexpectedModel)
 
     result = debug_tool_cli.main(
         [
@@ -346,7 +385,7 @@ def test_unexpected_gate_failure_is_not_converted_to_tool_observation(
         )
 
 
-def test_request_then_approve_commits_only_specs_and_resumes_owner(
+def test_request_then_approve_commits_specs_and_queues_owner_activation(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -375,7 +414,7 @@ def test_request_then_approve_commits_only_specs_and_resumes_owner(
     assert _git(project_path, "rev-parse", "HEAD") == initial_head
 
     _ReplyingModel.queries = []
-    monkeypatch.setattr(project_runtime_service, "JBBModel", _ReplyingModel)
+    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
     approve_result = debug_tool_cli.main(
         ["--cwd", str(project_path), "--print", "approve"]
     )
@@ -384,7 +423,10 @@ def test_request_then_approve_commits_only_specs_and_resumes_owner(
     context = _load_context(project_path)
     assert approve_result == 0
     assert approve_response["action"] == "approve"
-    assert approve_response["result"]["status"] == "ReplyToHuman"
+    assert approve_response["result"]["status"] == "TODO"
+    assert approve_response["result"]["pending_action"] is None
+    assert approve_response["activation"]["task_type"] == "PLAN_DECISION"
+    assert approve_response["activation"]["status"] == "PENDING"
     assert context.status == "TODO"
     assert context.pending_action is None
     assert context.current_plan_commit_sha == _git(project_path, "rev-parse", "HEAD")
@@ -398,6 +440,24 @@ def test_request_then_approve_commits_only_specs_and_resumes_owner(
         content.startswith("The user approved the current Plan.")
         for content in _loaded_message_contents(project_path)
     )
+    assert [event.event_type.value for event in _loaded_events(project_path)] == [
+        "RUNTIME_CONTEXT_UPDATED",
+        "PLAN_APPROVAL_REQUESTED",
+        "RUNTIME_CONTEXT_UPDATED",
+        "PLAN_APPROVED",
+    ]
+
+    drive_result = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    )
+    drive_response = json.loads(capfd.readouterr().out)
+
+    assert drive_result == 0
+    assert drive_response["result"]["status"] == "ReplyToHuman"
+    assert drive_response["activation"]["status"] == "COMPLETED"
+    activations = _loaded_activations(project_path)
+    assert len(activations) == 1
+    assert activations[0].status is OwnerActivationStatus.COMPLETED
     histories = _loaded_message_histories(project_path)
     events = _loaded_events(project_path)
     assert [event.event_type.value for event in events] == [
@@ -421,7 +481,7 @@ def test_request_then_approve_commits_only_specs_and_resumes_owner(
     assert events[5].message_id == histories[1].message_id
 
 
-def test_request_then_reject_does_not_commit_and_resumes_owner(
+def test_request_then_reject_does_not_commit_and_queues_owner_activation(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -439,7 +499,7 @@ def test_request_then_reject_does_not_commit_and_resumes_owner(
     )
     capfd.readouterr()
 
-    monkeypatch.setattr(project_runtime_service, "JBBModel", _ReplyingModel)
+    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
     reject_result = debug_tool_cli.main(
         [
             "--cwd",
@@ -454,6 +514,9 @@ def test_request_then_reject_does_not_commit_and_resumes_owner(
     context = _load_context(project_path)
     assert reject_result == 0
     assert reject_response["action"] == "reject"
+    assert reject_response["result"]["status"] == "TODO"
+    assert reject_response["activation"]["task_type"] == "PLAN_DECISION"
+    assert reject_response["activation"]["status"] == "PENDING"
     assert context.status == "TODO"
     assert context.pending_action is None
     assert context.current_plan_commit_sha is None
@@ -462,6 +525,20 @@ def test_request_then_reject_does_not_commit_and_resumes_owner(
         "The user rejected the current Plan. "
         "Feedback: requirements are incomplete"
     ) in _loaded_message_contents(project_path)
+
+    assert [event.event_type.value for event in _loaded_events(project_path)] == [
+        "RUNTIME_CONTEXT_UPDATED",
+        "PLAN_APPROVAL_REQUESTED",
+        "RUNTIME_CONTEXT_UPDATED",
+        "PLAN_REJECTED",
+    ]
+    drive_result = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    )
+    drive_response = json.loads(capfd.readouterr().out)
+    assert drive_result == 0
+    assert drive_response["result"]["status"] == "ReplyToHuman"
+    assert drive_response["activation"]["status"] == "COMPLETED"
     histories = _loaded_message_histories(project_path)
     events = _loaded_events(project_path)
     assert [event.event_type.value for event in events] == [
@@ -477,13 +554,14 @@ def test_request_then_reject_does_not_commit_and_resumes_owner(
     assert events[3].payload == {}
 
 
-def test_plain_text_defaults_to_message_and_starts_todo(
+def test_plain_text_submits_then_drives_a_restart_safe_user_activation(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
-    monkeypatch.setattr(project_runtime_service, "JBBModel", _ReplyingModel)
+    _ReplyingModel.queries = []
+    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
 
     result = debug_tool_cli.main(
         ["--cwd", str(project_path), "--print", "please inspect the plan"]
@@ -492,22 +570,35 @@ def test_plain_text_defaults_to_message_and_starts_todo(
 
     assert result == 0
     assert response["action"] == "message"
-    assert response["result"] == {
+    assert response["activation"]["task_type"] == "USER_INPUT"
+    assert response["activation"]["status"] == "PENDING"
+    assert _ReplyingModel.queries == []
+    assert _load_context(project_path).status == "TODO"
+    assert _loaded_message_contents(project_path)[-1] == "please inspect the plan"
+
+    first_drive = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    )
+    first_drive_response = json.loads(capfd.readouterr().out)
+    assert first_drive == 0
+    assert first_drive_response["result"] == {
         "status": "ReplyToHuman",
         "content": "please inspect the plan",
     }
-    assert _load_context(project_path).status == "TODO"
-    assert _loaded_message_contents(project_path)[-2:] == [
-        "please inspect the plan",
-        "please inspect the plan",
-    ]
+    assert first_drive_response["activation"]["status"] == "COMPLETED"
 
     second_result = debug_tool_cli.main(
         ["--cwd", str(project_path), "--print", "continue"]
     )
-    capfd.readouterr()
+    second_response = json.loads(capfd.readouterr().out)
 
     assert second_result == 0
+    assert second_response["activation"]["status"] == "PENDING"
+    second_drive = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    )
+    capfd.readouterr()
+    assert second_drive == 0
     restored_contents = [
         message.get("content") for message in _ReplyingModel.queries[-1]
     ]
@@ -516,3 +607,7 @@ def test_plain_text_defaults_to_message_and_starts_todo(
         "please inspect the plan",
         "continue",
     ]
+    assert all(
+        activation.status is OwnerActivationStatus.COMPLETED
+        for activation in _loaded_activations(project_path)
+    )

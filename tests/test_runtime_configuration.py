@@ -17,7 +17,8 @@ from agentplanex.domains import (
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.project_runtime.executions import create_project_executions
-from agentplanex.services import project_runtime as project_runtime_service
+from agentplanex.services import project_owner as project_owner_service
+from agentplanex.services.owner_activation import ActivationDriveResult
 from agentplanex.settings import (
     BashSettings,
     ModelSettings,
@@ -185,10 +186,16 @@ def test_cli_only_passes_explicit_runtime_inputs(
     captured: dict[str, object] = {}
 
     class _Runtime:
-        def run(self, task: str = "") -> AgentExit:
-            return AgentExit(
-                status=AgentExitStatus.REPLY_TO_HUMAN,
-                content=task,
+        def submit_message(self, task: str) -> None:
+            self.task = task
+
+        def drive_next_activation(self) -> ActivationDriveResult:
+            return ActivationDriveResult(
+                activation=None,
+                exit=AgentExit(
+                    status=AgentExitStatus.REPLY_TO_HUMAN,
+                    content=self.task,
+                ),
             )
 
     def create_runtime(**kwargs: object) -> _Runtime:
@@ -226,13 +233,13 @@ def test_cli_reports_missing_model_credentials(
     assert "Missing credentials" in capfd.readouterr().err
 
 
-def test_runtime_reuses_and_restores_owner_session(
+def test_runtime_restores_owner_history_across_activations(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _ReplyingModel.constructions = 0
     _ReplyingModel.queries = []
-    monkeypatch.setattr(project_runtime_service, "JBBModel", _ReplyingModel)
+    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
     project_path = initialize_git_project()
     runtime = ProjectRuntime(
         project_path=project_path,
@@ -240,19 +247,29 @@ def test_runtime_reuses_and_restores_owner_session(
         approval_mode="yolo",
     )
 
-    first = runtime.run("first")
-    second = runtime.run("second")
+    runtime.submit_message("first")
+    first_result = runtime.drive_next_activation()
+    runtime.submit_message("second")
+    second_result = runtime.drive_next_activation()
     restarted_runtime = ProjectRuntime(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
     )
-    third = restarted_runtime.run("third")
+    restarted_runtime.submit_message("third")
+    third_result = restarted_runtime.drive_next_activation()
+
+    first = first_result.exit
+    second = second_result.exit
+    third = third_result.exit
+    assert first is not None
+    assert second is not None
+    assert third is not None
 
     assert first.content == "first"
     assert second.content == "second"
     assert third.content == "third"
-    assert _ReplyingModel.constructions == 2
+    assert _ReplyingModel.constructions == 3
     restored_contents = [
         message.get("content") for message in _ReplyingModel.queries[-1]
     ]
@@ -280,7 +297,7 @@ def test_runtime_applies_bash_limits(
     output_limit: int,
     expected: str,
 ) -> None:
-    monkeypatch.setattr(project_runtime_service, "JBBModel", _BashCallingModel)
+    monkeypatch.setattr(project_owner_service, "JBBModel", _BashCallingModel)
     project_path = initialize_git_project()
     runtime = ProjectRuntime(
         project_path=project_path,
@@ -291,6 +308,8 @@ def test_runtime_applies_bash_limits(
         approval_mode="yolo",
     )
 
-    result = runtime.run(command)
+    runtime.submit_message(command)
+    result = runtime.drive_next_activation().exit
+    assert result is not None
 
     assert expected in result.content

@@ -4,15 +4,21 @@ import argparse
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import Protocol, TextIO
 
 from agentplanex.bootstrap import create_project_runtime
-from agentplanex.domains import AgentExit, AgentExitStatus
+from agentplanex.domains import AgentExitStatus, OwnerActivation
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.exception import JBBModelError
+from agentplanex.services.owner_activation import ActivationDriveResult
 
-type OwnerRunner = Callable[[str], AgentExit]
 type InputReader = Callable[[str], str]
+
+
+class OwnerRuntime(Protocol):
+    def submit_message(self, content: str) -> OwnerActivation: ...
+
+    def drive_next_activation(self) -> ActivationDriveResult: ...
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -33,12 +39,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     if args.print_mode:
-        return _run_once(runtime.run, task)
-    return _run_interactive(runtime.run, task)
+        return _run_once(runtime, task)
+    return _run_interactive(runtime, task)
 
 
 def _run_once(
-    run_owner: OwnerRunner,
+    runtime: OwnerRuntime,
     task: str,
     *,
     stdout: TextIO | None = None,
@@ -47,11 +53,16 @@ def _run_once(
     output = stdout if stdout is not None else sys.stdout
     error_output = stderr if stderr is not None else sys.stderr
     try:
-        result = run_owner(task)
+        runtime.submit_message(task)
+        driven = runtime.drive_next_activation()
     except (JBBModelError, ValueError) as error:
         print(str(error), file=error_output)
         return 1
 
+    result = driven.exit
+    if result is None:
+        print("No Project Owner activation was claimed", file=error_output)
+        return 1
     if result.status is AgentExitStatus.REPLY_TO_HUMAN:
         print(result.content, file=output)
         return 0
@@ -60,7 +71,7 @@ def _run_once(
 
 
 def _run_interactive(
-    run_owner: OwnerRunner,
+    runtime: OwnerRuntime,
     initial_task: str = "",
     *,
     read_input: InputReader = input,
@@ -80,7 +91,7 @@ def _run_interactive(
             return 0
 
         _run_once(
-            run_owner,
+            runtime,
             task,
             stdout=stdout,
             stderr=stderr,

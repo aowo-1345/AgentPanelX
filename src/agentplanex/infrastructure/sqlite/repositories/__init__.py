@@ -6,6 +6,9 @@ from agentplanex.infrastructure.sqlite.repositories.execution_event import (
 from agentplanex.infrastructure.sqlite.repositories.message_history import (
     SQLiteMessageHistoryRepository,
 )
+from agentplanex.infrastructure.sqlite.repositories.owner_activation import (
+    SQLiteOwnerActivationRepository,
+)
 from agentplanex.infrastructure.sqlite.repositories.project_owner_agent import (
     SQLiteProjectOwnerAgentRepository,
 )
@@ -19,6 +22,7 @@ from agentplanex.infrastructure.sqlite.repositories.summary_history import (
 __all__ = [
     "SQLiteExecutionEventRepository",
     "SQLiteMessageHistoryRepository",
+    "SQLiteOwnerActivationRepository",
     "SQLiteProjectOwnerAgentRepository",
     "SQLiteProjectRuntimeContextRepository",
     "SQLiteSummaryHistoryRepository",
