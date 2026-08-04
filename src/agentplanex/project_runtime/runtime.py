@@ -15,6 +15,7 @@ from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import (
+    AgentCollaborationService,
     EventBus,
     PlanningService,
     ProjectOwnerService,
@@ -25,6 +26,7 @@ from agentplanex.services.owner_activation import (
     ActivationDriveResult,
     OwnerActivationDriver,
 )
+from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning import PlanDecision
 from agentplanex.settings import Settings
 
@@ -48,17 +50,24 @@ class ProjectRuntime:
         event_bus = EventBus((SQLiteTimelineRecorder(database),))
         runtime_contexts = RuntimeContextService(database, event_bus)
         activations = SQLiteOwnerActivationRepository()
+        collaboration = AgentCollaborationService.from_settings(
+            project_path,
+            settings.runtime,
+        )
         planning = PlanningService(
             project_path=project_path,
             database=database,
             event_bus=event_bus,
             runtime_contexts=runtime_contexts,
             activations=activations,
+            review_plan=CodexPlanHardGate(collaboration).review,
         )
         executions = create_project_executions(
             project_path,
             settings.runtime,
             planning,
+            collaboration,
+            event_bus,
         )
         owner = ProjectOwnerService(
             database=database,

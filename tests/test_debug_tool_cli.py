@@ -16,6 +16,13 @@ from agentplanex.domains import (
     OwnerActivationStatus,
     ProjectRuntimeContext,
 )
+from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
+from agentplanex.infrastructure.codex import (
+    CodexTransportTimeout,
+    CodexTurnRequest,
+    CodexTurnResult,
+    CodexTurnTransport,
+)
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteExecutionEventRepository,
@@ -27,8 +34,78 @@ from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import PlanningService
 from agentplanex.services import project_owner as project_owner_service
+from agentplanex.services.planning import PlanReviewRequest, PlanReviewResult
 from agentplanex.settings import BashSettings, RuntimeSettings
 from scripts import debug_tool_cli
+
+
+@pytest.fixture(autouse=True)
+def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Runtime/Outbox tests deterministic while exercising the real boundary."""
+
+    def run(_self: CodexTurnTransport, request: CodexTurnRequest) -> CodexTurnResult:
+        pending = tuple(
+            directory / "result.json"
+            for directory in request.workspace.glob("outbox/*")
+            if not (directory / "result.json").exists()
+        )
+        is_gate = "This invocation is a protected Plan Hard Gate." in request.developer_instructions
+        is_task = "Task Contract" in request.message
+        if is_gate or is_task:
+            assert len(pending) == 1
+            result_path = pending[0]
+            document_name = "review.md" if is_gate or "reviewer" in request.message else "plan.md"
+            document_path = request.workspace / "documents" / document_name
+            instruction = request.message.split("\n\n", 1)[0]
+            document_path.write_text(
+                f"# {document_name}\n\n{instruction}\n",
+                encoding="utf-8",
+            )
+            if is_gate:
+                digest = request.message.split(
+                    "The Runtime-computed subject digest is: ", 1
+                )[1].split("\n", 1)[0]
+                requires_changes = any(
+                    "NEEDS_REVIEW_CHANGES" in path.read_text(encoding="utf-8")
+                    for _, path in request.mentions
+                )
+                payload: dict[str, object] = {
+                    "version": 1,
+                    "subject_digest": digest,
+                    "decision": "revise" if requires_changes else "pass",
+                    "summary": "Deterministic Plan review.",
+                    "required_changes": (
+                        ["Address the marked missing requirement."]
+                        if requires_changes
+                        else []
+                    ),
+                    "artifacts": [
+                        {
+                            "path": "documents/review.md",
+                            "media_type": "text/markdown",
+                        }
+                    ],
+                }
+            else:
+                payload = {
+                    "version": 1,
+                    "summary": "Deterministic Agent task.",
+                    "artifacts": [
+                        {
+                            "path": f"documents/{document_name}",
+                            "media_type": "text/markdown",
+                        }
+                    ],
+                }
+            result_path.write_text(json.dumps(payload), encoding="utf-8")
+        return CodexTurnResult(
+            thread_id=request.thread_id or "deterministic-thread",
+            turn_id="deterministic-turn",
+            status="completed",
+            final_response=json.dumps({"summary": "Deterministic Codex response."}),
+        )
+
+    monkeypatch.setattr(CodexTurnTransport, "run", run)
 
 
 class _ReplyingModel:
@@ -193,6 +270,8 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
 
     histories = _loaded_message_histories(project_path)
     events = _loaded_events(project_path)
+    reviewed_digest = _load_context(project_path).pending_plan_subject_digest
+    assert reviewed_digest is not None
     assert drive_result == 0
     assert drive_response["result"]["status"] == "PlanApprovalRequested"
     assert drive_response["activation"]["status"] == "COMPLETED"
@@ -200,6 +279,8 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
     assert [event.event_type.value for event in events] == [
         "RUNTIME_CONTEXT_UPDATED",
         "REACT_LOOP_ENTERED",
+        "AGENT_INVOCATION_STARTED",
+        "AGENT_INVOCATION_COMPLETED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "REACT_LOOP_EXITED",
@@ -216,17 +297,35 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
     assert all(event.react_loop_id == react_loop_id for event in events[1:])
     assert events[1].payload == {"task_type": "USER_INPUT"}
     assert events[1].message_id == histories[0].message_id
+    invocation_id = events[2].payload["invocation_id"]
+    assert isinstance(invocation_id, str)
+    assert events[2].payload == {
+        "invocation_id": invocation_id,
+        "operation": "plan_hard_gate",
+        "subject_digest": reviewed_digest,
+    }
+    assert events[3].payload["invocation_id"] == invocation_id
+    assert events[3].payload["operation"] == "plan_hard_gate"
+    assert events[3].payload["subject_digest"] == reviewed_digest
+    assert events[3].payload["decision"] == "pass"
+    assert events[3].payload["required_change_count"] == 0
     assert events[2].message_id == histories[1].message_id
     assert events[3].message_id == histories[1].message_id
-    assert events[2].payload == {
+    assert events[4].message_id == histories[1].message_id
+    assert events[5].message_id == histories[1].message_id
+    assert events[4].payload == {
         "reason": "PLAN_APPROVAL_REQUESTED",
         "changes": {
-            "pending_action": {"from": None, "to": "PLAN_APPROVAL"}
+            "pending_action": {"from": None, "to": "PLAN_APPROVAL"},
+            "pending_plan_subject_digest": {
+                "from": None,
+                "to": reviewed_digest,
+            },
         },
     }
-    assert events[3].payload == {}
-    assert events[4].message_id == histories[2].message_id
-    assert events[4].payload == {
+    assert events[5].payload == {}
+    assert events[6].message_id == histories[2].message_id
+    assert events[6].payload == {
         "agent_exit_status": "PlanApprovalRequested"
     }
     assistant_action = histories[1].message[0]
@@ -279,6 +378,281 @@ def test_executes_project_bound_action_without_constructing_a_model(
         "exit": None,
     }
     assert (project_path / ".agentplanex" / "agentplanex.sqlite3").is_file()
+
+
+def test_talk_task_keeps_workspace_and_publishes_document_uri(
+    initialize_git_project: Callable[[], Path],
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    (project_path / "requirements.md").write_text(
+        "# Requirements\n\nShip a durable planner workspace.\n",
+        encoding="utf-8",
+    )
+    _git(project_path, "add", "requirements.md")
+    _git(project_path, "commit", "-m", "Add requirements")
+
+    debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"bash","arguments":{"command":"pwd"}}',
+        ]
+    )
+    capfd.readouterr()
+    context_before = _load_context(project_path)
+    initial_head = _git(project_path, "rev-parse", "HEAD")
+
+    first_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "talk_to_agent",
+                    "arguments": {
+                        "agent_id": "planner",
+                        "kind": "task",
+                        "message": "Create the initial Plan document.",
+                        "artifacts": [{"uri": "project:///requirements.md"}],
+                    },
+                }
+            ),
+        ]
+    )
+    first_response = json.loads(capfd.readouterr().out)
+    first_result = first_response["result"]
+
+    assert first_code == 0
+    assert first_result["ok"] is True
+    assert first_result["agent_id"] == "planner"
+    assert len(first_result["artifacts"]) == 1
+    first_artifact = first_result["artifacts"][0]
+    assert first_artifact["uri"].startswith(
+        "artifact://local/agent-workspaces/"
+    )
+    store = AgentWorkspaceStore(project_path, 65_536, 262_144)
+    first_document = store.resolve_artifact(first_artifact["uri"])
+    assert "Create the initial Plan document." in first_document.path.read_text(
+        encoding="utf-8"
+    )
+
+    second_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "talk_to_agent",
+                    "arguments": {
+                        "agent_id": "planner",
+                        "kind": "task",
+                        "message": "Refine the existing Plan document.",
+                        "conversation_id": first_result["conversation_id"],
+                        "artifacts": [],
+                    },
+                }
+            ),
+        ]
+    )
+    second_response = json.loads(capfd.readouterr().out)
+    second_result = second_response["result"]
+
+    assert second_code == 0
+    assert second_result["conversation_id"] == first_result["conversation_id"]
+    assert second_result["artifacts"][0]["uri"] == first_artifact["uri"]
+    assert second_result["artifacts"][0]["sha256"] != first_artifact["sha256"]
+    assert "Refine the existing Plan document." in first_document.path.read_text(
+        encoding="utf-8"
+    )
+    workspace = first_document.path.parents[1]
+    assert len(tuple(workspace.glob("outbox/*/result.json"))) == 2
+
+    cross_agent_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "talk_to_agent",
+                    "arguments": {
+                        "agent_id": "reviewer",
+                        "kind": "message",
+                        "message": "Continue the Planner conversation.",
+                        "conversation_id": first_result["conversation_id"],
+                        "artifacts": [],
+                    },
+                }
+            ),
+        ]
+    )
+    cross_agent_response = json.loads(capfd.readouterr().out)
+    assert cross_agent_code == 1
+    assert "different Agent" in cross_agent_response["result"]["error"]
+    events = _loaded_events(project_path)
+    assert [event.event_type.value for event in events] == [
+        "AGENT_INVOCATION_STARTED",
+        "AGENT_INVOCATION_COMPLETED",
+        "AGENT_INVOCATION_STARTED",
+        "AGENT_INVOCATION_COMPLETED",
+        "AGENT_INVOCATION_STARTED",
+        "AGENT_INVOCATION_FAILED",
+    ]
+    first_invocation = events[0].payload["invocation_id"]
+    second_invocation = events[2].payload["invocation_id"]
+    failed_invocation = events[4].payload["invocation_id"]
+    assert len({first_invocation, second_invocation, failed_invocation}) == 3
+    assert events[1].payload["invocation_id"] == first_invocation
+    assert events[3].payload["invocation_id"] == second_invocation
+    assert events[5].payload["invocation_id"] == failed_invocation
+    assert events[0].payload == {
+        "invocation_id": first_invocation,
+        "operation": "talk_to_agent",
+        "agent_id": "planner",
+        "kind": "task",
+        "resumed": False,
+        "input_artifact_count": 1,
+    }
+    assert events[1].payload["output_artifacts"] == [first_artifact]
+    assert events[2].payload["resumed"] is True
+    assert events[3].payload["output_artifacts"] == [second_result["artifacts"][0]]
+    assert events[5].payload["failure_type"] == "AgentCollaborationError"
+    assert _load_context(project_path) == context_before
+    assert _git(project_path, "rev-parse", "HEAD") == initial_head
+    assert _git(project_path, "status", "--short") == ""
+
+
+def test_plan_hard_gate_revise_returns_review_without_transition(
+    initialize_git_project: Callable[[], Path],
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    _write_specs(project_path)
+    (project_path / "requirements.md").write_text(
+        "# Requirements\n\nNEEDS_REVIEW_CHANGES\n",
+        encoding="utf-8",
+    )
+    initial_head = _git(project_path, "rev-parse", "HEAD")
+
+    code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"request_plan_approval","arguments":{}}',
+        ]
+    )
+    response = json.loads(capfd.readouterr().out)
+    result = response["result"]
+
+    assert code == 0
+    assert result["ok"] is True
+    assert result["accepted"] is False
+    assert result["review"]["decision"] == "revise"
+    assert result["review"]["required_changes"]
+    assert response["exit"] is None
+    review = AgentWorkspaceStore(project_path, 65_536, 262_144).resolve_artifact(
+        result["review"]["artifact"]["uri"]
+    )
+    assert review.path.name == "review.md"
+    context = _load_context(project_path)
+    assert context.pending_action is None
+    assert context.pending_plan_subject_digest is None
+    assert _git(project_path, "rev-parse", "HEAD") == initial_head
+    events = _loaded_events(project_path)
+    assert [event.event_type.value for event in events] == [
+        "AGENT_INVOCATION_STARTED",
+        "AGENT_INVOCATION_COMPLETED",
+    ]
+    invocation_id = events[0].payload["invocation_id"]
+    assert events[1].payload["invocation_id"] == invocation_id
+    assert events[1].payload["decision"] == "revise"
+    assert events[1].payload["required_change_count"] == 1
+    assert events[1].payload["review_artifact"] == result["review"]["artifact"]
+
+
+def test_plan_hard_gate_timeout_records_failed_invocation_only(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    _write_specs(project_path)
+
+    def timeout(
+        _self: CodexTurnTransport,
+        _request: CodexTurnRequest,
+    ) -> CodexTurnResult:
+        raise CodexTransportTimeout("timed out")
+
+    monkeypatch.setattr(CodexTurnTransport, "run", timeout)
+    code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"request_plan_approval","arguments":{}}',
+        ]
+    )
+    response = json.loads(capfd.readouterr().out)
+
+    assert code == 1
+    assert response["result"]["ok"] is False
+    assert "timed out" in response["result"]["error"]
+    events = _loaded_events(project_path)
+    assert [event.event_type.value for event in events] == [
+        "AGENT_INVOCATION_STARTED",
+        "AGENT_INVOCATION_FAILED",
+    ]
+    assert events[1].payload["invocation_id"] == events[0].payload["invocation_id"]
+    assert events[1].payload["operation"] == "plan_hard_gate"
+    assert events[1].payload["failure_type"] == "PlanningError"
+    context = _load_context(project_path)
+    assert context.pending_action is None
+    assert context.pending_plan_subject_digest is None
+
+
+def test_plan_approval_rejects_specs_changed_after_hard_gate(
+    initialize_git_project: Callable[[], Path],
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    _write_specs(project_path)
+    initial_head = _git(project_path, "rev-parse", "HEAD")
+
+    request_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"request_plan_approval","arguments":{}}',
+        ]
+    )
+    request_response = json.loads(capfd.readouterr().out)
+    assert request_code == 0
+    assert request_response["result"]["accepted"] is True
+
+    (project_path / "requirements.md").write_text(
+        "# requirements.md\n\nChanged after review.\n",
+        encoding="utf-8",
+    )
+    approve_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "approve"]
+    )
+    approve_response = json.loads(capfd.readouterr().out)
+
+    assert approve_code == 1
+    assert approve_response["ok"] is False
+    assert "changed after Hard Gate review" in approve_response["error"]
+    context = _load_context(project_path)
+    assert context.pending_action == "PLAN_APPROVAL"
+    assert context.pending_plan_subject_digest is not None
+    assert context.current_plan_commit_sha is None
+    assert _git(project_path, "rev-parse", "HEAD") == initial_head
 
 
 def test_returns_unknown_tool_failure_as_json(
@@ -364,7 +738,7 @@ def test_unexpected_gate_failure_is_not_converted_to_tool_observation(
     with database.transaction() as connection:
         contexts.insert(connection, context)
 
-    def fail_unexpectedly(_documents: tuple[Path, ...]) -> None:
+    def fail_unexpectedly(_request: PlanReviewRequest) -> PlanReviewResult:
         raise RuntimeError("reviewer transport failed")
 
     planning = PlanningService(
@@ -441,6 +815,8 @@ def test_request_then_approve_commits_specs_and_queues_owner_activation(
         for content in _loaded_message_contents(project_path)
     )
     assert [event.event_type.value for event in _loaded_events(project_path)] == [
+        "AGENT_INVOCATION_STARTED",
+        "AGENT_INVOCATION_COMPLETED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "RUNTIME_CONTEXT_UPDATED",
@@ -461,6 +837,8 @@ def test_request_then_approve_commits_specs_and_queues_owner_activation(
     histories = _loaded_message_histories(project_path)
     events = _loaded_events(project_path)
     assert [event.event_type.value for event in events] == [
+        "AGENT_INVOCATION_STARTED",
+        "AGENT_INVOCATION_COMPLETED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "RUNTIME_CONTEXT_UPDATED",
@@ -468,17 +846,17 @@ def test_request_then_approve_commits_specs_and_queues_owner_activation(
         "REACT_LOOP_ENTERED",
         "REACT_LOOP_EXITED",
     ]
-    assert all(event.react_loop_id is None for event in events[:4])
-    assert all(event.message_id is None for event in events[:2])
-    assert events[2].message_id == histories[0].message_id
-    assert events[3].message_id == histories[0].message_id
-    assert events[3].payload == {
+    assert all(event.react_loop_id is None for event in events[:6])
+    assert all(event.message_id is None for event in events[:4])
+    assert events[4].message_id == histories[0].message_id
+    assert events[5].message_id == histories[0].message_id
+    assert events[5].payload == {
         "plan_commit_sha": context.current_plan_commit_sha
     }
-    assert events[4].message_id == histories[0].message_id
-    assert events[4].react_loop_id is not None
-    assert events[5].react_loop_id == events[4].react_loop_id
-    assert events[5].message_id == histories[1].message_id
+    assert events[6].message_id == histories[0].message_id
+    assert events[6].react_loop_id is not None
+    assert events[7].react_loop_id == events[6].react_loop_id
+    assert events[7].message_id == histories[1].message_id
 
 
 def test_request_then_reject_does_not_commit_and_queues_owner_activation(
@@ -527,6 +905,8 @@ def test_request_then_reject_does_not_commit_and_queues_owner_activation(
     ) in _loaded_message_contents(project_path)
 
     assert [event.event_type.value for event in _loaded_events(project_path)] == [
+        "AGENT_INVOCATION_STARTED",
+        "AGENT_INVOCATION_COMPLETED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "RUNTIME_CONTEXT_UPDATED",
@@ -542,6 +922,8 @@ def test_request_then_reject_does_not_commit_and_queues_owner_activation(
     histories = _loaded_message_histories(project_path)
     events = _loaded_events(project_path)
     assert [event.event_type.value for event in events] == [
+        "AGENT_INVOCATION_STARTED",
+        "AGENT_INVOCATION_COMPLETED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "RUNTIME_CONTEXT_UPDATED",
@@ -549,9 +931,9 @@ def test_request_then_reject_does_not_commit_and_queues_owner_activation(
         "REACT_LOOP_ENTERED",
         "REACT_LOOP_EXITED",
     ]
-    assert events[2].message_id == histories[0].message_id
-    assert events[3].message_id == histories[0].message_id
-    assert events[3].payload == {}
+    assert events[4].message_id == histories[0].message_id
+    assert events[5].message_id == histories[0].message_id
+    assert events[5].payload == {}
 
 
 def test_plain_text_submits_then_drives_a_restart_safe_user_activation(

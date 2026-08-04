@@ -26,13 +26,14 @@ class SQLiteProjectRuntimeContextRepository:
                 git_main_version,
                 rolling_started_at,
                 current_plan_commit_sha,
+                pending_plan_subject_digest,
                 current_snapshot_id,
                 current_run_id,
                 current_milestone_key,
                 current_stage_key,
                 current_candidate_commit_sha
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             self._values(context),
         )
@@ -53,6 +54,7 @@ class SQLiteProjectRuntimeContextRepository:
                 git_main_version = ?,
                 rolling_started_at = ?,
                 current_plan_commit_sha = ?,
+                pending_plan_subject_digest = ?,
                 current_snapshot_id = ?,
                 current_run_id = ?,
                 current_milestone_key = ?,
@@ -96,6 +98,7 @@ class SQLiteProjectRuntimeContextRepository:
         git_main_version,
         rolling_started_at,
         current_plan_commit_sha,
+        pending_plan_subject_digest,
         current_snapshot_id,
         current_run_id,
         current_milestone_key,
@@ -119,6 +122,7 @@ class SQLiteProjectRuntimeContextRepository:
                 else None
             ),
             context.current_plan_commit_sha,
+            context.pending_plan_subject_digest,
             context.current_snapshot_id,
             context.current_run_id,
             context.current_milestone_key,
@@ -144,6 +148,10 @@ class SQLiteProjectRuntimeContextRepository:
             current_plan_commit_sha=cast(
                 str | None,
                 row["current_plan_commit_sha"],
+            ),
+            pending_plan_subject_digest=cast(
+                str | None,
+                row["pending_plan_subject_digest"],
             ),
             current_snapshot_id=cast(str | None, row["current_snapshot_id"]),
             current_run_id=cast(str | None, row["current_run_id"]),

@@ -1,50 +1,68 @@
-"""Definition of the talk_to_agent tool; collaboration execution is not implemented here."""
+"""Config-rendered definition of the blocking talk_to_agent tool."""
 
 from agentplanex.domains import ToolSchema
 from agentplanex.project_owner_agent.tools.base import ToolDefinition
 
 TALK_TO_AGENT_TOOL_NAME = "talk_to_agent"
 
-TALK_TO_AGENT_TOOL_SCHEMA: ToolSchema = {
-    "type": "function",
-    "name": TALK_TO_AGENT_TOOL_NAME,
-    "description": "Send a message or Artifact-producing task to a local Planner or Reviewer.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "role": {
-                "type": "string",
-                "enum": ["planner", "reviewer"],
-            },
-            "kind": {
-                "type": "string",
-                "enum": ["message", "task"],
-            },
-            "message": {
-                "type": "string",
-                "description": "The message or task instructions for the target Agent.",
-            },
-            "artifacts": {
-                "type": "array",
-                "description": "Local Markdown Artifact references supplied to the target Agent.",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "uri": {"type": "string"},
-                        "filename": {"type": "string"},
+
+def create_talk_to_agent_tool(agent_cards: str) -> ToolDefinition:
+    """Render current Agent Cards into a structurally stable tool schema."""
+    schema: ToolSchema = {
+        "type": "function",
+        "name": TALK_TO_AGENT_TOOL_NAME,
+        "description": (
+            "Synchronously send a Message or file-producing Task to a configured "
+            "Planner or Reviewer. Available Agent Cards:\n"
+            f"{agent_cards}"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": f"Target Config Agent ID. Available Cards:\n{agent_cards}",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["message", "task"],
+                    "description": (
+                        "Use message for discussion and task when the Agent must publish "
+                        "its role Contract document through Outbox."
+                    ),
+                },
+                "message": {
+                    "type": "string",
+                    "description": "The message or task instructions for the target Agent.",
+                },
+                "conversation_id": {
+                    "type": "string",
+                    "description": (
+                        "Opaque ID returned by an earlier call. Omit it to start a new "
+                        "Agent conversation and workspace."
+                    ),
+                },
+                "artifacts": {
+                    "type": "array",
+                    "description": (
+                        "Project or Agent Artifact URIs supplied as read-only inputs."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {"uri": {"type": "string"}},
+                        "required": ["uri"],
+                        "additionalProperties": False,
                     },
-                    "required": ["uri", "filename"],
-                    "additionalProperties": False,
                 },
             },
+            "required": ["agent_id", "kind", "message", "artifacts"],
+            "additionalProperties": False,
         },
-        "required": ["role", "kind", "message", "artifacts"],
-        "additionalProperties": False,
-    },
-    "strict": True,
-}
+        "strict": True,
+    }
+    return ToolDefinition(name=TALK_TO_AGENT_TOOL_NAME, schema=schema)
 
-TALK_TO_AGENT_TOOL = ToolDefinition(
-    name=TALK_TO_AGENT_TOOL_NAME,
-    schema=TALK_TO_AGENT_TOOL_SCHEMA,
+
+TALK_TO_AGENT_TOOL = create_talk_to_agent_tool(
+    "- planner (planner)\n- reviewer (reviewer)"
 )

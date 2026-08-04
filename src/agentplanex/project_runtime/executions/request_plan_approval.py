@@ -33,7 +33,7 @@ class RequestPlanApprovalExecution(ProjectExecution):
             )
 
         try:
-            updated = self.dependencies.planning.request_plan_approval(context)
+            requested = self.dependencies.planning.request_plan_approval(context)
         except PlanningError as error:
             return ToolExecutionResult(
                 output={
@@ -42,15 +42,34 @@ class RequestPlanApprovalExecution(ProjectExecution):
                 }
             )
 
-        return ToolExecutionResult(
-            output={
-                "ok": True,
-                "triage_id": updated.triage_id,
-                "status": updated.status,
-                "pending_action": updated.pending_action,
+        review = requested.review
+        output = {
+            "ok": True,
+            "accepted": requested.accepted,
+            "triage_id": requested.context.triage_id,
+            "status": requested.context.status,
+            "pending_action": requested.context.pending_action,
+            "review": {
+                "decision": review.decision,
+                "summary": review.summary,
+                "required_changes": list(review.required_changes),
+                "artifact": {
+                    "uri": review.audit_artifact.uri,
+                    "media_type": review.audit_artifact.media_type,
+                    "size": review.audit_artifact.size,
+                    "sha256": review.audit_artifact.sha256,
+                },
             },
+        }
+        if not requested.accepted:
+            return ToolExecutionResult(output=output)
+        return ToolExecutionResult(
+            output=output,
             exit=AgentExit(
                 status=AgentExitStatus.PLAN_APPROVAL_REQUESTED,
-                content="The current Plan is waiting for user approval.",
+                content=(
+                    "The current Plan passed Hard Gate review and is waiting "
+                    "for user approval."
+                ),
             ),
         )

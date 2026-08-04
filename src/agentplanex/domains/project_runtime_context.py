@@ -18,6 +18,7 @@ class ProjectRuntimeContext:
     git_main_version: str | None = None
     rolling_started_at: datetime | None = None
     current_plan_commit_sha: str | None = None
+    pending_plan_subject_digest: str | None = None
     current_snapshot_id: str | None = None
     current_run_id: str | None = None
     current_milestone_key: str | None = None

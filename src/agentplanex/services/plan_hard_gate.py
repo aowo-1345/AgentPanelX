@@ -1,0 +1,135 @@
+"""Real Codex-backed Plan Hard Gate using a configured generic Reviewer."""
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from agentplanex.domains import AgentCollaborationError, AgentRole
+from agentplanex.infrastructure.codex import CodexTurnRequest
+from agentplanex.services.agent_collaboration import AgentCollaborationService
+from agentplanex.services.planning import (
+    PlanningError,
+    PlanReviewRequest,
+    PlanReviewResult,
+)
+
+_SUMMARY_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}},
+    "required": ["summary"],
+    "additionalProperties": False,
+}
+
+
+class _HardGateArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str = Field(min_length=1)
+    media_type: Literal["text/markdown"]
+
+
+class _HardGateManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: Literal[1]
+    subject_digest: str = Field(min_length=1)
+    decision: Literal["pass", "revise"]
+    summary: str = Field(min_length=1)
+    required_changes: tuple[str, ...]
+    artifacts: tuple[_HardGateArtifact, ...] = Field(min_length=1, max_length=1)
+
+
+@dataclass(frozen=True, slots=True)
+class CodexPlanHardGate:
+    """Own the protected Plan decision Contract over one configured Reviewer."""
+
+    collaboration: AgentCollaborationService
+
+    def review(self, request: PlanReviewRequest) -> PlanReviewResult:
+        """Run and validate one isolated Reviewer workspace fail closed."""
+        card = self.collaboration.catalog.get(
+            self.collaboration.catalog.plan_reviewer_id
+        )
+        if card.role is not AgentRole.REVIEWER:
+            raise RuntimeError("Configured Plan Hard Gate Agent is not a Reviewer")
+        workspace = self.collaboration.workspaces.create(card)
+        invocation = self.collaboration.workspaces.create_invocation(workspace)
+        mentions = tuple(
+            (f"plan-{index + 1}-{document.name}", document)
+            for index, document in enumerate(request.spec_documents)
+        )
+        try:
+            self.collaboration.transport.run(
+                CodexTurnRequest(
+                    thread_id=None,
+                    workspace=workspace.path,
+                    developer_instructions=(
+                        f"{card.developer_instructions}\n\n"
+                        "This invocation is a protected Plan Hard Gate. Do not treat "
+                        "the decision as optional advice."
+                    ),
+                    message=self._prompt(request, invocation.result_path),
+                    mentions=mentions,
+                    output_schema=_SUMMARY_OUTPUT_SCHEMA,
+                )
+            )
+            manifest = _HardGateManifest.model_validate(
+                self.collaboration.workspaces.read_result_json(invocation)
+            )
+            summary = " ".join(manifest.summary.split())
+            required_changes = tuple(
+                normalized
+                for change in manifest.required_changes
+                if (normalized := " ".join(change.split()))
+            )
+            if manifest.subject_digest != request.subject_digest:
+                raise AgentCollaborationError(
+                    "Reviewer result does not identify the supplied Plan subject"
+                )
+            if not summary:
+                raise AgentCollaborationError("Reviewer result summary is empty")
+            if manifest.decision == "pass" and required_changes:
+                raise AgentCollaborationError(
+                    "Reviewer pass result must not contain required changes"
+                )
+            if manifest.decision == "revise" and not required_changes:
+                raise AgentCollaborationError(
+                    "Reviewer revise result must contain required changes"
+                )
+            artifact = manifest.artifacts[0]
+            audit = self.collaboration.workspaces.output_artifact(
+                workspace,
+                artifact.path,
+                expected_name="review.md",
+            )
+        except (AgentCollaborationError, ValidationError) as error:
+            raise PlanningError(f"Plan Hard Gate failed: {error}") from error
+        return PlanReviewResult(
+            subject_digest=manifest.subject_digest,
+            decision=manifest.decision,
+            summary=summary[:2_000],
+            required_changes=required_changes,
+            audit_artifact=audit,
+        )
+
+    @staticmethod
+    def _prompt(request: PlanReviewRequest, result_path: Path) -> str:
+        return "\n\n".join(
+            (
+                "Review the three attached Plan specification documents as one exact "
+                "subject. Determine whether the protected Plan approval action may proceed.",
+                f"The Runtime-computed subject digest is: {request.subject_digest}",
+                "Write a complete Markdown review to documents/review.md in your current "
+                "Reviewer workspace. Include concrete evidence and required changes.",
+                "Before the final response, write a UTF-8 JSON object to exactly "
+                f"{result_path}. It must contain only version=1, subject_digest, "
+                "decision=pass|revise, summary, required_changes, and one artifacts entry "
+                'with path="documents/review.md" and media_type="text/markdown".',
+                "Echo the supplied digest exactly. A pass requires an empty "
+                "required_changes array; revise requires at least one concrete change. "
+                "Return only a short JSON summary in the final response and do not copy "
+                "the review document into it.",
+            )
+        )

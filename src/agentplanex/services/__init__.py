@@ -1,5 +1,6 @@
 """Shared AgentPlaneX application services."""
 
+from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.owner_activation import (
     ActivationDriveResult,
@@ -12,6 +13,7 @@ from agentplanex.services.runtime_context import RuntimeContextService
 
 __all__ = [
     "ActivationDriveResult",
+    "AgentCollaborationService",
     "EventBus",
     "OwnerActivationDriver",
     "PlanningService",

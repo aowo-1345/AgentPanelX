@@ -13,6 +13,8 @@ from agentplanex.domains import (
     ToolExecutionResult,
 )
 from agentplanex.project_owner_agent.tools import ToolCatalog, ToolDefinition
+from agentplanex.services.agent_collaboration import AgentCollaborationService
+from agentplanex.services.event_bus import EventBus
 from agentplanex.services.planning import PlanningService
 from agentplanex.settings import RuntimeSettings
 
@@ -24,6 +26,8 @@ class ProjectExecutionDependencies:
     project_path: Path
     settings: RuntimeSettings
     planning: PlanningService
+    collaboration: AgentCollaborationService
+    event_bus: EventBus
 
 
 class ProjectExecution(ABC):
@@ -33,6 +37,10 @@ class ProjectExecution(ABC):
 
     def __init__(self, dependencies: ProjectExecutionDependencies) -> None:
         self.dependencies = dependencies
+
+    def tool_definition(self) -> ToolDefinition:
+        """Return this Runtime instance's model-visible tool definition."""
+        return self.definition
 
     @abstractmethod
     def execute(
@@ -79,13 +87,13 @@ class ProjectExecutions:
         object.__setattr__(
             self,
             "tools",
-            ToolCatalog([execution.definition for execution in executions]),
+            ToolCatalog([execution.tool_definition() for execution in executions]),
         )
         object.__setattr__(
             self,
             "_executions",
             {
-                execution.definition.name: execution
+                execution.tool_definition().name: execution
                 for execution in executions
             },
         )

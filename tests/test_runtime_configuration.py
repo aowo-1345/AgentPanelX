@@ -174,9 +174,47 @@ def test_project_executions_expose_and_dispatch_bash(
     assert [tool.name for tool in executions.tools.tools] == [
         "bash",
         "request_plan_approval",
+        "talk_to_agent",
     ]
     assert result.output["returncode"] == 0
     assert result.output["output"].strip() == str(project_path.resolve())
+
+
+def test_talk_tool_renders_configured_agent_cards_with_stable_schema(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    settings = RuntimeSettings.model_validate(
+        {
+            "agents": {
+                "delivery_planner": {
+                    "name": "Delivery Planner",
+                    "description": "Produces and refines delivery plans.",
+                    "developer_instructions": "Write only in your Agent workspace.",
+                    "contract": "planner",
+                },
+                "quality_reviewer": {
+                    "name": "Quality Reviewer",
+                    "description": "Reviews plans and delivery candidates.",
+                    "developer_instructions": "Write only in your Agent workspace.",
+                    "contract": "reviewer",
+                },
+            },
+            "hard_gates": {"plan_approval": {"agent_id": "quality_reviewer"}},
+        }
+    )
+
+    executions = create_project_executions(project_path, settings)
+    talk_tool = next(
+        tool for tool in executions.tools.tools if tool.name == "talk_to_agent"
+    )
+    description = talk_tool.schema["description"]
+    assert isinstance(description, str)
+    assert "delivery_planner (planner): Delivery Planner" in description
+    assert "quality_reviewer (reviewer): Quality Reviewer" in description
+    agent_id_schema = talk_tool.schema["parameters"]["properties"]["agent_id"]
+    assert isinstance(agent_id_schema, dict)
+    assert "enum" not in agent_id_schema
 
 
 def test_cli_only_passes_explicit_runtime_inputs(

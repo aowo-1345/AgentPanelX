@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _INITIAL_SCHEMA = (
     """
@@ -19,6 +19,7 @@ _INITIAL_SCHEMA = (
         git_main_version TEXT,
         rolling_started_at TEXT,
         current_plan_commit_sha TEXT,
+        pending_plan_subject_digest TEXT,
         current_snapshot_id TEXT,
         current_run_id TEXT,
         current_milestone_key TEXT,
@@ -164,6 +165,14 @@ def initialize_schema(database: SQLiteDatabase) -> None:
         if current_version == 0:
             for statement in _INITIAL_SCHEMA:
                 connection.execute(statement)
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            return
+
+        if current_version == 5:
+            connection.execute(
+                "ALTER TABLE project_runtime_context "
+                "ADD COLUMN pending_plan_subject_digest TEXT"
+            )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             return
 

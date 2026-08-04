@@ -83,6 +83,7 @@ def test_context_can_be_reloaded_and_assembled(project_path: Path) -> None:
         git_main_version="main-commit",
         rolling_started_at=datetime(2026, 8, 3, 12, 30, tzinfo=UTC),
         current_plan_commit_sha="plan-commit",
+        pending_plan_subject_digest="reviewed-plan-digest",
         current_snapshot_id="snapshot-2",
         current_run_id="run-4",
         current_milestone_key="milestone-2",
@@ -159,7 +160,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 5
+    assert schema_version[0] == 6
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -186,6 +187,7 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "git_main_version",
             "rolling_started_at",
             "current_plan_commit_sha",
+            "pending_plan_subject_digest",
             "current_snapshot_id",
             "current_run_id",
             "current_milestone_key",
