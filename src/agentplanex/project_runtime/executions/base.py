@@ -14,6 +14,7 @@ from agentplanex.domains import (
 )
 from agentplanex.project_owner_agent.tools import ToolCatalog, ToolDefinition
 from agentplanex.services.agent_collaboration import AgentCollaborationService
+from agentplanex.services.delivery import DeliveryService
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.planning import PlanningService
 from agentplanex.settings import RuntimeSettings
@@ -26,6 +27,7 @@ class ProjectExecutionDependencies:
     project_path: Path
     settings: RuntimeSettings
     planning: PlanningService
+    delivery: DeliveryService
     collaboration: AgentCollaborationService
     event_bus: EventBus
 
@@ -52,6 +54,14 @@ class ProjectExecution(ABC):
 
 
 _execution_types: dict[str, type[ProjectExecution]] = {}
+_FIXED_TOOL_ORDER = (
+    "bash",
+    "request_plan_approval",
+    "talk_to_agent",
+    "update_milestones",
+    "run_next_milestone",
+    "decide_milestone_candidate",
+)
 
 
 def project_execution(
@@ -82,7 +92,10 @@ class ProjectExecutions:
     def __init__(self, dependencies: ProjectExecutionDependencies) -> None:
         executions = tuple(
             execution_type(dependencies)
-            for execution_type in _execution_types.values()
+            for _name, execution_type in sorted(
+                _execution_types.items(),
+                key=lambda item: _tool_position(item[0]),
+            )
         )
         object.__setattr__(
             self,
@@ -125,3 +138,10 @@ def _invalid_action(message: str) -> ToolExecutionResult:
             "exception_info": message,
         }
     )
+
+
+def _tool_position(name: str) -> int:
+    try:
+        return _FIXED_TOOL_ORDER.index(name)
+    except ValueError as error:
+        raise ValueError(f"Tool is not in the fixed Runtime catalog: {name!r}") from error

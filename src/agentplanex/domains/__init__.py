@@ -16,6 +16,16 @@ from agentplanex.domains.agent_exit import (
     AgentExit,
     AgentExitStatus,
 )
+from agentplanex.domains.delivery import (
+    Milestone,
+    MilestoneSnapshot,
+    MilestoneState,
+    Stage,
+    StageRun,
+    StageRunStatus,
+    milestone_view_digest,
+    milestone_view_json,
+)
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
@@ -55,6 +65,9 @@ __all__ = [
     "ExecutionEventType",
     "Message",
     "MessageHistory",
+    "Milestone",
+    "MilestoneSnapshot",
+    "MilestoneState",
     "OwnerActivation",
     "OwnerActivationStatus",
     "ProjectOwnerAgent",
@@ -63,6 +76,9 @@ __all__ = [
     "ProjectRuntimeContext",
     "ResolvedArtifact",
     "RuntimeContextChangeReason",
+    "Stage",
+    "StageRun",
+    "StageRunStatus",
     "SummaryHistory",
     "TalkToAgentRequest",
     "TalkToAgentResult",
@@ -70,4 +86,6 @@ __all__ = [
     "ToolExecutionResult",
     "ToolExecutor",
     "ToolSchema",
+    "milestone_view_digest",
+    "milestone_view_json",
 ]

@@ -1,14 +1,21 @@
 """Real Codex-backed Plan Hard Gate using a configured generic Reviewer."""
 
+import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from agentplanex.domains import AgentCollaborationError, AgentRole
+from agentplanex.domains import AgentCollaborationError, AgentRole, ArtifactDescriptor
 from agentplanex.infrastructure.codex import CodexTurnRequest
 from agentplanex.services.agent_collaboration import AgentCollaborationService
+from agentplanex.services.delivery import (
+    DeliveryError,
+    MilestoneReviewRequest,
+    MilestoneReviewResult,
+)
 from agentplanex.services.planning import (
     PlanningError,
     PlanReviewRequest,
@@ -42,6 +49,15 @@ class _HardGateManifest(BaseModel):
 
 
 @dataclass(frozen=True, slots=True)
+class _HardGateReview:
+    subject_digest: str
+    decision: Literal["pass", "revise"]
+    summary: str
+    required_changes: tuple[str, ...]
+    audit_artifact: ArtifactDescriptor
+
+
+@dataclass(frozen=True, slots=True)
 class CodexPlanHardGate:
     """Own the protected Plan decision Contract over one configured Reviewer."""
 
@@ -49,6 +65,76 @@ class CodexPlanHardGate:
 
     def review(self, request: PlanReviewRequest) -> PlanReviewResult:
         """Run and validate one isolated Reviewer workspace fail closed."""
+        review = self._review_exact_subject(
+            subject_digest=request.subject_digest,
+            prompt=lambda result_path: self._prompt(request, result_path),
+            mentions=lambda _workspace: tuple(
+                (f"plan-{index + 1}-{document.name}", document)
+                for index, document in enumerate(request.spec_documents)
+            ),
+            error_type=PlanningError,
+            subject_name="Plan",
+        )
+        return PlanReviewResult(
+            subject_digest=review.subject_digest,
+            decision=review.decision,
+            summary=review.summary,
+            required_changes=review.required_changes,
+            audit_artifact=review.audit_artifact,
+        )
+
+    def review_milestones(
+        self,
+        request: MilestoneReviewRequest,
+    ) -> MilestoneReviewResult:
+        """Review one exact complete Milestone View with the same generic Reviewer."""
+        serialized = json.dumps(
+            [
+                {
+                    "key": milestone.key,
+                    "objective": milestone.objective,
+                    "state": milestone.state.value,
+                    "stages": [
+                        {"key": stage.key, "objective": stage.objective}
+                        for stage in milestone.stages
+                    ],
+                }
+                for milestone in request.milestones
+            ],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+
+        def mentions(workspace: Path) -> tuple[tuple[str, Path], ...]:
+            subject = workspace / "inputs" / "milestones.json"
+            subject.parent.mkdir(parents=True, exist_ok=True)
+            subject.write_text(serialized, encoding="utf-8")
+            return (("milestone-view", subject),)
+
+        review = self._review_exact_subject(
+            subject_digest=request.subject_digest,
+            prompt=lambda result_path: self._milestone_prompt(request, result_path),
+            mentions=mentions,
+            error_type=DeliveryError,
+            subject_name="Milestone View",
+        )
+        return MilestoneReviewResult(
+            subject_digest=review.subject_digest,
+            decision=review.decision,
+            summary=review.summary,
+            required_changes=review.required_changes,
+            audit_artifact=review.audit_artifact,
+        )
+
+    def _review_exact_subject(
+        self,
+        *,
+        subject_digest: str,
+        prompt: Callable[[Path], str],
+        mentions: Callable[[Path], tuple[tuple[str, Path], ...]],
+        error_type: type[ValueError],
+        subject_name: str,
+    ) -> _HardGateReview:
         card = self.collaboration.catalog.get(
             self.collaboration.catalog.plan_reviewer_id
         )
@@ -56,10 +142,6 @@ class CodexPlanHardGate:
             raise RuntimeError("Configured Plan Hard Gate Agent is not a Reviewer")
         workspace = self.collaboration.workspaces.create(card)
         invocation = self.collaboration.workspaces.create_invocation(workspace)
-        mentions = tuple(
-            (f"plan-{index + 1}-{document.name}", document)
-            for index, document in enumerate(request.spec_documents)
-        )
         try:
             self.collaboration.transport.run(
                 CodexTurnRequest(
@@ -70,8 +152,8 @@ class CodexPlanHardGate:
                         "This invocation is a protected Plan Hard Gate. Do not treat "
                         "the decision as optional advice."
                     ),
-                    message=self._prompt(request, invocation.result_path),
-                    mentions=mentions,
+                    message=prompt(invocation.result_path),
+                    mentions=mentions(workspace.path),
                     output_schema=_SUMMARY_OUTPUT_SCHEMA,
                 )
             )
@@ -84,9 +166,9 @@ class CodexPlanHardGate:
                 for change in manifest.required_changes
                 if (normalized := " ".join(change.split()))
             )
-            if manifest.subject_digest != request.subject_digest:
+            if manifest.subject_digest != subject_digest:
                 raise AgentCollaborationError(
-                    "Reviewer result does not identify the supplied Plan subject"
+                    f"Reviewer result does not identify the supplied {subject_name}"
                 )
             if not summary:
                 raise AgentCollaborationError("Reviewer result summary is empty")
@@ -105,8 +187,8 @@ class CodexPlanHardGate:
                 expected_name="review.md",
             )
         except (AgentCollaborationError, ValidationError) as error:
-            raise PlanningError(f"Plan Hard Gate failed: {error}") from error
-        return PlanReviewResult(
+            raise error_type(f"{subject_name} Hard Gate failed: {error}") from error
+        return _HardGateReview(
             subject_digest=manifest.subject_digest,
             decision=manifest.decision,
             summary=summary[:2_000],
@@ -120,6 +202,29 @@ class CodexPlanHardGate:
             (
                 "Review the three attached Plan specification documents as one exact "
                 "subject. Determine whether the protected Plan approval action may proceed.",
+                f"The Runtime-computed subject digest is: {request.subject_digest}",
+                "Write a complete Markdown review to documents/review.md in your current "
+                "Reviewer workspace. Include concrete evidence and required changes.",
+                "Before the final response, write a UTF-8 JSON object to exactly "
+                f"{result_path}. It must contain only version=1, subject_digest, "
+                "decision=pass|revise, summary, required_changes, and one artifacts entry "
+                'with path="documents/review.md" and media_type="text/markdown".',
+                "Echo the supplied digest exactly. A pass requires an empty "
+                "required_changes array; revise requires at least one concrete change. "
+                "Return only a short JSON summary in the final response and do not copy "
+                "the review document into it.",
+            )
+        )
+
+    @staticmethod
+    def _milestone_prompt(
+        request: MilestoneReviewRequest,
+        result_path: Path,
+    ) -> str:
+        return "\n\n".join(
+            (
+                "Review the attached complete Milestone View as one exact subject. "
+                "Determine whether the protected Milestone publication action may proceed.",
                 f"The Runtime-computed subject digest is: {request.subject_digest}",
                 "Write a complete Markdown review to documents/review.md in your current "
                 "Reviewer workspace. Include concrete evidence and required changes.",

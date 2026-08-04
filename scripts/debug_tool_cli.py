@@ -21,14 +21,26 @@ from agentplanex.domains import (  # noqa: E402
     AgentExit,
     OwnerActivation,
     OwnerActivationStatus,
+    StageRun,
     ToolExecutionResult,
 )
+from agentplanex.services.delivery import MilestoneRunQueued  # noqa: E402
+from agentplanex.services.delivery_runner import DeliveryDriveResult  # noqa: E402
 from agentplanex.services.owner_activation import ActivationDriveResult  # noqa: E402
 from agentplanex.services.planning import PlanDecision  # noqa: E402
+from agentplanex.services.project_control import ProjectControlView  # noqa: E402
 
 type ToolRunner = Callable[[Action], ToolExecutionResult]
 type InputReader = Callable[[str], str]
-type InteractionAction = Literal["message", "approve", "reject", "drive"]
+type InteractionAction = Literal[
+    "message",
+    "approve",
+    "reject",
+    "drive",
+    "start",
+    "drive-delivery",
+    "view",
+]
 
 
 class RuntimeCommands(Protocol):
@@ -39,6 +51,12 @@ class RuntimeCommands(Protocol):
     def reject_plan(self, feedback: str = "") -> PlanDecision: ...
 
     def drive_next_activation(self) -> ActivationDriveResult: ...
+
+    def start_first_run(self) -> MilestoneRunQueued: ...
+
+    def drive_delivery(self) -> DeliveryDriveResult: ...
+
+    def project_control_view(self) -> ProjectControlView: ...
 
     def execute_action(self, action: Action) -> ToolExecutionResult: ...
 
@@ -147,7 +165,13 @@ def _dispatch(
             command.message,
             stdout=stdout,
         )
-    return _drive_once(runtime, stdout=stdout)
+    if command.action == "drive":
+        return _drive_once(runtime, stdout=stdout)
+    if command.action == "start":
+        return _start_first_run(runtime, stdout=stdout)
+    if command.action == "drive-delivery":
+        return _drive_delivery_once(runtime, stdout=stdout)
+    return _show_view(runtime, stdout=stdout)
 
 
 def _parse_command(command_text: str) -> Action | _Interaction:
@@ -172,6 +196,18 @@ def _parse_command(command_text: str) -> Action | _Interaction:
         if separator:
             raise ValueError("drive does not accept a message")
         return _Interaction("drive")
+    if command == "start":
+        if separator:
+            raise ValueError("start does not accept a message")
+        return _Interaction("start")
+    if command == "drive-delivery":
+        if separator:
+            raise ValueError("drive-delivery does not accept a message")
+        return _Interaction("drive-delivery")
+    if command == "view":
+        if separator:
+            raise ValueError("view does not accept a message")
+        return _Interaction("view")
     return _Interaction("message", stripped)
 
 
@@ -297,6 +333,103 @@ def _drive_once(
     return 0 if succeeded else 1
 
 
+def _start_first_run(
+    runtime: RuntimeCommands,
+    *,
+    stdout: TextIO | None = None,
+) -> int:
+    output = stdout if stdout is not None else sys.stdout
+    try:
+        queued = runtime.start_first_run()
+    except Exception as error:
+        _print_command_error("start", error, output)
+        return 1
+    print(
+        json.dumps(
+            {
+                "action": "start",
+                "ok": True,
+                "result": {
+                    "status": queued.context.status,
+                    "run_id": queued.stage_run.run_id,
+                    "stage_run_id": queued.stage_run.stage_run_id,
+                    "snapshot_id": queued.snapshot.snapshot_id,
+                    "milestone_key": queued.milestone.key,
+                    "stage_key": queued.stage.key,
+                    "input_commit_sha": queued.stage_run.input_commit_sha,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        file=output,
+    )
+    return 0
+
+
+def _drive_delivery_once(
+    runtime: RuntimeCommands,
+    *,
+    stdout: TextIO | None = None,
+) -> int:
+    output = stdout if stdout is not None else sys.stdout
+    try:
+        driven = runtime.drive_delivery()
+    except Exception as error:
+        _print_command_error("drive-delivery", error, output)
+        return 1
+    print(
+        json.dumps(
+            {
+                "action": "drive-delivery",
+                "ok": True,
+                "result": {
+                    "outcome": driven.outcome,
+                    "context_status": driven.context_status,
+                    "candidate_commit_sha": driven.candidate_commit_sha,
+                    "stage_run": (
+                        _stage_run_json(driven.stage_run)
+                        if driven.stage_run is not None
+                        else None
+                    ),
+                },
+                "activation": (
+                    _activation_json(driven.activation)
+                    if driven.activation is not None
+                    else None
+                ),
+            },
+            ensure_ascii=False,
+        ),
+        file=output,
+    )
+    return 0
+
+
+def _show_view(
+    runtime: RuntimeCommands,
+    *,
+    stdout: TextIO | None = None,
+) -> int:
+    output = stdout if stdout is not None else sys.stdout
+    try:
+        view = runtime.project_control_view()
+    except Exception as error:
+        _print_command_error("view", error, output)
+        return 1
+    print(
+        json.dumps(
+            {
+                "action": "view",
+                "ok": True,
+                "view": _project_control_view_json(view),
+            },
+            ensure_ascii=False,
+        ),
+        file=output,
+    )
+    return 0
+
+
 def _activation_json(activation: OwnerActivation) -> dict[str, object]:
     return {
         "activation_id": activation.activation_id,
@@ -315,6 +448,103 @@ def _activation_json(activation: OwnerActivation) -> dict[str, object]:
             else None
         ),
         "failure": activation.failure,
+    }
+
+
+def _project_control_view_json(view: ProjectControlView) -> dict[str, object]:
+    context = view.context
+    snapshot = view.snapshot
+    return {
+        "context": {
+            "triage_id": context.triage_id,
+            "status": context.status,
+            "pending_action": context.pending_action,
+            "git_branch": context.git_branch,
+            "git_main_version": context.git_main_version,
+            "rolling_started_at": (
+                context.rolling_started_at.isoformat()
+                if context.rolling_started_at is not None
+                else None
+            ),
+            "current_plan_commit_sha": context.current_plan_commit_sha,
+            "current_snapshot_id": context.current_snapshot_id,
+            "current_run_id": context.current_run_id,
+            "current_milestone_key": context.current_milestone_key,
+            "current_stage_key": context.current_stage_key,
+            "current_candidate_commit_sha": context.current_candidate_commit_sha,
+        },
+        "snapshot": (
+            {
+                "snapshot_id": snapshot.snapshot_id,
+                "previous_snapshot_id": snapshot.previous_snapshot_id,
+                "plan_commit_sha": snapshot.plan_commit_sha,
+                "reason": snapshot.reason,
+                "created_at": snapshot.created_at.isoformat(),
+                "milestones": [
+                    {
+                        "key": milestone.key,
+                        "objective": milestone.objective,
+                        "state": milestone.state.value,
+                        "stages": [
+                            {"key": stage.key, "objective": stage.objective}
+                            for stage in milestone.stages
+                        ],
+                    }
+                    for milestone in snapshot.milestones
+                ],
+            }
+            if snapshot is not None
+            else None
+        ),
+        "stage_runs": [_stage_run_json(stage_run) for stage_run in view.stage_runs],
+        "owner_activation": (
+            _activation_json(view.owner_activation)
+            if view.owner_activation is not None
+            else None
+        ),
+        "timeline": [
+            {
+                "event_id": event.event_id,
+                "event_type": event.event_type.value,
+                "react_loop_id": event.react_loop_id,
+                "message_id": event.message_id,
+                "payload": event.payload,
+                "created_at": event.created_at.isoformat(),
+            }
+            for event in view.timeline
+        ],
+        "git": {"branch": view.git_branch, "head": view.git_head},
+        "allowed_actions": list(view.allowed_actions),
+    }
+
+
+def _stage_run_json(stage_run: StageRun) -> dict[str, object]:
+    return {
+        "stage_run_id": stage_run.stage_run_id,
+        "run_id": stage_run.run_id,
+        "snapshot_id": stage_run.snapshot_id,
+        "milestone_key": stage_run.milestone_key,
+        "stage_key": stage_run.stage_key,
+        "status": stage_run.status.value,
+        "input_commit_sha": stage_run.input_commit_sha,
+        "output_commit_sha": stage_run.output_commit_sha,
+        "failure": stage_run.failure,
+        "created_at": stage_run.created_at.isoformat(),
+        "started_at": (
+            stage_run.started_at.isoformat()
+            if stage_run.started_at is not None
+            else None
+        ),
+        "lease_expires_at": (
+            stage_run.lease_expires_at.isoformat()
+            if stage_run.lease_expires_at is not None
+            else None
+        ),
+        "finished_at": (
+            stage_run.finished_at.isoformat()
+            if stage_run.finished_at is not None
+            else None
+        ),
     }
 
 

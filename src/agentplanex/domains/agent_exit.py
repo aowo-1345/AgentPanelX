@@ -9,7 +9,9 @@ class AgentExitStatus(StrEnum):
 
     REPLY_TO_HUMAN = "ReplyToHuman"
     PLAN_APPROVAL_REQUESTED = "PlanApprovalRequested"
+    FIRST_RUN_APPROVAL_REQUESTED = "FirstRunApprovalRequested"
     MILESTONE_RUN_QUEUED = "MilestoneRunQueued"
+    TRIAGE_DEVELOPMENT_COMPLETED = "TriageDevelopmentCompleted"
     AGENT_TASK_QUEUED = "AgentTaskQueued"
     REPEATED_FORMAT_ERROR = "RepeatedFormatError"
     STEP_LIMIT_EXCEEDED = "StepLimitExceeded"

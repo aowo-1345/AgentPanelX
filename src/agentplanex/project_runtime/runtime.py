@@ -7,6 +7,7 @@ from agentplanex.domains import (
     OwnerActivation,
     ToolExecutionResult,
 )
+from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteOwnerActivationRepository,
@@ -16,18 +17,24 @@ from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import (
     AgentCollaborationService,
+    DeliveryService,
     EventBus,
     PlanningService,
+    ProjectControlQuery,
+    ProjectControlView,
     ProjectOwnerService,
     ProjectRuntimeService,
     RuntimeContextService,
 )
+from agentplanex.services.delivery import MilestoneRunQueued
+from agentplanex.services.delivery_runner import DeliveryDriveResult, DeliveryRunner
 from agentplanex.services.owner_activation import (
     ActivationDriveResult,
     OwnerActivationDriver,
 )
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning import PlanDecision
+from agentplanex.services.stage_executor import CodexStageExecutor
 from agentplanex.settings import Settings
 
 
@@ -54,18 +61,37 @@ class ProjectRuntime:
             project_path,
             settings.runtime,
         )
+        hard_gate = CodexPlanHardGate(collaboration)
         planning = PlanningService(
             project_path=project_path,
             database=database,
             event_bus=event_bus,
             runtime_contexts=runtime_contexts,
             activations=activations,
-            review_plan=CodexPlanHardGate(collaboration).review,
+            review_plan=hard_gate.review,
+        )
+        delivery = DeliveryService(
+            project_path=project_path,
+            database=database,
+            event_bus=event_bus,
+            runtime_contexts=runtime_contexts,
+            git=GitRepository(project_path),
+            review_milestones=hard_gate.review_milestones,
+        )
+        delivery_runner = DeliveryRunner(
+            delivery=delivery,
+            executor=CodexStageExecutor(collaboration.transport),
+            git=GitRepository(project_path),
+        )
+        controls = ProjectControlQuery(
+            database=database,
+            git=GitRepository(project_path),
         )
         executions = create_project_executions(
             project_path,
             settings.runtime,
             planning,
+            delivery,
             collaboration,
             event_bus,
         )
@@ -86,6 +112,9 @@ class ProjectRuntime:
             database=database,
             owner=owner,
             planning=planning,
+            delivery=delivery,
+            delivery_runner=delivery_runner,
+            controls=controls,
             event_bus=event_bus,
             runtime_contexts=runtime_contexts,
             activations=activations,
@@ -107,6 +136,18 @@ class ProjectRuntime:
     def drive_next_activation(self) -> ActivationDriveResult:
         """Claim and process one pending Owner activation."""
         return self._service.drive_next_activation()
+
+    def start_first_run(self) -> MilestoneRunQueued:
+        """Apply the first explicit Run approval and queue its first Stage."""
+        return self._service.start_first_run()
+
+    def drive_delivery(self) -> DeliveryDriveResult:
+        """Run one queued Stage through the Delivery Driver."""
+        return self._service.drive_delivery()
+
+    def project_control_view(self) -> ProjectControlView:
+        """Return the stable read model used by control clients and debug tooling."""
+        return self._service.project_control_view()
 
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit tool action without entering the Agent loop."""

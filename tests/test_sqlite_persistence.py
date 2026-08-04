@@ -5,26 +5,34 @@ import subprocess
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from agentplanex.domains import (
     MessageHistory,
+    Milestone,
+    MilestoneSnapshot,
+    MilestoneState,
     OwnerActivation,
     OwnerActivationStatus,
     ProjectOwnerAgent,
     ProjectOwnerTaskType,
     ProjectRuntimeContext,
+    Stage,
+    StageRun,
+    StageRunStatus,
     SummaryHistory,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
+    SQLiteMilestoneSnapshotRepository,
     SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteProjectRuntimeContextRepository,
+    SQLiteStageRunRepository,
     SQLiteSummaryHistoryRepository,
 )
 
@@ -160,7 +168,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 6
+    assert schema_version[0] == 7
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -235,7 +243,9 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "input_commit_sha",
             "output_commit_sha",
             "failure",
+            "created_at",
             "started_at",
+            "lease_expires_at",
             "finished_at",
         ),
         "owner_activation": (
@@ -321,3 +331,86 @@ def test_competing_connections_claim_only_one_activation(
     assert [activation.status for activation in persisted].count(
         OwnerActivationStatus.PENDING
     ) == 1
+
+
+def test_milestone_snapshot_round_trips_complete_ordered_view(
+    project_path: Path,
+) -> None:
+    database = SQLiteDatabase.for_project(project_path)
+    snapshots = SQLiteMilestoneSnapshotRepository()
+    initialize_schema(database)
+    snapshot = MilestoneSnapshot(
+        snapshot_id="snapshot-1",
+        triage_id="triage-delivery",
+        previous_snapshot_id=None,
+        plan_commit_sha="plan-sha",
+        milestones=(
+            Milestone(
+                key="M1",
+                objective="Ship the first behavior.",
+                state=MilestoneState.PENDING,
+                stages=(
+                    Stage(key="S1", objective="Implement the behavior."),
+                    Stage(key="S2", objective="Verify the behavior."),
+                ),
+            ),
+        ),
+        reason="Initial delivery view.",
+        message_id="message-1",
+        created_at=datetime(2026, 8, 4, 12, tzinfo=UTC),
+    )
+
+    with database.transaction() as connection:
+        snapshots.insert(connection, snapshot)
+    with database.connection() as connection:
+        loaded = snapshots.get(connection, snapshot.snapshot_id)
+
+    assert loaded == snapshot
+    assert loaded is not None
+    assert loaded.first_pending() == snapshot.milestones[0]
+
+
+def test_stage_run_claim_and_terminal_state_are_persisted(
+    project_path: Path,
+) -> None:
+    database = SQLiteDatabase.for_project(project_path)
+    stage_runs = SQLiteStageRunRepository()
+    initialize_schema(database)
+    created_at = datetime(2026, 8, 4, 12, tzinfo=UTC)
+    queued = StageRun(
+        stage_run_id="stage-run-1",
+        triage_id="triage-delivery",
+        run_id="run-1",
+        snapshot_id="snapshot-1",
+        milestone_key="M1",
+        stage_key="S1",
+        status=StageRunStatus.QUEUED,
+        input_commit_sha="input-sha",
+        output_commit_sha=None,
+        failure=None,
+        created_at=created_at,
+    )
+
+    with database.transaction() as connection:
+        stage_runs.insert(connection, queued)
+    with database.transaction() as connection:
+        running = stage_runs.claim_next(
+            connection,
+            queued.triage_id,
+            started_at=created_at + timedelta(seconds=1),
+            lease_expires_at=created_at + timedelta(minutes=5),
+        )
+    assert running is not None
+    assert running.status is StageRunStatus.RUNNING
+    with database.transaction() as connection:
+        succeeded = stage_runs.mark_succeeded(
+            connection,
+            queued.stage_run_id,
+            output_commit_sha="output-sha",
+            finished_at=created_at + timedelta(seconds=2),
+        )
+
+    assert succeeded.status is StageRunStatus.SUCCEEDED
+    assert succeeded.output_commit_sha == "output-sha"
+    with database.connection() as connection:
+        assert stage_runs.get(connection, queued.stage_run_id) == succeeded

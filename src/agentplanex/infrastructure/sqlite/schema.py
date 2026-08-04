@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _INITIAL_SCHEMA = (
     """
@@ -89,11 +89,14 @@ _INITIAL_SCHEMA = (
         snapshot_id TEXT NOT NULL,
         milestone_key TEXT NOT NULL,
         stage_key TEXT NOT NULL,
-        status TEXT NOT NULL,
+        status TEXT NOT NULL
+            CHECK (status IN ('QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED')),
         input_commit_sha TEXT NOT NULL,
         output_commit_sha TEXT,
         failure TEXT,
-        started_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        lease_expires_at TEXT,
         finished_at TEXT
     )
     """,
@@ -104,6 +107,11 @@ _INITIAL_SCHEMA = (
     """
     CREATE INDEX stage_run_snapshot_milestone_idx
     ON stage_run (snapshot_id, milestone_key, stage_key)
+    """,
+    """
+    CREATE UNIQUE INDEX stage_run_one_active_idx
+    ON stage_run (triage_id)
+    WHERE status IN ('QUEUED', 'RUNNING')
     """,
     """
     CREATE TABLE owner_activation (
@@ -165,14 +173,6 @@ def initialize_schema(database: SQLiteDatabase) -> None:
         if current_version == 0:
             for statement in _INITIAL_SCHEMA:
                 connection.execute(statement)
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            return
-
-        if current_version == 5:
-            connection.execute(
-                "ALTER TABLE project_runtime_context "
-                "ADD COLUMN pending_plan_subject_digest TEXT"
-            )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             return
 

@@ -51,6 +51,29 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
         )
         is_gate = "This invocation is a protected Plan Hard Gate." in request.developer_instructions
         is_task = "Task Contract" in request.message
+        is_stage = "This is a fixed AgentPlaneX Stage Contract." in request.message
+        if is_stage:
+            contract = json.loads(request.message.split("\n\n", 2)[1])
+            assert isinstance(contract, dict)
+            delivery_document = contract["delivery_document"]
+            stage = contract["stage"]
+            assert isinstance(delivery_document, str)
+            assert isinstance(stage, dict)
+            stage_key = stage["key"]
+            assert isinstance(stage_key, str)
+            if "FAIL_STAGE_CONTRACT" not in request.message:
+                document_path = request.workspace / delivery_document
+                document_path.parent.mkdir(parents=True, exist_ok=True)
+                document_path.write_text(
+                    f"# Delivery {stage_key}\n\nValidated deterministic Stage output.\n",
+                    encoding="utf-8",
+                )
+                implementation = request.workspace / "src" / f"{stage_key}.txt"
+                implementation.parent.mkdir(parents=True, exist_ok=True)
+                implementation.write_text(
+                    f"implemented {stage_key}\n",
+                    encoding="utf-8",
+                )
         if is_gate or is_task:
             assert len(pending) == 1
             result_path = pending[0]
@@ -102,7 +125,15 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
             thread_id=request.thread_id or "deterministic-thread",
             turn_id="deterministic-turn",
             status="completed",
-            final_response=json.dumps({"summary": "Deterministic Codex response."}),
+            final_response=json.dumps(
+                {
+                    "summary": (
+                        "Deterministic Stage execution."
+                        if is_stage
+                        else "Deterministic Codex response."
+                    )
+                }
+            ),
         )
 
     monkeypatch.setattr(CodexTurnTransport, "run", run)
@@ -227,6 +258,106 @@ def _loaded_activations(project_path: Path):
         context = SQLiteProjectRuntimeContextRepository().list_all(connection)
         assert len(context) == 1
         return repository.list_by_triage_id(connection, context[0].triage_id)
+
+
+def _approve_current_plan(
+    project_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> str:
+    _write_specs(project_path)
+    request_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"request_plan_approval","arguments":{}}',
+        ]
+    )
+    request = json.loads(capfd.readouterr().out)
+    assert request_code == 0
+    assert request["result"]["accepted"] is True
+
+    approve_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "approve"]
+    )
+    approval = json.loads(capfd.readouterr().out)
+    assert approve_code == 0
+    commit_sha = approval["result"]["plan_commit_sha"]
+    assert isinstance(commit_sha, str)
+
+    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
+    drive_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    )
+    driven = json.loads(capfd.readouterr().out)
+    assert drive_code == 0
+    assert driven["activation"]["status"] == "COMPLETED"
+    return commit_sha
+
+
+def _publish_milestones(
+    project_path: Path,
+    capfd: pytest.CaptureFixture[str],
+    *,
+    stages: list[dict[str, str]],
+) -> dict[str, object]:
+    code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "update_milestones",
+                    "arguments": {
+                        "reason": "Publish the complete delivery view.",
+                        "milestones": [
+                            {
+                                "key": "milestone-1",
+                                "objective": "Deliver the requested behavior.",
+                                "state": "pending",
+                                "stages": stages,
+                            }
+                        ],
+                    },
+                }
+            ),
+        ]
+    )
+    response = json.loads(capfd.readouterr().out)
+    assert code == 0
+    assert response["result"]["accepted"] is True
+    result = response["result"]
+    assert isinstance(result, dict)
+    return result
+
+
+def _request_and_start_first_run(
+    project_path: Path,
+    capfd: pytest.CaptureFixture[str],
+) -> dict[str, object]:
+    request_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"run_next_milestone","arguments":{}}',
+        ]
+    )
+    requested = json.loads(capfd.readouterr().out)
+    assert request_code == 0
+    assert requested["result"]["state"] == "FIRST_RUN_APPROVAL_REQUESTED"
+    assert requested["exit"]["status"] == "FirstRunApprovalRequested"
+
+    start_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "start"]
+    )
+    started = json.loads(capfd.readouterr().out)
+    assert start_code == 0
+    result = started["result"]
+    assert isinstance(result, dict)
+    return result
 
 
 def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
@@ -757,6 +888,294 @@ def test_unexpected_gate_failure_is_not_converted_to_tool_observation(
             context,
             {"tool": "request_plan_approval", "arguments": {}},
         )
+
+
+def test_complete_rolling_delivery_is_observable_through_debug_commands(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    plan_commit_sha = _approve_current_plan(project_path, monkeypatch, capfd)
+    published = _publish_milestones(
+        project_path,
+        capfd,
+        stages=[
+            {"key": "stage-1", "objective": "Implement the first part."},
+            {"key": "stage-2", "objective": "Implement the second part."},
+        ],
+    )
+    initial_snapshot_id = published["snapshot"]["snapshot_id"]
+
+    view_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "view"]
+    )
+    published_view = json.loads(capfd.readouterr().out)["view"]
+    assert view_code == 0
+    assert published_view["context"]["status"] == "TODO"
+    assert published_view["snapshot"]["snapshot_id"] == initial_snapshot_id
+    assert published_view["snapshot"]["milestones"][0]["state"] == "pending"
+    assert published_view["stage_runs"] == []
+
+    started = _request_and_start_first_run(project_path, capfd)
+    run_id = started["run_id"]
+    assert isinstance(run_id, str)
+    assert started["input_commit_sha"] == plan_commit_sha
+    assert _git(project_path, "rev-parse", "HEAD") == plan_commit_sha
+
+    first_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive-delivery"]
+    )
+    first = json.loads(capfd.readouterr().out)
+    assert first_code == 0
+    assert first["result"]["outcome"] == "stage_succeeded"
+    assert first["result"]["stage_run"]["stage_key"] == "stage-1"
+    assert first["result"]["stage_run"]["status"] == "SUCCEEDED"
+    assert first["activation"] is None
+    assert _git(project_path, "rev-parse", "HEAD") == plan_commit_sha
+
+    mid_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "view"]
+    )
+    mid_view = json.loads(capfd.readouterr().out)["view"]
+    assert mid_code == 0
+    assert mid_view["context"]["current_stage_key"] == "stage-2"
+    assert [stage_run["status"] for stage_run in mid_view["stage_runs"]] == [
+        "SUCCEEDED",
+        "QUEUED",
+    ]
+    assert mid_view["allowed_actions"] == ["drive-delivery"]
+
+    second_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive-delivery"]
+    )
+    second = json.loads(capfd.readouterr().out)
+    candidate_commit_sha = second["result"]["candidate_commit_sha"]
+    assert second_code == 0
+    assert second["result"]["outcome"] == "candidate_ready"
+    assert isinstance(candidate_commit_sha, str)
+    assert second["activation"]["task_type"] == "EXECUTION_RESULT"
+    assert second["activation"]["status"] == "PENDING"
+    assert _git(project_path, "rev-parse", "HEAD") == plan_commit_sha
+    assert _git(
+        project_path,
+        "rev-parse",
+        f"refs/agentplanex/candidates/{run_id}",
+    ) == candidate_commit_sha
+    assert "Validated deterministic Stage output." in _git(
+        project_path,
+        "show",
+        (
+            f"{candidate_commit_sha}:docs/agentplanex/deliveries/"
+            f"{run_id}/stage-2.md"
+        ),
+    )
+
+    candidate_view_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "view"]
+    )
+    candidate_view = json.loads(capfd.readouterr().out)["view"]
+    assert candidate_view_code == 0
+    assert candidate_view["context"]["current_candidate_commit_sha"] == (
+        candidate_commit_sha
+    )
+    assert candidate_view["allowed_actions"] == ["drive"]
+
+    activation_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    )
+    activation = json.loads(capfd.readouterr().out)
+    assert activation_code == 0
+    assert activation["activation"]["task_type"] == "EXECUTION_RESULT"
+    assert activation["activation"]["status"] == "COMPLETED"
+
+    decision_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "decide_milestone_candidate",
+                    "arguments": {
+                        "decision": "accept",
+                        "reason": "The Candidate satisfies the Milestone.",
+                    },
+                }
+            ),
+        ]
+    )
+    decision = json.loads(capfd.readouterr().out)
+    assert decision_code == 0
+    assert decision["result"]["completed"] is True
+    assert decision["result"]["status"] == "DONE"
+    assert decision["exit"]["status"] == "TriageDevelopmentCompleted"
+    assert _git(project_path, "rev-parse", "HEAD") == candidate_commit_sha
+
+    final_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "view"]
+    )
+    final_view = json.loads(capfd.readouterr().out)["view"]
+    assert final_code == 0
+    assert final_view["context"]["status"] == "DONE"
+    assert final_view["context"]["current_run_id"] is None
+    assert final_view["context"]["current_candidate_commit_sha"] is None
+    assert final_view["snapshot"]["previous_snapshot_id"] == initial_snapshot_id
+    assert final_view["snapshot"]["milestones"][0]["state"] == "completed"
+    assert [stage_run["status"] for stage_run in final_view["stage_runs"]] == [
+        "SUCCEEDED",
+        "SUCCEEDED",
+    ]
+    assert final_view["git"]["head"] == candidate_commit_sha
+
+    event_types = [event.event_type.value for event in _loaded_events(project_path)]
+    for event_type in (
+        "MILESTONES_UPDATED",
+        "FIRST_RUN_APPROVAL_REQUESTED",
+        "MILESTONE_RUN_QUEUED",
+        "CANDIDATE_READY",
+        "CANDIDATE_ACCEPTED",
+        "TRIAGE_DEVELOPMENT_COMPLETED",
+    ):
+        assert event_type in event_types
+    assert event_types.count("STAGE_RUN_STARTED") == 2
+    assert event_types.count("STAGE_RUN_SUCCEEDED") == 2
+
+
+def test_rejected_candidate_stays_reachable_and_next_run_skips_first_approval(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    target_commit_sha = _approve_current_plan(project_path, monkeypatch, capfd)
+    _publish_milestones(
+        project_path,
+        capfd,
+        stages=[{"key": "stage-1", "objective": "Implement a reviewable change."}],
+    )
+    started = _request_and_start_first_run(project_path, capfd)
+    run_id = started["run_id"]
+    assert isinstance(run_id, str)
+
+    drive_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive-delivery"]
+    )
+    driven = json.loads(capfd.readouterr().out)
+    candidate_commit_sha = driven["result"]["candidate_commit_sha"]
+    assert drive_code == 0
+    assert isinstance(candidate_commit_sha, str)
+    debug_tool_cli.main(["--cwd", str(project_path), "--print", "drive"])
+    capfd.readouterr()
+
+    reject_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "decide_milestone_candidate",
+                    "arguments": {
+                        "decision": "reject",
+                        "reason": "The Candidate needs a different implementation.",
+                    },
+                }
+            ),
+        ]
+    )
+    rejected = json.loads(capfd.readouterr().out)
+    assert reject_code == 0
+    assert rejected["result"]["decision"] == "reject"
+    assert rejected["result"]["status"] == "IN_PROGRESS"
+    assert rejected["result"]["completed"] is False
+    assert _git(project_path, "rev-parse", "HEAD") == target_commit_sha
+    assert _git(
+        project_path,
+        "rev-parse",
+        f"refs/agentplanex/candidates/{run_id}",
+    ) == candidate_commit_sha
+
+    next_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"run_next_milestone","arguments":{}}',
+        ]
+    )
+    next_run = json.loads(capfd.readouterr().out)
+    assert next_code == 0
+    assert next_run["result"]["state"] == "MILESTONE_RUN_QUEUED"
+    assert next_run["result"]["run_id"] != run_id
+    assert next_run["exit"]["status"] == "MilestoneRunQueued"
+    assert _load_context(project_path).pending_action is None
+
+
+def test_invalid_stage_output_becomes_failed_fact_block_and_owner_activation(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    target_commit_sha = _approve_current_plan(project_path, monkeypatch, capfd)
+    _publish_milestones(
+        project_path,
+        capfd,
+        stages=[
+            {
+                "key": "stage-fail",
+                "objective": "FAIL_STAGE_CONTRACT without a delivery document.",
+            }
+        ],
+    )
+    started = _request_and_start_first_run(project_path, capfd)
+    run_id = started["run_id"]
+    assert isinstance(run_id, str)
+
+    drive_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive-delivery"]
+    )
+    driven = json.loads(capfd.readouterr().out)
+    assert drive_code == 0
+    assert driven["result"]["outcome"] == "stage_failed"
+    assert driven["result"]["context_status"] == "BLOCKED"
+    assert driven["result"]["stage_run"]["status"] == "FAILED"
+    assert "required delivery document" in driven["result"]["stage_run"]["failure"]
+    assert driven["activation"]["task_type"] == "EXECUTION_RESULT"
+    assert driven["activation"]["status"] == "PENDING"
+    assert _git(project_path, "rev-parse", "HEAD") == target_commit_sha
+
+    view_code = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "view"]
+    )
+    view = json.loads(capfd.readouterr().out)["view"]
+    assert view_code == 0
+    assert view["context"]["status"] == "BLOCKED"
+    assert view["context"]["current_run_id"] == run_id
+    assert view["context"]["current_stage_key"] == "stage-fail"
+    assert view["context"]["current_candidate_commit_sha"] is None
+    assert view["stage_runs"][0]["status"] == "FAILED"
+    assert view["allowed_actions"] == ["drive"]
+
+    event_types = [event.event_type.value for event in _loaded_events(project_path)]
+    assert "AGENT_INVOCATION_FAILED" in event_types
+    assert "STAGE_RUN_FAILED" in event_types
+    assert "CANDIDATE_READY" not in event_types
+    candidate_ref = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(project_path),
+            "rev-parse",
+            "--verify",
+            f"refs/agentplanex/candidates/{run_id}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert candidate_ref.returncode != 0
 
 
 def test_request_then_approve_commits_specs_and_queues_owner_activation(
