@@ -31,7 +31,9 @@ from agentplanex.services.event_bus import EventBus
 from agentplanex.services.runtime_context import RuntimeContextService
 
 SPEC_DOCUMENT_NAMES = ("architecture.md", "requirements.md", "roadmap.md")
-type PlanDecisionMessageWriter = Callable[[sqlite3.Connection], str]
+type PlanDecisionMessageWriter = Callable[
+    [sqlite3.Connection], tuple[str, str | None]
+]
 
 
 class PlanningError(ValueError):
@@ -322,12 +324,13 @@ class PlanningService:
                 reason=reason,
                 mutate=mutate,
             )
-            message_id = append_message(connection)
+            message_id, summary_id = append_message(connection)
             activation = OwnerActivation(
                 activation_id=uuid4().hex,
                 triage_id=triage_id,
                 task_type=ProjectOwnerTaskType.PLAN_DECISION,
                 message_id=message_id,
+                summary_id=summary_id,
             )
             self.activations.insert(connection, activation)
         if context_event is not None:

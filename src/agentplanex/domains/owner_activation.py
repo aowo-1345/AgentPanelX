@@ -31,6 +31,7 @@ class OwnerActivation:
     triage_id: str
     task_type: ProjectOwnerTaskType
     message_id: str
+    summary_id: str | None = None
     status: OwnerActivationStatus = OwnerActivationStatus.PENDING
     driver_mode: OwnerActivationMode | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -42,6 +43,8 @@ class OwnerActivation:
         for field_name in ("activation_id", "triage_id", "message_id"):
             if not getattr(self, field_name).strip():
                 raise ValueError(f"{field_name} must not be empty")
+        if self.summary_id is not None and not self.summary_id.strip():
+            raise ValueError("summary_id must not be empty")
         if self.status is OwnerActivationStatus.PENDING:
             if self.driver_mode is None:
                 if any(

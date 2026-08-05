@@ -38,6 +38,7 @@ from agentplanex.project_owner_agent.models.jbb import (
 )
 from agentplanex.project_owner_agent.tools import ToolCatalog
 from agentplanex.services.event_bus import EventBus
+from agentplanex.services.owner_context import ProjectOwnerContextQuery
 from agentplanex.settings import Settings
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -56,6 +57,7 @@ class ProjectOwnerService:
     tools: ToolCatalog
     tool_executor: ToolExecutor
     event_bus: EventBus
+    owner_contexts: ProjectOwnerContextQuery
     contexts: SQLiteProjectRuntimeContextRepository = field(
         default_factory=SQLiteProjectRuntimeContextRepository
     )
@@ -104,8 +106,8 @@ class ProjectOwnerService:
         connection: sqlite3.Connection,
         context: ProjectRuntimeContext,
         task: ProjectOwnerTask,
-    ) -> str:
-        """Persist one external Owner input and return its stable checkpoint."""
+    ) -> tuple[str, str | None]:
+        """Persist external input and return its message and frozen Summary IDs."""
         content = task.content.strip()
         if not content:
             raise ValueError("Project Owner task content must not be empty")
@@ -117,7 +119,8 @@ class ProjectOwnerService:
         if owner.message_id is None:
             appended.append({"role": "system", "content": owner.system_prompt})
         appended.append({"role": "user", "content": content})
-        return self._append_messages(connection, owner, tuple(appended))
+        message_id = self._append_messages(connection, owner, tuple(appended))
+        return message_id, owner.summary_id
 
     def run_activation(self, activation: OwnerActivation) -> AgentExit:
         """Restore persisted Owner history and run exactly one activation."""
@@ -246,15 +249,7 @@ class ProjectOwnerService:
                     "Owner activation checkpoint is not the current message: "
                     f"{activation.message_id} != {owner.message_id}"
                 )
-            trigger = self.messages.get(connection, activation.message_id)
-            if (
-                trigger is None
-                or trigger.project_owner_session_id != owner.project_owner_session_id
-            ):
-                raise LookupError(
-                    f"Activation message not found: {activation.message_id}"
-                )
-            messages = self._load_messages(connection, owner)
+            messages = self._load_messages(connection, owner, activation)
         return context, messages
 
     def _build_agent(
@@ -363,17 +358,31 @@ class ProjectOwnerService:
         self,
         connection: sqlite3.Connection,
         owner: ProjectOwnerAgent,
+        activation: OwnerActivation,
     ) -> tuple[Message, ...]:
-        histories = self.messages.list_by_session_id(
+        latest = self.messages.get_latest_by_session_id(
             connection,
             owner.project_owner_session_id,
         )
-        latest_id = histories[-1].message_id if histories else None
+        latest_id = latest.message_id if latest is not None else None
         if latest_id != owner.message_id:
             raise RuntimeError(
                 "Project Owner Agent latest message pointer does not match message history"
             )
-        return tuple(message for history in histories for message in history.message)
+
+        restored = self.owner_contexts.restore_in_connection(
+            connection,
+            activation.message_id,
+            summary_id=activation.summary_id,
+        )
+        if (
+            restored.triage_id != owner.triage_id
+            or restored.project_owner_session_id != owner.project_owner_session_id
+        ):
+            raise RuntimeError(
+                "Restored Owner context does not match the Activation owner"
+            )
+        return restored.messages
 
 
 def _unhandled_exit(error: Exception) -> AgentExit:

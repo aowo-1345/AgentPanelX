@@ -33,6 +33,7 @@ from agentplanex.services.owner_activation import (
     ActivationDriveResult,
     OwnerActivationDriver,
 )
+from agentplanex.services.owner_context import ProjectOwnerContextQuery
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning import PlanDecision
 from agentplanex.services.stage_executor import CodexStageExecutor
@@ -58,6 +59,7 @@ class ProjectRuntime:
         event_bus = EventBus((SQLiteTimelineRecorder(database),))
         runtime_contexts = RuntimeContextService(database, event_bus)
         activations = SQLiteOwnerActivationRepository()
+        owner_contexts = ProjectOwnerContextQuery(database)
         collaboration = AgentCollaborationService.from_settings(
             project_path,
             settings.runtime,
@@ -103,6 +105,7 @@ class ProjectRuntime:
             tools=executions.tools,
             tool_executor=executions.execute,
             event_bus=event_bus,
+            owner_contexts=owner_contexts,
         )
         driver = OwnerActivationDriver(
             database=database,

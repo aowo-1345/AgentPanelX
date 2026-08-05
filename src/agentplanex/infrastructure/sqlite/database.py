@@ -54,6 +54,26 @@ class SQLiteDatabase:
             connection.close()
 
     @contextmanager
+    def read_only_connection(self) -> Iterator[sqlite3.Connection]:
+        """Open an existing database with SQLite-enforced read-only access."""
+
+        connection = sqlite3.connect(
+            f"{self.path.resolve().as_uri()}?mode=ro",
+            uri=True,
+            timeout=self.busy_timeout_seconds,
+            isolation_level=None,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute(
+            f"PRAGMA busy_timeout = {int(self.busy_timeout_seconds * 1000)}"
+        )
+        try:
+            yield connection
+        finally:
+            connection.close()
+
+    @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         """Run writes atomically on one immediate transaction."""
         with self.connection() as connection:

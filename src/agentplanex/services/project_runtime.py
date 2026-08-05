@@ -72,7 +72,11 @@ class ProjectRuntimeService:
             context = self.owner.ensure_state(connection)
             self._assert_delivery_idle(connection, context.triage_id)
             self._assert_owner_idle(connection, context.triage_id)
-            message_id = self.owner.append_task(connection, context, task)
+            message_id, summary_id = self.owner.append_task(
+                connection,
+                context,
+                task,
+            )
             updated, context_event = self.runtime_contexts.transition_in_transaction(
                 connection,
                 context.triage_id,
@@ -84,6 +88,7 @@ class ProjectRuntimeService:
                 triage_id=updated.triage_id,
                 task_type=task.type,
                 message_id=message_id,
+                summary_id=summary_id,
             )
             self.activations.insert(connection, activation)
 
@@ -299,7 +304,9 @@ class ProjectRuntimeService:
             self._assert_delivery_idle(connection, context.triage_id)
             self._assert_owner_idle(connection, context.triage_id)
 
-        def append_message(connection: sqlite3.Connection) -> str:
+        def append_message(
+            connection: sqlite3.Connection,
+        ) -> tuple[str, str | None]:
             current = self.owner.ensure_state(connection)
             if current.triage_id != context.triage_id:
                 raise RuntimeError("Project Runtime Context changed during command")
@@ -331,12 +338,17 @@ class ProjectRuntimeService:
             type=ProjectOwnerTaskType.EXECUTION_RESULT,
             content=content,
         )
-        message_id = self.owner.append_task(connection, owner_context, task)
+        message_id, summary_id = self.owner.append_task(
+            connection,
+            owner_context,
+            task,
+        )
         activation = OwnerActivation(
             activation_id=uuid4().hex,
             triage_id=context.triage_id,
             task_type=task.type,
             message_id=message_id,
+            summary_id=summary_id,
         )
         self.activations.insert(connection, activation)
         return activation

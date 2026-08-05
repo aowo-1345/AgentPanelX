@@ -1,6 +1,7 @@
 """Observable Project Owner configuration and project-binding behavior."""
 
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 
@@ -13,6 +14,13 @@ from agentplanex.domains import (
     AgentExitStatus,
     Message,
     ProjectRuntimeContext,
+    SummaryHistory,
+)
+from agentplanex.infrastructure.sqlite import SQLiteDatabase
+from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteMessageHistoryRepository,
+    SQLiteProjectOwnerAgentRepository,
+    SQLiteSummaryHistoryRepository,
 )
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_runtime import ProjectRuntime
@@ -321,6 +329,135 @@ def test_runtime_restores_owner_history_across_activations(
         "second",
         "third",
     ]
+
+
+def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ReplyingModel.constructions = 0
+    _ReplyingModel.queries = []
+    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
+    project_path = initialize_git_project()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+    )
+
+    first_activation = runtime.submit_message("first")
+    runtime.drive_next_activation()
+    runtime.submit_message("second")
+    runtime.drive_next_activation()
+
+    database = SQLiteDatabase.for_project(project_path)
+    owners = SQLiteProjectOwnerAgentRepository()
+    messages = SQLiteMessageHistoryRepository()
+    summaries = SQLiteSummaryHistoryRepository()
+    with database.transaction() as connection:
+        owner = owners.get_by_triage_id(connection, first_activation.triage_id)
+        assert owner is not None
+        histories = messages.list_by_session_id(
+            connection,
+            owner.project_owner_session_id,
+        )
+        covered_through_message_id = histories[-1].message_id
+        frozen_summary = SummaryHistory(
+            project_owner_session_id=owner.project_owner_session_id,
+            summary_id="summary-frozen",
+            summary_content="First and second were already handled.",
+            covered_through_message_id=covered_through_message_id,
+        )
+        summaries.insert(connection, frozen_summary)
+        owners.update(connection, replace(owner, summary_id=frozen_summary.summary_id))
+
+    activation = runtime.submit_message("third")
+    assert activation.summary_id == frozen_summary.summary_id
+
+    with database.transaction() as connection:
+        owner = owners.get_by_triage_id(connection, activation.triage_id)
+        assert owner is not None
+        newer_summary = SummaryHistory(
+            project_owner_session_id=owner.project_owner_session_id,
+            summary_id="summary-newer",
+            summary_content="This summary must not replace the frozen checkpoint.",
+            covered_through_message_id=covered_through_message_id,
+        )
+        summaries.insert(connection, newer_summary)
+        owners.update(connection, replace(owner, summary_id=newer_summary.summary_id))
+
+    restarted_runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+    )
+    result = restarted_runtime.drive_next_activation()
+
+    assert result.activation is not None
+    assert result.activation.summary_id == frozen_summary.summary_id
+    assert result.exit is not None
+    assert result.exit.content == "third"
+    restored_contents = [
+        message.get("content") for message in _ReplyingModel.queries[-1]
+    ]
+    assert restored_contents == [
+        project_owner_service.DEFAULT_SYSTEM_PROMPT,
+        (
+            "Earlier Project Owner conversation summary. This is a lossy context "
+            "projection; original messages, repository artifacts, and runtime facts "
+            "remain authoritative.\n\nFirst and second were already handled."
+        ),
+        "third",
+    ]
+
+
+def test_activation_rejects_summary_from_another_owner_session(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ReplyingModel.queries = []
+    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
+    project_path = initialize_git_project()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+    )
+    first_activation = runtime.submit_message("first")
+    runtime.drive_next_activation()
+    _ReplyingModel.queries = []
+
+    database = SQLiteDatabase.for_project(project_path)
+    owners = SQLiteProjectOwnerAgentRepository()
+    messages = SQLiteMessageHistoryRepository()
+    summaries = SQLiteSummaryHistoryRepository()
+    with database.transaction() as connection:
+        owner = owners.get_by_triage_id(connection, first_activation.triage_id)
+        assert owner is not None
+        watermark = messages.get_latest_by_session_id(
+            connection,
+            owner.project_owner_session_id,
+        )
+        assert watermark is not None
+        invalid_summary = SummaryHistory(
+            project_owner_session_id="another-owner-session",
+            summary_id="summary-wrong-session",
+            summary_content="This summary belongs to another Owner.",
+            covered_through_message_id=watermark.message_id,
+        )
+        summaries.insert(connection, invalid_summary)
+        owners.update(connection, replace(owner, summary_id=invalid_summary.summary_id))
+
+    activation = runtime.submit_message("second")
+    result = runtime.drive_next_activation()
+
+    assert activation.summary_id == invalid_summary.summary_id
+    assert result.activation is not None
+    assert result.activation.status.value == "FAILED"
+    assert result.exit is not None
+    assert result.exit.status is AgentExitStatus.UNHANDLED_EXCEPTION
+    assert "Summary does not belong to Owner session" in result.exit.content
+    assert _ReplyingModel.queries == []
 
 
 @pytest.mark.parametrize(

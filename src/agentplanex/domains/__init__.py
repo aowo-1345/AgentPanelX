@@ -33,12 +33,17 @@ from agentplanex.domains.execution_event import (
     ProjectOwnerTaskType,
     RuntimeContextChangeReason,
 )
+from agentplanex.domains.historical_owner import (
+    HistoricalOwnerExchange,
+    HistoricalOwnerFidelity,
+)
 from agentplanex.domains.message_history import Message, MessageHistory
 from agentplanex.domains.owner_activation import (
     OwnerActivation,
     OwnerActivationMode,
     OwnerActivationStatus,
 )
+from agentplanex.domains.owner_context import RestoredOwnerContext
 from agentplanex.domains.project_owner_agent import ProjectOwnerAgent
 from agentplanex.domains.project_runtime_context import ProjectRuntimeContext
 from agentplanex.domains.summary_history import SummaryHistory
@@ -67,6 +72,8 @@ __all__ = [
     "ConversationReference",
     "ExecutionEvent",
     "ExecutionEventType",
+    "HistoricalOwnerExchange",
+    "HistoricalOwnerFidelity",
     "Message",
     "MessageHistory",
     "Milestone",
@@ -80,6 +87,7 @@ __all__ = [
     "ProjectOwnerTaskType",
     "ProjectRuntimeContext",
     "ResolvedArtifact",
+    "RestoredOwnerContext",
     "RuntimeContextChangeReason",
     "Stage",
     "StageRun",

@@ -193,7 +193,9 @@ def _dispatch(
         return _start_first_run(runtime, stdout=stdout)
     if command.action == "drive-delivery":
         return _drive_delivery_once(runtime, stdout=stdout)
-    return _show_view(runtime, stdout=stdout)
+    if command.action == "view":
+        return _show_view(runtime, stdout=stdout)
+    raise AssertionError(f"Unhandled interaction action: {command.action}")
 
 
 def _parse_command(command_text: str) -> Action | _Interaction:
@@ -585,6 +587,7 @@ def _activation_json(activation: OwnerActivation) -> dict[str, object]:
         "activation_id": activation.activation_id,
         "task_type": activation.task_type.value,
         "message_id": activation.message_id,
+        "summary_id": activation.summary_id,
         "status": activation.status.value,
         "driver_mode": (
             activation.driver_mode.value

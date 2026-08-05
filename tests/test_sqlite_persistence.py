@@ -1,6 +1,7 @@
 """Observable SQLite persistence behavior."""
 
 import shutil
+import sqlite3
 import subprocess
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -133,6 +134,67 @@ def test_context_can_be_reloaded_and_assembled(project_path: Path) -> None:
     assert assembled_runtime.project_owner_agent.message_history == message_history
 
 
+def test_message_checkpoint_range_is_bounded_and_session_safe(
+    project_path: Path,
+) -> None:
+    database = SQLiteDatabase.for_project(project_path)
+    messages = SQLiteMessageHistoryRepository()
+    initialize_schema(database)
+    histories = (
+        MessageHistory(
+            "session-1",
+            "message-1",
+            1,
+            ({"role": "user", "content": "covered"},),
+        ),
+        MessageHistory(
+            "session-1",
+            "message-2",
+            2,
+            ({"role": "assistant", "content": "tail"},),
+        ),
+        MessageHistory(
+            "session-1",
+            "message-3",
+            3,
+            ({"role": "user", "content": "trigger"},),
+        ),
+        MessageHistory(
+            "session-2",
+            "message-other-session",
+            1,
+            ({"role": "user", "content": "unrelated"},),
+        ),
+    )
+    with database.transaction() as connection:
+        for history in histories:
+            messages.insert(connection, history)
+
+    with database.connection() as connection:
+        selected = messages.list_between_checkpoints(
+            connection,
+            "session-1",
+            after_message_id="message-1",
+            through_message_id="message-3",
+        )
+        with pytest.raises(ValueError, match="does not belong to Owner session"):
+            messages.list_between_checkpoints(
+                connection,
+                "session-1",
+                after_message_id="message-other-session",
+                through_message_id="message-3",
+            )
+        with pytest.raises(ValueError, match="must precede activation message"):
+            messages.list_between_checkpoints(
+                connection,
+                "session-1",
+                after_message_id="message-3",
+                through_message_id="message-3",
+            )
+
+    assert selected == histories[1:3]
+
+
 def test_failed_transaction_does_not_leave_partial_state(
     project_path: Path,
 ) -> None:
@@ -158,6 +220,32 @@ def test_failed_transaction_does_not_leave_partial_state(
         assert runtimes.get(connection, "triage-rollback") is None
 
 
+def test_read_only_connection_rejects_runtime_writes(project_path: Path) -> None:
+    database = SQLiteDatabase.for_project(project_path)
+    initialize_schema(database)
+    with database.transaction() as connection:
+        connection.execute(
+            """
+            INSERT INTO project_runtime_context (triage_id, status)
+            VALUES (?, ?)
+            """,
+            ("triage-read-only", "TODO"),
+        )
+
+    with database.read_only_connection() as connection:
+        row = connection.execute(
+            "SELECT status FROM project_runtime_context WHERE triage_id = ?",
+            ("triage-read-only",),
+        ).fetchone()
+        assert row is not None
+        assert row["status"] == "TODO"
+        with pytest.raises(sqlite3.OperationalError):
+            connection.execute(
+                "UPDATE project_runtime_context SET status = ? WHERE triage_id = ?",
+                ("DONE", "triage-read-only"),
+            )
+
+
 def test_git_project_fixture_initializes_project_database(
     initialize_git_project: Callable[[], Path],
 ) -> None:
@@ -169,7 +257,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 8
+    assert schema_version[0] == 9
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -254,6 +342,7 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "triage_id",
             "task_type",
             "message_id",
+            "summary_id",
             "status",
             "driver_mode",
             "created_at",
@@ -292,6 +381,62 @@ def test_schema_contains_current_control_plane_tables_and_columns(
                 ).fetchall()
             )
             assert actual_columns == columns
+
+
+def test_schema_upgrades_v8_activation_checkpoints_without_losing_rows(
+    project_path: Path,
+) -> None:
+    database = SQLiteDatabase.for_project(project_path)
+    with database.transaction() as connection:
+        connection.execute(
+            """
+            CREATE TABLE owner_activation (
+                activation_id TEXT PRIMARY KEY,
+                triage_id TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                driver_mode TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                failure TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO owner_activation (
+                activation_id, triage_id, task_type, message_id, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "activation-existing",
+                "triage-existing",
+                "USER_INPUT",
+                "message-existing",
+                "PENDING",
+                datetime(2026, 8, 5, tzinfo=UTC).isoformat(),
+            ),
+        )
+        connection.execute("PRAGMA user_version = 8")
+
+    initialize_schema(database)
+
+    with database.connection() as connection:
+        schema_version = connection.execute("PRAGMA user_version").fetchone()
+        row = connection.execute(
+            """
+            SELECT activation_id, message_id, summary_id
+            FROM owner_activation
+            WHERE activation_id = ?
+            """,
+            ("activation-existing",),
+        ).fetchone()
+    assert schema_version is not None
+    assert schema_version[0] == 9
+    assert row is not None
+    assert tuple(row) == ("activation-existing", "message-existing", None)
 
 
 def test_competing_connections_claim_only_one_activation(

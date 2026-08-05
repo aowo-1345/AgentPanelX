@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentPlaneX BLOCKED 归因"
+  short_description: "恢复 BLOCKED 历史上下文并产出统一归因与优化 Proposal"
+  default_prompt: "Use $agentplanex-project-attribution to analyze why this AgentPlaneX project entered BLOCKED and draft an optimization Proposal."

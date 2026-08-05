@@ -11,7 +11,7 @@
 
 ## 权威与访问
 
-项目数据库位于 `<project>/.agentplanex/agentplanex.sqlite3`。依赖表结构前先检查 `PRAGMA user_version`；本参考说明的是 schema version 8。
+项目数据库位于 `<project>/.agentplanex/agentplanex.sqlite3`。依赖表结构前先检查 `PRAGMA user_version`；本参考说明的是 schema version 9。
 
 SQLite 和 Git 只能作为只读证据源。不要为了观察项目而初始化 Runtime，不要修改 SQLite、变更 Git ref 或伪造证据文件。
 
@@ -88,6 +88,7 @@ erDiagram
         TEXT activation_id PK
         TEXT triage_id
         TEXT message_id
+        TEXT summary_id
         TEXT task_type
         TEXT status
         TEXT driver_mode
@@ -204,6 +205,7 @@ erDiagram
 | `triage_id` | 所属 Runtime。 |
 | `task_type` | `USER_INPUT`、`PLAN_DECISION` 或 `EXECUTION_RESULT`。 |
 | `message_id` | Owner 必须消费的持久化 message。 |
+| `summary_id` | Activation 入队时冻结的 Summary checkpoint；未使用 Summary 时为空。 |
 | `status` | `PENDING`、`RUNNING`、`COMPLETED` 或 `FAILED`。 |
 | `driver_mode` | 首次 claim 后固定为 `MODEL` 或 `TOOL`；尚未绑定的新 Activation 为 `NULL`。 |
 | `created_at`、`started_at`、`finished_at` | 邮箱生命周期时间。 |

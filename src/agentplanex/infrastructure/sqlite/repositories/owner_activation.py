@@ -27,6 +27,7 @@ class SQLiteOwnerActivationRepository:
                 triage_id,
                 task_type,
                 message_id,
+                summary_id,
                 status,
                 driver_mode,
                 created_at,
@@ -34,7 +35,7 @@ class SQLiteOwnerActivationRepository:
                 finished_at,
                 failure
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             self._values(activation),
         )
@@ -233,6 +234,7 @@ class SQLiteOwnerActivationRepository:
         triage_id,
         task_type,
         message_id,
+        summary_id,
         status,
         driver_mode,
         created_at,
@@ -249,6 +251,7 @@ class SQLiteOwnerActivationRepository:
             activation.triage_id,
             activation.task_type.value,
             activation.message_id,
+            activation.summary_id,
             activation.status.value,
             activation.driver_mode.value if activation.driver_mode is not None else None,
             _encode_datetime(activation.created_at),
@@ -264,6 +267,7 @@ class SQLiteOwnerActivationRepository:
             triage_id=cast(str, row["triage_id"]),
             task_type=ProjectOwnerTaskType(cast(str, row["task_type"])),
             message_id=cast(str, row["message_id"]),
+            summary_id=cast(str | None, row["summary_id"]),
             status=OwnerActivationStatus(cast(str, row["status"])),
             driver_mode=(
                 OwnerActivationMode(cast(str, row["driver_mode"]))

@@ -24,7 +24,7 @@ class JBBModel:
         self,
         *,
         model: str,
-        tools: ToolCatalog,
+        tools: ToolCatalog | None,
         base_url: str = DEFAULT_JBB_BASE_URL,
         timeout_seconds: float = 60.0,
     ) -> None:
@@ -49,23 +49,44 @@ class JBBModel:
     def query(self, messages: list[Message]) -> Message:
         instructions, response_input = _prepare_input(messages)
         try:
-            response = self.client.responses.create(
-                model=self.model,
-                instructions=instructions,
-                input=cast(ResponseInputParam, response_input),
-                tools=cast(list[FunctionToolParam], self.tools.provider_schemas()),
-                store=False,
-                stream=False,
-                service_tier="priority",
-                tool_choice="auto",
-                parallel_tool_calls=False,
-            )
+            if self.tools is None:
+                response = self.client.responses.create(
+                    model=self.model,
+                    instructions=instructions,
+                    input=cast(ResponseInputParam, response_input),
+                    store=False,
+                    stream=False,
+                    service_tier="priority",
+                )
+            else:
+                response = self.client.responses.create(
+                    model=self.model,
+                    instructions=instructions,
+                    input=cast(ResponseInputParam, response_input),
+                    tools=cast(list[FunctionToolParam], self.tools.provider_schemas()),
+                    store=False,
+                    stream=False,
+                    service_tier="priority",
+                    tool_choice="auto",
+                    parallel_tool_calls=False,
+                )
         except Exception as error:
             raise JBBModelError(f"JBB gateway request failed: {error}") from error
 
         message = _serialize(response)
         output = _as_list(_get(response, "output"))
-        actions = _parse_actions(output, message, self.tools)
+        if self.tools is None and any(
+            _get(item, "type") == "function_call" for item in output
+        ):
+            _raise_format_error(
+                "This model invocation does not allow tool calls.",
+                message,
+            )
+        actions = (
+            _parse_actions(output, message, self.tools)
+            if self.tools is not None
+            else []
+        )
         if len(actions) > 1:
             _raise_format_error(
                 "Response must contain at most one tool call.",

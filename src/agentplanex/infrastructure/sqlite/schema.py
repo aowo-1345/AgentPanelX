@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _INITIAL_SCHEMA = (
     """
@@ -120,6 +120,7 @@ _INITIAL_SCHEMA = (
         task_type TEXT NOT NULL
             CHECK (task_type IN ('USER_INPUT', 'PLAN_DECISION', 'EXECUTION_RESULT')),
         message_id TEXT NOT NULL,
+        summary_id TEXT,
         status TEXT NOT NULL
             CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED')),
         driver_mode TEXT
@@ -185,8 +186,26 @@ def initialize_schema(database: SQLiteDatabase) -> None:
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             return
 
+        if current_version == 8:
+            connection.execute("ALTER TABLE owner_activation ADD COLUMN summary_id TEXT")
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            current_version = SCHEMA_VERSION
+
         if current_version != SCHEMA_VERSION:
             raise RuntimeError(
                 f"Unsupported SQLite schema version: {current_version}; "
                 "recreate this development database"
             )
+
+
+def verify_schema(database: SQLiteDatabase) -> None:
+    """Verify the current schema through a strictly read-only connection."""
+
+    with database.read_only_connection() as connection:
+        row = connection.execute("PRAGMA user_version").fetchone()
+        current_version = int(row[0]) if row is not None else 0
+    if current_version != SCHEMA_VERSION:
+        raise RuntimeError(
+            "Historical Owner Fork requires SQLite schema version "
+            f"{SCHEMA_VERSION}, found {current_version}"
+        )
