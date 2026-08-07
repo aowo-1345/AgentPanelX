@@ -19,6 +19,7 @@ from agentplanex.domains import (
     AgentInteractionKind,
     AgentRole,
     ArtifactDescriptor,
+    ProjectRuntimeContext,
     ResolvedArtifact,
     TalkToAgentRequest,
     TalkToAgentResult,
@@ -30,6 +31,10 @@ from agentplanex.infrastructure.agent_workspace import (
 from agentplanex.infrastructure.codex import (
     CodexTurnRequest,
     CodexTurnTransport,
+)
+from agentplanex.services.agent_contracts import (
+    render_invocation_envelope,
+    resolve_observation_skill,
 )
 from agentplanex.settings import RuntimeSettings
 
@@ -140,12 +145,15 @@ class AgentCollaborationService:
     catalog: AgentCatalog
     workspaces: AgentWorkspaceStore
     transport: CodexTurnTransport
+    observation_skill: Path
 
     @classmethod
     def from_settings(
         cls,
         project_path: Path,
         settings: RuntimeSettings,
+        *,
+        observation_skill: Path | None = None,
     ) -> AgentCollaborationService:
         codex = settings.codex
         return cls(
@@ -161,9 +169,16 @@ class AgentCollaborationService:
                 timeout_seconds=codex.timeout_seconds,
                 response_limit=codex.response_limit,
             ),
+            observation_skill=(
+                observation_skill or resolve_observation_skill()
+            ),
         )
 
-    def talk(self, request: TalkToAgentRequest) -> TalkToAgentResult:
+    def talk(
+        self,
+        request: TalkToAgentRequest,
+        context: ProjectRuntimeContext,
+    ) -> TalkToAgentResult:
         """Block until one configured Agent Message or Task has completed."""
         card = self.catalog.get(request.agent_id)
         message = request.message.strip()
@@ -191,8 +206,15 @@ class AgentCollaborationService:
             CodexTurnRequest(
                 thread_id=thread_id,
                 workspace=workspace.path,
-                developer_instructions=card.developer_instructions,
-                message=self._prompt(card, request.kind, message, resolved, invocation),
+                developer_instructions=self._developer_instructions(card),
+                message=self._prompt(
+                    card,
+                    request.kind,
+                    message,
+                    resolved,
+                    invocation,
+                    context,
+                ),
                 mentions=tuple(
                     (f"artifact-{index + 1}-{artifact.path.name}", artifact.path)
                     for index, artifact in enumerate(resolved)
@@ -254,15 +276,72 @@ class AgentCollaborationService:
         return normalized[:2_000]
 
     @staticmethod
+    def _developer_instructions(card: AgentCard) -> str:
+        if card.role is AgentRole.PLANNER:
+            core = (
+                "You are the AgentPlaneX Project Planner. Create or refine a coherent "
+                "Project Plan for the question delegated by the Owner. You may advise "
+                "on readiness, but must not approve the Plan, publish Milestones, make "
+                "delivery decisions, or modify project source, Git refs, or Runtime data."
+            )
+        else:
+            core = (
+                "You are the AgentPlaneX Project Reviewer. Evaluate only the subject "
+                "delegated in this invocation, cite evidence, and identify concrete "
+                "required changes. You must not make the Owner's decision, implement "
+                "the work, change project source, Git refs, or Runtime data."
+            )
+        return f"{core}\n\nConfigured profile instructions:\n{card.developer_instructions}"
+
     def _prompt(
+        self,
         card: AgentCard,
         kind: AgentInteractionKind,
         message: str,
         artifacts: tuple[ResolvedArtifact, ...],
         invocation: AgentInvocation | None,
+        context: ProjectRuntimeContext,
     ) -> str:
+        operation = (
+            "project_planning"
+            if card.role is AgentRole.PLANNER
+            else "delegated_review"
+        )
+        fixed_work_object = {
+            "delegated_request_sha256": hashlib.sha256(
+                message.encode("utf-8")
+            ).hexdigest(),
+            "input_artifacts": [
+                {"uri": artifact.uri, "sha256": artifact.sha256}
+                for artifact in artifacts
+            ],
+            "runtime_anchor": {
+                "status": context.status,
+                "pending_action": context.pending_action,
+                "plan_commit_sha": context.current_plan_commit_sha,
+                "snapshot_id": context.current_snapshot_id,
+                "run_id": context.current_run_id,
+                "milestone_key": context.current_milestone_key,
+                "stage_key": context.current_stage_key,
+                "candidate_commit_sha": context.current_candidate_commit_sha,
+            },
+        }
         lines = [
             message,
+            render_invocation_envelope(
+                role=card.role.value,
+                operation=f"{operation}:{kind.value}",
+                project_root=self.workspaces.project_path,
+                observation_skill=self.observation_skill,
+                triage_id=context.triage_id,
+                fixed_work_object=fixed_work_object,
+                workspace="Current persistent Agent workspace only.",
+                output_contract=(
+                    "Role document plus result.json and a short JSON summary."
+                    if kind is AgentInteractionKind.TASK
+                    else "One short JSON summary; no Outbox document."
+                ),
+            ),
             "Work only inside your current Agent workspace. Do not modify the Project "
             "repository, Git refs, Runtime database, or files outside this workspace.",
         ]

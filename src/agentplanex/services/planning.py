@@ -44,6 +44,7 @@ class PlanningError(ValueError):
 class PlanReviewRequest:
     """The exact Plan subject supplied to a protected external review."""
 
+    triage_id: str
     spec_documents: tuple[Path, ...]
     subject_digest: str
 
@@ -143,6 +144,7 @@ class PlanningService:
         try:
             review = self.review_plan(
                 PlanReviewRequest(
+                    triage_id=context.triage_id,
                     spec_documents=spec_documents,
                     subject_digest=subject_digest,
                 )

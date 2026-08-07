@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from agentplanex.domains import AgentCollaborationError, AgentRole, ArtifactDescriptor
 from agentplanex.infrastructure.codex import CodexTurnRequest
 from agentplanex.services.agent_collaboration import AgentCollaborationService
+from agentplanex.services.agent_contracts import render_invocation_envelope
 from agentplanex.services.delivery import (
     DeliveryError,
     MilestoneReviewRequest,
@@ -66,7 +67,13 @@ class CodexPlanHardGate:
     def review(self, request: PlanReviewRequest) -> PlanReviewResult:
         """Run and validate one isolated Reviewer workspace fail closed."""
         review = self._review_exact_subject(
+            triage_id=request.triage_id,
+            role="plan_hard_gate",
             subject_digest=request.subject_digest,
+            fixed_work_object={
+                "subject_digest": request.subject_digest,
+                "spec_documents": [str(path) for path in request.spec_documents],
+            },
             prompt=lambda result_path: self._prompt(request, result_path),
             mentions=lambda _workspace: tuple(
                 (f"plan-{index + 1}-{document.name}", document)
@@ -112,7 +119,13 @@ class CodexPlanHardGate:
             return (("milestone-view", subject),)
 
         review = self._review_exact_subject(
+            triage_id=request.triage_id,
+            role="milestone_hard_gate",
             subject_digest=request.subject_digest,
+            fixed_work_object={
+                "subject_digest": request.subject_digest,
+                "plan_commit_sha": request.plan_commit_sha,
+            },
             prompt=lambda result_path: self._milestone_prompt(request, result_path),
             mentions=mentions,
             error_type=DeliveryError,
@@ -129,7 +142,10 @@ class CodexPlanHardGate:
     def _review_exact_subject(
         self,
         *,
+        triage_id: str,
+        role: str,
         subject_digest: str,
+        fixed_work_object: dict[str, object],
         prompt: Callable[[Path], str],
         mentions: Callable[[Path], tuple[tuple[str, Path], ...]],
         error_type: type[ValueError],
@@ -142,17 +158,40 @@ class CodexPlanHardGate:
             raise RuntimeError("Configured Plan Hard Gate Agent is not a Reviewer")
         workspace = self.collaboration.workspaces.create(card)
         invocation = self.collaboration.workspaces.create_invocation(workspace)
+        gate_name = "Plan" if role == "plan_hard_gate" else "Milestone"
         try:
             self.collaboration.transport.run(
                 CodexTurnRequest(
                     thread_id=None,
                     workspace=workspace.path,
                     developer_instructions=(
-                        f"{card.developer_instructions}\n\n"
-                        "This invocation is a protected Plan Hard Gate. Do not treat "
-                        "the decision as optional advice."
+                        "You are an AgentPlaneX Hard Gate Reviewer. Evaluate only the "
+                        "fixed subject supplied by Runtime, cite evidence, and return "
+                        "the required gate Contract. You must not make the Owner's "
+                        "decision, implement changes, follow a newer current pointer, "
+                        "or modify project source, Git refs, or Runtime data.\n\n"
+                        f"Configured profile instructions:\n{card.developer_instructions}\n\n"
+                        f"This invocation is a protected {gate_name} Hard Gate. Do not "
+                        "treat the decision as optional advice."
                     ),
-                    message=prompt(invocation.result_path),
+                    message="\n\n".join(
+                        (
+                            render_invocation_envelope(
+                                role=role,
+                                operation=role,
+                                project_root=self.collaboration.workspaces.project_path,
+                                observation_skill=self.collaboration.observation_skill,
+                                triage_id=triage_id,
+                                fixed_work_object=fixed_work_object,
+                                workspace="Fresh isolated Reviewer workspace only.",
+                                output_contract=(
+                                    "pass|revise decision, required changes, exact "
+                                    "review.md, and a short JSON summary."
+                                ),
+                            ),
+                            prompt(invocation.result_path),
+                        )
+                    ),
                     mentions=mentions(workspace.path),
                     output_schema=_SUMMARY_OUTPUT_SCHEMA,
                 )

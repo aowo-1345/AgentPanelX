@@ -43,6 +43,8 @@ class DeliveryError(ValueError):
 class MilestoneReviewRequest:
     """The exact complete Milestone View supplied to a protected review."""
 
+    triage_id: str
+    plan_commit_sha: str
     milestones: tuple[Milestone, ...]
     subject_digest: str
 
@@ -187,6 +189,9 @@ class DeliveryService:
             raise DeliveryError("Milestone update reason must not be empty")
         current = self._current_context(context.triage_id)
         previous = self._assert_publishable(current, milestones)
+        plan_commit_sha = current.current_plan_commit_sha
+        if plan_commit_sha is None:
+            raise DeliveryError("Milestone publication requires an approved Plan")
         subject_digest = milestone_view_digest(milestones)
         invocation_id = uuid4().hex
         self.event_bus.publish(
@@ -203,6 +208,8 @@ class DeliveryService:
         try:
             review = self.review_milestones(
                 MilestoneReviewRequest(
+                    triage_id=current.triage_id,
+                    plan_commit_sha=plan_commit_sha,
                     milestones=milestones,
                     subject_digest=subject_digest,
                 )

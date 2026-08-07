@@ -27,6 +27,7 @@ from agentplanex.services import (
     RuntimeContextService,
     ToolActivationDriveResult,
 )
+from agentplanex.services.agent_contracts import resolve_observation_skill
 from agentplanex.services.delivery import MilestoneRunQueued
 from agentplanex.services.delivery_runner import DeliveryDriveResult, DeliveryRunner
 from agentplanex.services.owner_activation import (
@@ -53,6 +54,7 @@ class ProjectRuntime:
         project_path = project_path.resolve()
         if not project_path.is_dir():
             raise ValueError(f"Project path is not a directory: {project_path}")
+        observation_skill = resolve_observation_skill()
 
         database = SQLiteDatabase.for_project(project_path)
         initialize_schema(database)
@@ -63,6 +65,7 @@ class ProjectRuntime:
         collaboration = AgentCollaborationService.from_settings(
             project_path,
             settings.runtime,
+            observation_skill=observation_skill,
         )
         hard_gate = CodexPlanHardGate(collaboration)
         planning = PlanningService(
@@ -83,7 +86,11 @@ class ProjectRuntime:
         )
         delivery_runner = DeliveryRunner(
             delivery=delivery,
-            executor=CodexStageExecutor(collaboration.transport),
+            executor=CodexStageExecutor(
+                project_path,
+                collaboration.transport,
+                collaboration.observation_skill,
+            ),
             git=GitRepository(project_path),
         )
         controls = ProjectControlQuery(
@@ -106,6 +113,7 @@ class ProjectRuntime:
             tool_executor=executions.execute,
             event_bus=event_bus,
             owner_contexts=owner_contexts,
+            observation_skill=collaboration.observation_skill,
         )
         driver = OwnerActivationDriver(
             database=database,

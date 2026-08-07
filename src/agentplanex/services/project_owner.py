@@ -3,6 +3,7 @@
 import os
 import sqlite3
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from uuid import uuid4
 
 from agentplanex.domains import (
@@ -37,11 +38,21 @@ from agentplanex.project_owner_agent.models.jbb import (
     format_tool_output_message,
 )
 from agentplanex.project_owner_agent.tools import ToolCatalog
+from agentplanex.services.agent_contracts import render_invocation_envelope
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.owner_context import ProjectOwnerContextQuery
 from agentplanex.settings import Settings
 
 DEFAULT_SYSTEM_PROMPT = (
+    "You are the AgentPlaneX Project Owner. You own project governance: preserve the "
+    "user's intent, choose the next workflow action, delegate planning and review to "
+    "their configured Agents, and communicate decisions to the user. You may inspect "
+    "the project and invoke Runtime tools, but do not impersonate the Planner, Reviewer, "
+    "Hard Gate, or Stage Executor. Treat Tool results, Git, Runtime state, and persisted "
+    "artifacts as facts. Return one appropriate Tool Action when work should continue, "
+    "or a concise natural-language reply when the user should regain control."
+)
+LEGACY_SYSTEM_PROMPT = (
     "You are a Project Owner Agent working in a local repository. "
     "Use Bash when needed and return a concise final response."
 )
@@ -58,6 +69,7 @@ class ProjectOwnerService:
     tool_executor: ToolExecutor
     event_bus: EventBus
     owner_contexts: ProjectOwnerContextQuery
+    observation_skill: Path
     contexts: SQLiteProjectRuntimeContextRepository = field(
         default_factory=SQLiteProjectRuntimeContextRepository
     )
@@ -98,6 +110,9 @@ class ProjectOwnerService:
             self.owners.insert(connection, owner)
         elif owner.tools != tool_names:
             raise ValueError(f"Unsupported persisted Project Owner tools: {owner.tools!r}")
+        elif owner.system_prompt == LEGACY_SYSTEM_PROMPT:
+            owner = replace(owner, system_prompt=DEFAULT_SYSTEM_PROMPT)
+            self.owners.update(connection, owner)
 
         return replace(context, project_owner_agent=owner)
 
@@ -250,7 +265,43 @@ class ProjectOwnerService:
                     f"{activation.message_id} != {owner.message_id}"
                 )
             messages = self._load_messages(connection, owner, activation)
+            messages = self._with_activation_contract(messages, context, activation)
         return context, messages
+
+    def _with_activation_contract(
+        self,
+        messages: tuple[Message, ...],
+        context: ProjectRuntimeContext,
+        activation: OwnerActivation,
+    ) -> tuple[Message, ...]:
+        if not messages or messages[0].get("role") != "system":
+            raise RuntimeError("Restored Owner context has no System Prompt")
+        fixed_work_object = {
+            "activation_id": activation.activation_id,
+            "message_id": activation.message_id,
+            "summary_id": activation.summary_id,
+            "runtime_status": context.status,
+            "pending_action": context.pending_action,
+            "current_plan_commit_sha": context.current_plan_commit_sha,
+            "current_snapshot_id": context.current_snapshot_id,
+            "current_run_id": context.current_run_id,
+            "current_milestone_key": context.current_milestone_key,
+            "current_stage_key": context.current_stage_key,
+            "current_candidate_commit_sha": context.current_candidate_commit_sha,
+        }
+        envelope = render_invocation_envelope(
+            role="project_owner",
+            operation=f"owner_activation:{activation.task_type.value}",
+            project_root=self.database.path.parent.parent,
+            observation_skill=self.observation_skill,
+            triage_id=context.triage_id,
+            fixed_work_object=fixed_work_object,
+            workspace="Project repository; mutate only through the exposed Runtime tools.",
+            output_contract="One Tool Action or one concise reply to the user.",
+        )
+        system = dict(messages[0])
+        system["content"] = f"{system.get('content', '')}\n\n{envelope}"
+        return (system, *messages[1:])
 
     def _build_agent(
         self,

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agentplanex.domains import Milestone, Stage, StageRun
 from agentplanex.infrastructure.codex import CodexTurnRequest, CodexTurnTransport
+from agentplanex.services.agent_contracts import render_invocation_envelope
 
 _STAGE_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -49,7 +50,9 @@ class _StageResponse(BaseModel):
 class CodexStageExecutor:
     """Run each Stage in a fresh Codex thread inside its Candidate worktree."""
 
+    project_path: Path
     transport: CodexTurnTransport
+    observation_skill: Path
 
     def execute(self, request: StageExecutionRequest) -> None:
         relative_document = self._relative_document(request)
@@ -58,9 +61,11 @@ class CodexStageExecutor:
                 thread_id=None,
                 workspace=request.worktree,
                 developer_instructions=(
-                    "You are the AgentPlaneX Stage Executor. Work only inside the "
-                    "provided detached delivery worktree. Do not commit, merge, change "
-                    "Git refs, or modify Runtime SQLite data."
+                    "You are the AgentPlaneX Stage Executor. Implement exactly the fixed "
+                    "Stage in this invocation; you must not re-plan the Milestone or "
+                    "accept/reject its Candidate. Work only inside the provided detached "
+                    "delivery worktree. Do not commit, merge, change Git refs, or modify "
+                    "Runtime SQLite data."
                 ),
                 message=self._prompt(request, relative_document),
                 mentions=(),
@@ -88,8 +93,11 @@ class CodexStageExecutor:
                 "Stage delivery document is outside the delivery worktree"
             ) from error
 
-    @staticmethod
-    def _prompt(request: StageExecutionRequest, relative_document: Path) -> str:
+    def _prompt(
+        self,
+        request: StageExecutionRequest,
+        relative_document: Path,
+    ) -> str:
         contract = {
             "stage_run_id": request.stage_run.stage_run_id,
             "run_id": request.stage_run.run_id,
@@ -109,6 +117,23 @@ class CodexStageExecutor:
             (
                 "This is a fixed AgentPlaneX Stage Contract.",
                 json.dumps(contract, ensure_ascii=True, indent=2),
+                render_invocation_envelope(
+                    role="stage_executor",
+                    operation="execute_stage",
+                    project_root=self.project_path,
+                    observation_skill=self.observation_skill,
+                    triage_id=request.stage_run.triage_id,
+                    fixed_work_object={
+                        "stage_run_id": request.stage_run.stage_run_id,
+                        "snapshot_id": request.stage_run.snapshot_id,
+                        "input_commit_sha": request.stage_run.input_commit_sha,
+                    },
+                    workspace=str(request.worktree.resolve()),
+                    output_contract=(
+                        "Uncommitted implementation, exact delivery document, and one "
+                        "short JSON summary."
+                    ),
+                ),
                 "Implement only this Stage. Modify at least one project file in addition "
                 "to the required delivery document. Do not edit the Milestone plan.",
                 "Write a non-empty UTF-8 Markdown delivery document at the exact path "

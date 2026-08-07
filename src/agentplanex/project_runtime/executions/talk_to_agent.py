@@ -62,7 +62,7 @@ class TalkToAgentExecution(ProjectExecution):
             )
         )
         try:
-            result = self.dependencies.collaboration.talk(request)
+            result = self.dependencies.collaboration.talk(request, context)
         except AgentCollaborationError as error:
             self._publish_failure(context, request, invocation_id, error)
             return ToolExecutionResult(

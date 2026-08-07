@@ -400,8 +400,13 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
     restored_contents = [
         message.get("content") for message in _ReplyingModel.queries[-1]
     ]
-    assert restored_contents == [
-        project_owner_service.DEFAULT_SYSTEM_PROMPT,
+    assert len(restored_contents) == 3
+    system = str(restored_contents[0])
+    assert system.startswith(project_owner_service.DEFAULT_SYSTEM_PROMPT)
+    assert "agentplanex-project-observe" in system
+    assert f'"project_root": "{project_path.resolve()}"' in system
+    assert f'"activation_id": "{activation.activation_id}"' in system
+    assert restored_contents[1:] == [
         (
             "Earlier Project Owner conversation summary. This is a lossy context "
             "projection; original messages, repository artifacts, and runtime facts "

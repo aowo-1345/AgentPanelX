@@ -50,7 +50,7 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
             for directory in request.workspace.glob("outbox/*")
             if not (directory / "result.json").exists()
         )
-        is_gate = "This invocation is a protected Plan Hard Gate." in request.developer_instructions
+        is_gate = "You are an AgentPlaneX Hard Gate Reviewer." in request.developer_instructions
         is_task = "Task Contract" in request.message
         is_stage = "This is a fixed AgentPlaneX Stage Contract." in request.message
         if is_stage:
