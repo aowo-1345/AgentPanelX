@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from agentplanex.domains import AgentCollaborationError, AgentRole, ArtifactDescriptor
 from agentplanex.infrastructure.codex import CodexTurnRequest
 from agentplanex.services.agent_collaboration import AgentCollaborationService
-from agentplanex.services.agent_contracts import render_invocation_envelope
+from agentplanex.services.agent_contracts import InvocationContract, PromptRole
 from agentplanex.services.delivery import (
     DeliveryError,
     MilestoneReviewRequest,
@@ -68,13 +68,12 @@ class CodexPlanHardGate:
         """Run and validate one isolated Reviewer workspace fail closed."""
         review = self._review_exact_subject(
             triage_id=request.triage_id,
-            role="plan_hard_gate",
+            role=PromptRole.PLAN_HARD_GATE,
             subject_digest=request.subject_digest,
             fixed_work_object={
                 "subject_digest": request.subject_digest,
                 "spec_documents": [str(path) for path in request.spec_documents],
             },
-            prompt=lambda result_path: self._prompt(request, result_path),
             mentions=lambda _workspace: tuple(
                 (f"plan-{index + 1}-{document.name}", document)
                 for index, document in enumerate(request.spec_documents)
@@ -120,13 +119,12 @@ class CodexPlanHardGate:
 
         review = self._review_exact_subject(
             triage_id=request.triage_id,
-            role="milestone_hard_gate",
+            role=PromptRole.MILESTONE_HARD_GATE,
             subject_digest=request.subject_digest,
             fixed_work_object={
                 "subject_digest": request.subject_digest,
                 "plan_commit_sha": request.plan_commit_sha,
             },
-            prompt=lambda result_path: self._milestone_prompt(request, result_path),
             mentions=mentions,
             error_type=DeliveryError,
             subject_name="Milestone View",
@@ -143,10 +141,9 @@ class CodexPlanHardGate:
         self,
         *,
         triage_id: str,
-        role: str,
+        role: PromptRole,
         subject_digest: str,
         fixed_work_object: dict[str, object],
-        prompt: Callable[[Path], str],
         mentions: Callable[[Path], tuple[tuple[str, Path], ...]],
         error_type: type[ValueError],
         subject_name: str,
@@ -158,38 +155,57 @@ class CodexPlanHardGate:
             raise RuntimeError("Configured Plan Hard Gate Agent is not a Reviewer")
         workspace = self.collaboration.workspaces.create(card)
         invocation = self.collaboration.workspaces.create_invocation(workspace)
-        gate_name = "Plan" if role == "plan_hard_gate" else "Milestone"
         try:
             self.collaboration.transport.run(
                 CodexTurnRequest(
                     thread_id=None,
                     workspace=workspace.path,
-                    developer_instructions=(
-                        "You are an AgentPlaneX Hard Gate Reviewer. Evaluate only the "
-                        "fixed subject supplied by Runtime, cite evidence, and return "
-                        "the required gate Contract. You must not make the Owner's "
-                        "decision, implement changes, follow a newer current pointer, "
-                        "or modify project source, Git refs, or Runtime data.\n\n"
-                        f"Configured profile instructions:\n{card.developer_instructions}\n\n"
-                        f"This invocation is a protected {gate_name} Hard Gate. Do not "
-                        "treat the decision as optional advice."
+                    developer_instructions=self.collaboration.prompts.role_instructions(
+                        role,
+                        profile_instructions=card.profile_instructions,
                     ),
                     message="\n\n".join(
                         (
-                            render_invocation_envelope(
-                                role=role,
-                                operation=role,
-                                project_root=self.collaboration.workspaces.project_path,
-                                observation_skill=self.collaboration.observation_skill,
-                                triage_id=triage_id,
-                                fixed_work_object=fixed_work_object,
-                                workspace="Fresh isolated Reviewer workspace only.",
-                                output_contract=(
-                                    "pass|revise decision, required changes, exact "
-                                    "review.md, and a short JSON summary."
-                                ),
+                            self.collaboration.prompts.render_invocation(
+                                InvocationContract(
+                                    role=role,
+                                    operation=role.value,
+                                    project_root=(
+                                        self.collaboration.workspaces.project_path
+                                    ),
+                                    observation_skill=(
+                                        self.collaboration.observation_skill
+                                    ),
+                                    triage_id=triage_id,
+                                    fixed_work_object=fixed_work_object,
+                                    workspace={
+                                        "write_scope": "fresh_reviewer_workspace",
+                                        "project_and_runtime": "read_only",
+                                    },
+                                    output_contract={
+                                        "result_path": str(invocation.result_path),
+                                        "manifest_schema": (
+                                            _HardGateManifest.model_json_schema()
+                                        ),
+                                        "subject_contract": {
+                                            "subject_digest": subject_digest,
+                                            "pass_required_changes": [],
+                                            "revise_required_changes": (
+                                                "one_or_more_concrete_strings"
+                                            ),
+                                        },
+                                        "artifact_contract": {
+                                            "path": "documents/review.md",
+                                            "media_type": "text/markdown",
+                                        },
+                                        "final_response": {
+                                            "format": "json",
+                                            "required_fields": ["summary"],
+                                        },
+                                    },
+                                )
                             ),
-                            prompt(invocation.result_path),
+                            self.collaboration.prompts.task_instructions(role),
                         )
                     ),
                     mentions=mentions(workspace.path),
@@ -233,47 +249,4 @@ class CodexPlanHardGate:
             summary=summary[:2_000],
             required_changes=required_changes,
             audit_artifact=audit,
-        )
-
-    @staticmethod
-    def _prompt(request: PlanReviewRequest, result_path: Path) -> str:
-        return "\n\n".join(
-            (
-                "Review the three attached Plan specification documents as one exact "
-                "subject. Determine whether the protected Plan approval action may proceed.",
-                f"The Runtime-computed subject digest is: {request.subject_digest}",
-                "Write a complete Markdown review to documents/review.md in your current "
-                "Reviewer workspace. Include concrete evidence and required changes.",
-                "Before the final response, write a UTF-8 JSON object to exactly "
-                f"{result_path}. It must contain only version=1, subject_digest, "
-                "decision=pass|revise, summary, required_changes, and one artifacts entry "
-                'with path="documents/review.md" and media_type="text/markdown".',
-                "Echo the supplied digest exactly. A pass requires an empty "
-                "required_changes array; revise requires at least one concrete change. "
-                "Return only a short JSON summary in the final response and do not copy "
-                "the review document into it.",
-            )
-        )
-
-    @staticmethod
-    def _milestone_prompt(
-        request: MilestoneReviewRequest,
-        result_path: Path,
-    ) -> str:
-        return "\n\n".join(
-            (
-                "Review the attached complete Milestone View as one exact subject. "
-                "Determine whether the protected Milestone publication action may proceed.",
-                f"The Runtime-computed subject digest is: {request.subject_digest}",
-                "Write a complete Markdown review to documents/review.md in your current "
-                "Reviewer workspace. Include concrete evidence and required changes.",
-                "Before the final response, write a UTF-8 JSON object to exactly "
-                f"{result_path}. It must contain only version=1, subject_digest, "
-                "decision=pass|revise, summary, required_changes, and one artifacts entry "
-                'with path="documents/review.md" and media_type="text/markdown".',
-                "Echo the supplied digest exactly. A pass requires an empty "
-                "required_changes array; revise requires at least one concrete change. "
-                "Return only a short JSON summary in the final response and do not copy "
-                "the review document into it.",
-            )
         )

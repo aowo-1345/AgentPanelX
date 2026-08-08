@@ -11,18 +11,13 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteSummaryHistoryRepository,
 )
 
-SUMMARY_CONTEXT_HEADER = (
-    "Earlier Project Owner conversation summary. This is a lossy context "
-    "projection; original messages, repository artifacts, and runtime facts "
-    "remain authoritative."
-)
-
 
 @dataclass(slots=True)
 class ProjectOwnerContextQuery:
     """Reconstruct bounded Owner input without changing Runtime state."""
 
     database: SQLiteDatabase
+    summary_context_header: str
     owners: SQLiteProjectOwnerAgentRepository = field(
         default_factory=SQLiteProjectOwnerAgentRepository
     )
@@ -99,7 +94,13 @@ class ProjectOwnerContextQuery:
         ]
         if summary is not None:
             restored_messages.append(
-                {"role": "user", "content": render_summary_context(summary)}
+                {
+                    "role": "user",
+                    "content": render_summary_context(
+                        summary,
+                        self.summary_context_header,
+                    ),
+                }
             )
         restored_messages.extend(
             dict(message)
@@ -159,7 +160,7 @@ class ProjectOwnerContextQuery:
         return watermark.sequence
 
 
-def render_summary_context(summary: SummaryHistory) -> str:
+def render_summary_context(summary: SummaryHistory, header: str) -> str:
     """Render an immutable Summary as non-authoritative model context."""
 
-    return f"{SUMMARY_CONTEXT_HEADER}\n\n{summary.summary_content}"
+    return f"{header.strip()}\n\n{summary.summary_content}"

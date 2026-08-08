@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
+import yaml
 
 from agentplanex import cli
 from agentplanex.domains import (
@@ -28,6 +29,7 @@ from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import project_owner as project_owner_service
 from agentplanex.services.owner_activation import ActivationDriveResult
 from agentplanex.settings import (
+    DEFAULT_SETTINGS_PATH,
     BashSettings,
     ModelSettings,
     ProjectOwnerAgentSettings,
@@ -102,37 +104,38 @@ def _settings(
     bash_timeout_seconds: float = 30.0,
     bash_output_limit: int = 65_536,
 ) -> Settings:
-    return Settings(
-        project_owner_agent=ProjectOwnerAgentSettings(
-            model=ModelSettings(name="test-model"),
-        ),
-        runtime=RuntimeSettings(
-            bash=BashSettings(
-                timeout_seconds=bash_timeout_seconds,
-                output_limit=bash_output_limit,
-            )
-        ),
+    configured = load_settings(DEFAULT_SETTINGS_PATH)
+    return configured.model_copy(
+        update={
+            "project_owner_agent": ProjectOwnerAgentSettings(
+                model=ModelSettings(name="test-model"),
+            ),
+            "runtime": configured.runtime.model_copy(
+                update={
+                    "bash": BashSettings(
+                        timeout_seconds=bash_timeout_seconds,
+                        output_limit=bash_output_limit,
+                    )
+                }
+            ),
+        }
     )
 
 
 def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> None:
     settings_path = tmp_path / "settings.yaml"
-    settings_path.write_text(
-        """
-project_owner_agent:
-  model:
-    name: configured-model
-    base_url: https://example.test/v1
-    timeout_seconds: 12.5
-  step_limit: 7
-  max_consecutive_format_errors: 2
-runtime:
-  bash:
-    timeout_seconds: 3.5
-    output_limit: 4096
-""".lstrip(),
-        encoding="utf-8",
-    )
+    raw = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
+    raw["project_owner_agent"] = {
+        "model": {
+            "name": "configured-model",
+            "base_url": "https://example.test/v1",
+            "timeout_seconds": 12.5,
+        },
+        "step_limit": 7,
+        "max_consecutive_format_errors": 2,
+    }
+    raw["runtime"]["bash"] = {"timeout_seconds": 3.5, "output_limit": 4096}
+    settings_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
     settings = load_settings(settings_path)
 
@@ -147,19 +150,27 @@ runtime:
 
 def test_unknown_settings_are_rejected(tmp_path: Path) -> None:
     settings_path = tmp_path / "settings.yaml"
-    settings_path.write_text(
-        """
-project_owner_agent:
-  model:
-    name: configured-model
-runtime:
-  bash:
-    timeout_seconds: 30
-    output_limit: 65536
-  unknown: true
-""".lstrip(),
-        encoding="utf-8",
-    )
+    raw = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
+    raw["runtime"]["unknown"] = True
+    settings_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Failed to load AgentPlaneX settings"):
+        load_settings(settings_path)
+
+
+@pytest.mark.parametrize("invalid", ["missing", "blank"])
+def test_incomplete_prompt_catalog_is_rejected(
+    tmp_path: Path,
+    invalid: str,
+) -> None:
+    settings_path = tmp_path / "settings.yaml"
+    raw = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
+    prompts = raw["runtime"]["prompts"]
+    if invalid == "missing":
+        del prompts["stage_executor"]
+    else:
+        prompts["planner"]["role"] = "   "
+    settings_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
     with pytest.raises(ValueError, match="Failed to load AgentPlaneX settings"):
         load_settings(settings_path)
@@ -171,7 +182,7 @@ def test_project_executions_expose_and_dispatch_bash(
     project_path = initialize_git_project()
     executions = create_project_executions(
         project_path,
-        RuntimeSettings(bash=BashSettings()),
+        _settings().runtime,
     )
 
     result = executions.execute(
@@ -201,16 +212,19 @@ def test_talk_tool_renders_configured_agent_cards_with_stable_schema(
                 "delivery_planner": {
                     "name": "Delivery Planner",
                     "description": "Produces and refines delivery plans.",
-                    "developer_instructions": "Write only in your Agent workspace.",
+                    "profile_instructions": "Write only in your Agent workspace.",
                     "contract": "planner",
                 },
                 "quality_reviewer": {
                     "name": "Quality Reviewer",
                     "description": "Reviews plans and delivery candidates.",
-                    "developer_instructions": "Write only in your Agent workspace.",
+                    "profile_instructions": "Write only in your Agent workspace.",
                     "contract": "reviewer",
                 },
             },
+            "prompts": load_settings(DEFAULT_SETTINGS_PATH).runtime.prompts.model_dump(
+                mode="json"
+            ),
             "hard_gates": {"plan_approval": {"agent_id": "quality_reviewer"}},
         }
     )
@@ -402,16 +416,14 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
     ]
     assert len(restored_contents) == 3
     system = str(restored_contents[0])
-    assert system.startswith(project_owner_service.DEFAULT_SYSTEM_PROMPT)
+    configured = _settings().runtime.prompts
+    assert system.startswith(configured.project_owner.role.strip())
     assert "agentplanex-project-observe" in system
     assert f'"project_root": "{project_path.resolve()}"' in system
     assert f'"activation_id": "{activation.activation_id}"' in system
     assert restored_contents[1:] == [
-        (
-            "Earlier Project Owner conversation summary. This is a lossy context "
-            "projection; original messages, repository artifacts, and runtime facts "
-            "remain authoritative.\n\nFirst and second were already handled."
-        ),
+        f"{configured.summary_context_header.strip()}\n\n"
+        "First and second were already handled.",
         "third",
     ]
 

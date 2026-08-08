@@ -30,7 +30,7 @@ class AgentCard:
     agent_id: str
     name: str
     description: str
-    developer_instructions: str
+    profile_instructions: str | None
     role: AgentRole
     profile_digest: str
 

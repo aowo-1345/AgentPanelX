@@ -19,6 +19,7 @@ from agentplanex.infrastructure.sqlite import (  # noqa: E402
     verify_schema,
 )
 from agentplanex.project_owner_agent.models.jbb import JBBModel  # noqa: E402
+from agentplanex.services.agent_contracts import AgentPromptCatalog  # noqa: E402
 from agentplanex.services.historical_owner import (  # noqa: E402
     HistoricalOwnerForkService,
 )
@@ -38,8 +39,10 @@ def main(
     output = stdout if stdout is not None else sys.stdout
     database = SQLiteDatabase.for_project(args.cwd.resolve())
     try:
+        settings = load_settings()
+        prompts = AgentPromptCatalog(settings.runtime.prompts)
         verify_schema(database)
-        contexts = ProjectOwnerContextQuery(database)
+        contexts = ProjectOwnerContextQuery(database, prompts.summary_context_header)
     except Exception as error:
         _print_error("database", error, output)
         return 1
@@ -57,7 +60,6 @@ def main(
         return 0
 
     try:
-        settings = load_settings()
         model_settings = settings.project_owner_agent.model
         model = JBBModel(
             model=model_settings.name,
@@ -65,7 +67,7 @@ def main(
             base_url=model_settings.base_url,
             timeout_seconds=model_settings.timeout_seconds,
         )
-        fork = HistoricalOwnerForkService(contexts).open(
+        fork = HistoricalOwnerForkService(contexts, prompts).open(
             args.message_id,
             summary_id=args.summary_id,
             model=model,

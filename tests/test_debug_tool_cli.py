@@ -36,8 +36,16 @@ from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import PlanningService
 from agentplanex.services import project_owner as project_owner_service
 from agentplanex.services.planning import PlanReviewRequest, PlanReviewResult
-from agentplanex.settings import BashSettings, RuntimeSettings
+from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 from scripts import debug_tool_cli
+
+
+def _invocation_envelope(message: str) -> dict[str, object]:
+    marker = "AgentPlaneX invocation envelope (Runtime-provided identity):\n\n"
+    start = message.index(marker) + len(marker)
+    parsed, _ = json.JSONDecoder().raw_decode(message[start:])
+    assert isinstance(parsed, dict)
+    return parsed
 
 
 @pytest.fixture(autouse=True)
@@ -50,11 +58,16 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
             for directory in request.workspace.glob("outbox/*")
             if not (directory / "result.json").exists()
         )
-        is_gate = "You are an AgentPlaneX Hard Gate Reviewer." in request.developer_instructions
-        is_task = "Task Contract" in request.message
-        is_stage = "This is a fixed AgentPlaneX Stage Contract." in request.message
+        envelope = _invocation_envelope(request.message)
+        role = envelope["role"]
+        output_contract = envelope["output_contract"]
+        assert isinstance(role, str)
+        assert isinstance(output_contract, dict)
+        is_gate = role in {"plan_hard_gate", "milestone_hard_gate"}
+        is_task = output_contract.get("interaction") == "task"
+        is_stage = role == "stage_executor"
         if is_stage:
-            contract = json.loads(request.message.split("\n\n", 2)[1])
+            contract = json.loads(request.message.split("\n\n", 1)[0])
             assert isinstance(contract, dict)
             delivery_document = contract["delivery_document"]
             stage = contract["stage"]
@@ -76,19 +89,27 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
                     encoding="utf-8",
                 )
         if is_gate or is_task:
+            declared = output_contract if is_gate else output_contract["outbox"]
+            assert isinstance(declared, dict)
+            schema = declared["manifest_schema"]
+            artifact = declared["artifact_contract"]
+            assert isinstance(schema, dict)
+            assert isinstance(artifact, dict)
+            required = set(schema["required"])
+            assert {"version", "summary", "artifacts"} <= required
             assert len(pending) == 1
-            result_path = pending[0]
-            document_name = "review.md" if is_gate or "reviewer" in request.message else "plan.md"
-            document_path = request.workspace / "documents" / document_name
+            result_path = Path(str(declared["result_path"]))
+            assert result_path == pending[0]
+            document_path = request.workspace / str(artifact["path"])
             instruction = request.message.split("\n\n", 1)[0]
             document_path.write_text(
-                f"# {document_name}\n\n{instruction}\n",
+                f"# {document_path.name}\n\n{instruction}\n",
                 encoding="utf-8",
             )
             if is_gate:
-                digest = request.message.split(
-                    "The Runtime-computed subject digest is: ", 1
-                )[1].split("\n", 1)[0]
+                subject = declared["subject_contract"]
+                assert isinstance(subject, dict)
+                digest = str(subject["subject_digest"])
                 requires_changes = any(
                     "NEEDS_REVIEW_CHANGES" in path.read_text(encoding="utf-8")
                     for _, path in request.mentions
@@ -103,23 +124,13 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
                         if requires_changes
                         else []
                     ),
-                    "artifacts": [
-                        {
-                            "path": "documents/review.md",
-                            "media_type": "text/markdown",
-                        }
-                    ],
+                    "artifacts": [artifact],
                 }
             else:
                 payload = {
                     "version": 1,
                     "summary": "Deterministic Agent task.",
-                    "artifacts": [
-                        {
-                            "path": f"documents/{document_name}",
-                            "media_type": "text/markdown",
-                        }
-                    ],
+                    "artifacts": [artifact],
                 }
             result_path.write_text(json.dumps(payload), encoding="utf-8")
         return CodexTurnResult(
@@ -1131,7 +1142,7 @@ def test_unexpected_gate_failure_is_not_converted_to_tool_observation(
     )
     executions = create_project_executions(
         project_path,
-        RuntimeSettings(bash=BashSettings()),
+        load_settings(DEFAULT_SETTINGS_PATH).runtime,
         planning,
     )
 

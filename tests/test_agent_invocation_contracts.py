@@ -40,10 +40,11 @@ from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning import PlanReviewRequest
 from agentplanex.services.stage_executor import CodexStageExecutor, StageExecutionRequest
 from agentplanex.settings import (
+    DEFAULT_SETTINGS_PATH,
     ModelSettings,
     ProjectOwnerAgentSettings,
-    RuntimeSettings,
     Settings,
+    load_settings,
 )
 
 
@@ -68,12 +69,33 @@ class _RecordingOwnerModel:
         raise AssertionError("The recording Owner does not call tools")
 
 
-def _settings() -> Settings:
-    return Settings(
-        project_owner_agent=ProjectOwnerAgentSettings(
-            model=ModelSettings(name="test-model")
+def _settings(*, owner_prompt: str | None = None) -> Settings:
+    configured = load_settings(DEFAULT_SETTINGS_PATH)
+    prompts = configured.runtime.prompts
+    if owner_prompt is not None:
+        prompts = prompts.model_copy(
+            update={
+                "project_owner": prompts.project_owner.model_copy(
+                    update={"role": owner_prompt}
+                )
+            }
         )
+    return configured.model_copy(
+        update={
+            "project_owner_agent": ProjectOwnerAgentSettings(
+                model=ModelSettings(name="test-model")
+            ),
+            "runtime": configured.runtime.model_copy(update={"prompts": prompts}),
+        }
     )
+
+
+def _invocation_envelope(message: str) -> dict[str, object]:
+    marker = "AgentPlaneX invocation envelope (Runtime-provided identity):\n\n"
+    start = message.index(marker) + len(marker)
+    parsed, _ = json.JSONDecoder().raw_decode(message[start:])
+    assert isinstance(parsed, dict)
+    return parsed
 
 
 def test_owner_invocation_identifies_role_activation_and_observation_entry(
@@ -112,38 +134,34 @@ def test_existing_owner_prompt_is_upgraded_before_the_next_invocation(
     project_path = initialize_git_project()
     _RecordingOwnerModel.queries = []
     monkeypatch.setattr(project_owner_service, "JBBModel", _RecordingOwnerModel)
-    current_prompt = project_owner_service.DEFAULT_SYSTEM_PROMPT
-    monkeypatch.setattr(
-        project_owner_service,
-        "DEFAULT_SYSTEM_PROMPT",
-        project_owner_service.LEGACY_SYSTEM_PROMPT,
-    )
+    old_prompt = "Configured Owner prompt before restart."
+    current_prompt = "Configured Owner prompt after restart."
     runtime = ProjectRuntime(
         project_path=project_path,
-        settings=_settings(),
+        settings=_settings(owner_prompt=old_prompt),
         approval_mode="yolo",
     )
     activation = runtime.submit_message("Use the upgraded Owner contract.")
-    monkeypatch.setattr(
-        project_owner_service,
-        "DEFAULT_SYSTEM_PROMPT",
-        current_prompt,
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(owner_prompt=current_prompt),
+        approval_mode="yolo",
     )
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
     with database.read_only_connection() as connection:
         owner = owners.get_by_triage_id(connection, activation.triage_id)
     assert owner is not None
-    assert owner.system_prompt == project_owner_service.LEGACY_SYSTEM_PROMPT
+    assert owner.system_prompt == old_prompt
 
     runtime.drive_next_activation()
 
     instructions = str(_RecordingOwnerModel.queries[-1][0]["content"])
-    assert instructions.startswith(project_owner_service.DEFAULT_SYSTEM_PROMPT)
+    assert instructions.startswith(current_prompt)
     with database.read_only_connection() as connection:
         owner = owners.get_by_triage_id(connection, activation.triage_id)
     assert owner is not None
-    assert owner.system_prompt == project_owner_service.DEFAULT_SYSTEM_PROMPT
+    assert owner.system_prompt == current_prompt
 
 
 def test_runtime_uses_packaged_observation_skill_independent_of_target_project(
@@ -194,21 +212,26 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
         request: CodexTurnRequest,
     ) -> CodexTurnResult:
         recorded.append(request)
-        if "Task Contract" in request.message:
-            result_path = next(request.workspace.glob("outbox/*")) / "result.json"
+        if '"interaction": "task"' in request.message:
+            envelope = _invocation_envelope(request.message)
+            output = envelope["output_contract"]
+            assert isinstance(output, dict)
+            outbox = output["outbox"]
+            assert isinstance(outbox, dict)
+            schema = outbox["manifest_schema"]
+            artifact = outbox["artifact_contract"]
+            assert isinstance(schema, dict)
+            assert isinstance(artifact, dict)
+            assert set(schema["required"]) == {"version", "summary", "artifacts"}
+            result_path = Path(str(outbox["result_path"]))
             document = request.workspace / "documents" / "plan.md"
             document.write_text("# Recorded plan\n", encoding="utf-8")
             result_path.write_text(
                 json.dumps(
                     {
                         "version": 1,
-                        "summary": "Recorded collaboration.",
-                        "artifacts": [
-                            {
-                                "path": "documents/plan.md",
-                                "media_type": "text/markdown",
-                            }
-                        ],
+                            "summary": "Recorded collaboration.",
+                            "artifacts": [artifact],
                     }
                 ),
                 encoding="utf-8",
@@ -221,7 +244,7 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
         )
 
     monkeypatch.setattr(CodexTurnTransport, "run", record)
-    executions = create_project_executions(project_path, RuntimeSettings())
+    executions = create_project_executions(project_path, _settings().runtime)
     context = ProjectRuntimeContext(
         triage_id="triage-contract",
         status="IN_PROGRESS",
@@ -272,10 +295,9 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
     assert resumed.output["ok"] is True
 
     planner, reviewer, resumed_planner = recorded
-    assert "Project Planner" in planner.developer_instructions
-    assert "must not approve" in planner.developer_instructions
-    assert "Project Reviewer" in reviewer.developer_instructions
-    assert "must not make the Owner's decision" in reviewer.developer_instructions
+    prompts = _settings().runtime.prompts
+    assert planner.developer_instructions.startswith(prompts.planner.role.strip())
+    assert reviewer.developer_instructions.startswith(prompts.reviewer.role.strip())
     assert '"operation": "project_planning:task"' in planner.message
     assert '"operation": "delegated_review:message"' in reviewer.message
     request_sha = hashlib.sha256(
@@ -299,7 +321,7 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
         assert request.workspace.is_relative_to(
             project_path / ".agentplanex" / "agent-workspaces"
         )
-    assert "Task Contract" in planner.message
+    assert '"interaction": "task"' in planner.message
     assert len(results[0].output["artifacts"]) == 1
     assert '"uri": "project:///requirements.md"' in planner.message
     assert f'"sha256": "{requirement_sha}"' in planner.message
@@ -323,13 +345,28 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
         request: CodexTurnRequest,
     ) -> CodexTurnResult:
         recorded.append(request)
-        result_path = next(request.workspace.glob("outbox/*")) / "result.json"
+        envelope = _invocation_envelope(request.message)
+        output = envelope["output_contract"]
+        assert isinstance(output, dict)
+        schema = output["manifest_schema"]
+        subject = output["subject_contract"]
+        artifact = output["artifact_contract"]
+        assert isinstance(schema, dict)
+        assert isinstance(subject, dict)
+        assert isinstance(artifact, dict)
+        assert set(schema["required"]) == {
+            "version",
+            "subject_digest",
+            "decision",
+            "summary",
+            "required_changes",
+            "artifacts",
+        }
+        result_path = Path(str(output["result_path"]))
         (request.workspace / "documents" / "review.md").write_text(
             "# Recorded review\n", encoding="utf-8"
         )
-        digest = request.message.split(
-            "The Runtime-computed subject digest is: ", 1
-        )[1].split("\n", 1)[0]
+        digest = str(subject["subject_digest"])
         result_path.write_text(
             json.dumps(
                 {
@@ -338,12 +375,7 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
                     "decision": "pass",
                     "summary": "Recorded gate.",
                     "required_changes": [],
-                    "artifacts": [
-                        {
-                            "path": "documents/review.md",
-                            "media_type": "text/markdown",
-                        }
-                    ],
+                        "artifacts": [artifact],
                 }
             ),
             encoding="utf-8",
@@ -357,7 +389,7 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
 
     monkeypatch.setattr(CodexTurnTransport, "run", record)
     collaboration = AgentCollaborationService.from_settings(
-        project_path, RuntimeSettings()
+        project_path, _settings().runtime
     )
     gate = CodexPlanHardGate(collaboration)
     specs = tuple(
@@ -398,13 +430,16 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
     assert '"role": "milestone_hard_gate"' in milestone_gate.message
     assert '"subject_digest": "milestone-digest"' in milestone_gate.message
     assert '"plan_commit_sha": "approved-plan"' in milestone_gate.message
-    assert "protected Plan Hard Gate" in plan_gate.developer_instructions
-    assert "protected Milestone Hard Gate" in milestone_gate.developer_instructions
+    prompts = _settings().runtime.prompts
+    assert plan_gate.developer_instructions.startswith(
+        prompts.plan_hard_gate.role.strip()
+    )
+    assert milestone_gate.developer_instructions.startswith(
+        prompts.milestone_hard_gate.role.strip()
+    )
     for request in recorded:
         assert "agentplanex-project-observe" in request.message
         assert f'"observation_skill": "{skill_path}"' in request.message
-        assert "must not make the Owner's decision" in request.developer_instructions
-        assert "fixed subject" in request.developer_instructions
         assert len(request.mentions) == (3 if request is plan_gate else 1)
         assert request.output_schema is not None
 
@@ -461,6 +496,10 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
         project_path,
         transport,
         resolve_observation_skill(),
+        AgentCollaborationService.from_settings(
+            project_path,
+            _settings().runtime,
+        ).prompts,
     ).execute(
         StageExecutionRequest(
             stage_run=stage_run,
@@ -473,8 +512,8 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
 
     request = recorded[0]
     assert request.thread_id is None
-    assert "Stage Executor" in request.developer_instructions
-    assert "must not re-plan" in request.developer_instructions
+    prompts = _settings().runtime.prompts
+    assert request.developer_instructions == prompts.stage_executor.role.strip()
     assert "agentplanex-project-observe" in request.message
     assert f'"observation_skill": "{skill_path}"' in request.message
     assert f'"project_root": "{project_path.resolve()}"' in request.message

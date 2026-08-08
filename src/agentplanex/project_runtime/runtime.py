@@ -61,11 +61,14 @@ class ProjectRuntime:
         event_bus = EventBus((SQLiteTimelineRecorder(database),))
         runtime_contexts = RuntimeContextService(database, event_bus)
         activations = SQLiteOwnerActivationRepository()
-        owner_contexts = ProjectOwnerContextQuery(database)
         collaboration = AgentCollaborationService.from_settings(
             project_path,
             settings.runtime,
             observation_skill=observation_skill,
+        )
+        owner_contexts = ProjectOwnerContextQuery(
+            database,
+            collaboration.prompts.summary_context_header,
         )
         hard_gate = CodexPlanHardGate(collaboration)
         planning = PlanningService(
@@ -90,6 +93,7 @@ class ProjectRuntime:
                 project_path,
                 collaboration.transport,
                 collaboration.observation_skill,
+                collaboration.prompts,
             ),
             git=GitRepository(project_path),
         )
@@ -114,6 +118,7 @@ class ProjectRuntime:
             event_bus=event_bus,
             owner_contexts=owner_contexts,
             observation_skill=collaboration.observation_skill,
+            prompts=collaboration.prompts,
         )
         driver = OwnerActivationDriver(
             database=database,

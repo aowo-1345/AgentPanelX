@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.yaml")
 DEFAULT_JBB_BASE_URL = "https://api.openai.com/v1"
@@ -53,8 +53,62 @@ class AgentCardSettings(_SettingsModel):
 
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
-    developer_instructions: str = Field(min_length=1)
+    profile_instructions: str | None = Field(default=None, min_length=1)
     contract: Literal["planner", "reviewer"]
+
+    @field_validator("profile_instructions")
+    @classmethod
+    def _profile_not_blank(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("Agent profile instructions must not be blank")
+        return value
+
+
+class AgentPromptSettings(_SettingsModel):
+    """Stable human-authored instructions for one Agent role."""
+
+    role: str = Field(min_length=1)
+
+    @field_validator("role")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Prompt text must not be blank")
+        return value
+
+
+class TaskAgentPromptSettings(AgentPromptSettings):
+    """Role instructions plus stable guidance for one operation family."""
+
+    task: str = Field(min_length=1)
+
+    @field_validator("task")
+    @classmethod
+    def _task_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Prompt text must not be blank")
+        return value
+
+
+class PromptSettings(_SettingsModel):
+    """The complete configurable Prompt catalog for Runtime Agent invocations."""
+
+    observation_instruction: str = Field(min_length=1)
+    summary_context_header: str = Field(min_length=1)
+    project_owner: AgentPromptSettings
+    historical_owner: AgentPromptSettings
+    planner: TaskAgentPromptSettings
+    reviewer: TaskAgentPromptSettings
+    plan_hard_gate: TaskAgentPromptSettings
+    milestone_hard_gate: TaskAgentPromptSettings
+    stage_executor: TaskAgentPromptSettings
+
+    @field_validator("observation_instruction", "summary_context_header")
+    @classmethod
+    def _shared_text_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Prompt text must not be blank")
+        return value
 
 
 class PlanApprovalHardGateSettings(_SettingsModel):
@@ -71,38 +125,13 @@ class HardGateSettings(_SettingsModel):
     )
 
 
-def _default_agent_cards() -> dict[str, AgentCardSettings]:
-    return {
-        "planner": AgentCardSettings(
-            name="Planner",
-            description="Create and refine Project Plans in a dedicated Agent workspace.",
-            developer_instructions=(
-                "Act as the Project Planner. Modify only your Agent workspace; "
-                "never modify project source or Git refs."
-            ),
-            contract="planner",
-        ),
-        "reviewer": AgentCardSettings(
-            name="Reviewer",
-            description=(
-                "Review Project Plans and fixed delivery Candidates in a dedicated "
-                "Agent workspace."
-            ),
-            developer_instructions=(
-                "Act as the Project Reviewer. Review Plans or Candidates and modify "
-                "only your Agent workspace; never change project source or Git refs."
-            ),
-            contract="reviewer",
-        ),
-    }
-
-
 class RuntimeSettings(_SettingsModel):
     """Project Runtime tool settings."""
 
     bash: BashSettings = BashSettings()
     codex: CodexSettings = CodexSettings()
-    agents: dict[str, AgentCardSettings] = Field(default_factory=_default_agent_cards)
+    agents: dict[str, AgentCardSettings] = Field(min_length=1)
+    prompts: PromptSettings
     hard_gates: HardGateSettings = HardGateSettings()
 
 
@@ -110,7 +139,7 @@ class Settings(_SettingsModel):
     """Complete configuration passed into one Project Runtime."""
 
     project_owner_agent: ProjectOwnerAgentSettings
-    runtime: RuntimeSettings = RuntimeSettings()
+    runtime: RuntimeSettings
 
 
 def load_settings(path: Path | None = None) -> Settings:

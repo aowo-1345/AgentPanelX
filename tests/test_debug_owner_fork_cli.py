@@ -21,7 +21,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models import jbb as jbb_model_module
 from agentplanex.project_owner_agent.models.jbb import JBBModel
-from agentplanex.services import project_owner as project_owner_service
+from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 from scripts import debug_owner_fork_cli, debug_tool_cli
 
 
@@ -131,7 +131,7 @@ def test_owner_fork_cli_prints_raw_and_summary_context_without_runtime_writes(
     assert raw_code == 0
     assert raw["context"]["summary"] is None
     assert [message.get("content") for message in raw["context"]["messages"]] == [
-        project_owner_service.DEFAULT_SYSTEM_PROMPT,
+        load_settings(DEFAULT_SETTINGS_PATH).runtime.prompts.project_owner.role.strip(),
         "first",
         "first-reply",
         "second",

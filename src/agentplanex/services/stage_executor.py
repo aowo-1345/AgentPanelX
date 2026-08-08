@@ -9,7 +9,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agentplanex.domains import Milestone, Stage, StageRun
 from agentplanex.infrastructure.codex import CodexTurnRequest, CodexTurnTransport
-from agentplanex.services.agent_contracts import render_invocation_envelope
+from agentplanex.services.agent_contracts import (
+    AgentPromptCatalog,
+    InvocationContract,
+    PromptRole,
+)
 
 _STAGE_OUTPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -53,6 +57,7 @@ class CodexStageExecutor:
     project_path: Path
     transport: CodexTurnTransport
     observation_skill: Path
+    prompts: AgentPromptCatalog
 
     def execute(self, request: StageExecutionRequest) -> None:
         relative_document = self._relative_document(request)
@@ -60,12 +65,8 @@ class CodexStageExecutor:
             CodexTurnRequest(
                 thread_id=None,
                 workspace=request.worktree,
-                developer_instructions=(
-                    "You are the AgentPlaneX Stage Executor. Implement exactly the fixed "
-                    "Stage in this invocation; you must not re-plan the Milestone or "
-                    "accept/reject its Candidate. Work only inside the provided detached "
-                    "delivery worktree. Do not commit, merge, change Git refs, or modify "
-                    "Runtime SQLite data."
+                developer_instructions=self.prompts.role_instructions(
+                    PromptRole.STAGE_EXECUTOR
                 ),
                 message=self._prompt(request, relative_document),
                 mentions=(),
@@ -115,31 +116,34 @@ class CodexStageExecutor:
         }
         return "\n\n".join(
             (
-                "This is a fixed AgentPlaneX Stage Contract.",
                 json.dumps(contract, ensure_ascii=True, indent=2),
-                render_invocation_envelope(
-                    role="stage_executor",
-                    operation="execute_stage",
-                    project_root=self.project_path,
-                    observation_skill=self.observation_skill,
-                    triage_id=request.stage_run.triage_id,
-                    fixed_work_object={
-                        "stage_run_id": request.stage_run.stage_run_id,
-                        "snapshot_id": request.stage_run.snapshot_id,
-                        "input_commit_sha": request.stage_run.input_commit_sha,
-                    },
-                    workspace=str(request.worktree.resolve()),
-                    output_contract=(
-                        "Uncommitted implementation, exact delivery document, and one "
-                        "short JSON summary."
-                    ),
+                self.prompts.render_invocation(
+                    InvocationContract(
+                        role=PromptRole.STAGE_EXECUTOR,
+                        operation="execute_stage",
+                        project_root=self.project_path,
+                        observation_skill=self.observation_skill,
+                        triage_id=request.stage_run.triage_id,
+                        fixed_work_object={
+                            "stage_run_id": request.stage_run.stage_run_id,
+                            "snapshot_id": request.stage_run.snapshot_id,
+                            "input_commit_sha": request.stage_run.input_commit_sha,
+                        },
+                        workspace={
+                            "write_scope": str(request.worktree.resolve()),
+                            "git_commits_and_refs": "forbidden",
+                            "runtime_sqlite": "forbidden",
+                        },
+                        output_contract={
+                            "implementation": "uncommitted_project_changes",
+                            "delivery_document": relative_document.as_posix(),
+                            "final_response": {
+                                "format": "json",
+                                "required_fields": ["summary"],
+                            },
+                        },
+                    )
                 ),
-                "Implement only this Stage. Modify at least one project file in addition "
-                "to the required delivery document. Do not edit the Milestone plan.",
-                "Write a non-empty UTF-8 Markdown delivery document at the exact path "
-                f"{relative_document.as_posix()}. Record the implementation and "
-                "validation performed.",
-                "Leave all changes uncommitted. Return only a JSON object containing one "
-                "short summary field.",
+                self.prompts.task_instructions(PromptRole.STAGE_EXECUTOR),
             )
         )

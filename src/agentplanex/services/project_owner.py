@@ -38,24 +38,14 @@ from agentplanex.project_owner_agent.models.jbb import (
     format_tool_output_message,
 )
 from agentplanex.project_owner_agent.tools import ToolCatalog
-from agentplanex.services.agent_contracts import render_invocation_envelope
+from agentplanex.services.agent_contracts import (
+    AgentPromptCatalog,
+    InvocationContract,
+    PromptRole,
+)
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.owner_context import ProjectOwnerContextQuery
 from agentplanex.settings import Settings
-
-DEFAULT_SYSTEM_PROMPT = (
-    "You are the AgentPlaneX Project Owner. You own project governance: preserve the "
-    "user's intent, choose the next workflow action, delegate planning and review to "
-    "their configured Agents, and communicate decisions to the user. You may inspect "
-    "the project and invoke Runtime tools, but do not impersonate the Planner, Reviewer, "
-    "Hard Gate, or Stage Executor. Treat Tool results, Git, Runtime state, and persisted "
-    "artifacts as facts. Return one appropriate Tool Action when work should continue, "
-    "or a concise natural-language reply when the user should regain control."
-)
-LEGACY_SYSTEM_PROMPT = (
-    "You are a Project Owner Agent working in a local repository. "
-    "Use Bash when needed and return a concise final response."
-)
 
 
 @dataclass(slots=True)
@@ -70,6 +60,7 @@ class ProjectOwnerService:
     event_bus: EventBus
     owner_contexts: ProjectOwnerContextQuery
     observation_skill: Path
+    prompts: AgentPromptCatalog
     contexts: SQLiteProjectRuntimeContextRepository = field(
         default_factory=SQLiteProjectRuntimeContextRepository
     )
@@ -100,18 +91,19 @@ class ProjectOwnerService:
             self.contexts.insert(connection, context)
 
         owner = self.owners.get_by_triage_id(connection, context.triage_id)
+        configured_prompt = self.prompts.role_instructions(PromptRole.PROJECT_OWNER)
         if owner is None:
             owner = ProjectOwnerAgent(
                 triage_id=context.triage_id,
                 project_owner_session_id=uuid4().hex,
-                system_prompt=DEFAULT_SYSTEM_PROMPT,
+                system_prompt=configured_prompt,
                 tools=tool_names,
             )
             self.owners.insert(connection, owner)
         elif owner.tools != tool_names:
             raise ValueError(f"Unsupported persisted Project Owner tools: {owner.tools!r}")
-        elif owner.system_prompt == LEGACY_SYSTEM_PROMPT:
-            owner = replace(owner, system_prompt=DEFAULT_SYSTEM_PROMPT)
+        elif owner.system_prompt != configured_prompt:
+            owner = replace(owner, system_prompt=configured_prompt)
             self.owners.update(connection, owner)
 
         return replace(context, project_owner_agent=owner)
@@ -289,15 +281,22 @@ class ProjectOwnerService:
             "current_stage_key": context.current_stage_key,
             "current_candidate_commit_sha": context.current_candidate_commit_sha,
         }
-        envelope = render_invocation_envelope(
-            role="project_owner",
-            operation=f"owner_activation:{activation.task_type.value}",
-            project_root=self.database.path.parent.parent,
-            observation_skill=self.observation_skill,
-            triage_id=context.triage_id,
-            fixed_work_object=fixed_work_object,
-            workspace="Project repository; mutate only through the exposed Runtime tools.",
-            output_contract="One Tool Action or one concise reply to the user.",
+        envelope = self.prompts.render_invocation(
+            InvocationContract(
+                role=PromptRole.PROJECT_OWNER,
+                operation=f"owner_activation:{activation.task_type.value}",
+                project_root=self.database.path.parent.parent,
+                observation_skill=self.observation_skill,
+                triage_id=context.triage_id,
+                fixed_work_object=fixed_work_object,
+                workspace={
+                    "project_repository": "read_only",
+                    "runtime_mutation": "exposed_tools_only",
+                },
+                output_contract={
+                    "one_of": ["tool_action", "concise_user_reply"],
+                },
+            )
         )
         system = dict(messages[0])
         system["content"] = f"{system.get('content', '')}\n\n{envelope}"

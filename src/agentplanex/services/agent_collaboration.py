@@ -33,7 +33,9 @@ from agentplanex.infrastructure.codex import (
     CodexTurnTransport,
 )
 from agentplanex.services.agent_contracts import (
-    render_invocation_envelope,
+    AgentPromptCatalog,
+    InvocationContract,
+    PromptRole,
     resolve_observation_skill,
 )
 from agentplanex.settings import RuntimeSettings
@@ -86,7 +88,6 @@ class AgentCatalog:
                 for value in (
                     configured.name,
                     configured.description,
-                    configured.developer_instructions,
                 )
             ):
                 raise ValueError(f"Agent Card fields must not be blank: {agent_id!r}")
@@ -104,7 +105,7 @@ class AgentCatalog:
                 agent_id=agent_id,
                 name=configured.name,
                 description=configured.description,
-                developer_instructions=configured.developer_instructions,
+                profile_instructions=configured.profile_instructions,
                 role=role,
                 profile_digest=hashlib.sha256(digest_source).hexdigest(),
             )
@@ -146,6 +147,7 @@ class AgentCollaborationService:
     workspaces: AgentWorkspaceStore
     transport: CodexTurnTransport
     observation_skill: Path
+    prompts: AgentPromptCatalog
 
     @classmethod
     def from_settings(
@@ -172,6 +174,7 @@ class AgentCollaborationService:
             observation_skill=(
                 observation_skill or resolve_observation_skill()
             ),
+            prompts=AgentPromptCatalog(settings.prompts),
         )
 
     def talk(
@@ -206,7 +209,10 @@ class AgentCollaborationService:
             CodexTurnRequest(
                 thread_id=thread_id,
                 workspace=workspace.path,
-                developer_instructions=self._developer_instructions(card),
+                developer_instructions=self.prompts.role_instructions(
+                    PromptRole(card.role.value),
+                    profile_instructions=card.profile_instructions,
+                ),
                 message=self._prompt(
                     card,
                     request.kind,
@@ -275,24 +281,6 @@ class AgentCollaborationService:
             raise AgentCollaborationError("Agent summary must not be empty")
         return normalized[:2_000]
 
-    @staticmethod
-    def _developer_instructions(card: AgentCard) -> str:
-        if card.role is AgentRole.PLANNER:
-            core = (
-                "You are the AgentPlaneX Project Planner. Create or refine a coherent "
-                "Project Plan for the question delegated by the Owner. You may advise "
-                "on readiness, but must not approve the Plan, publish Milestones, make "
-                "delivery decisions, or modify project source, Git refs, or Runtime data."
-            )
-        else:
-            core = (
-                "You are the AgentPlaneX Project Reviewer. Evaluate only the subject "
-                "delegated in this invocation, cite evidence, and identify concrete "
-                "required changes. You must not make the Owner's decision, implement "
-                "the work, change project source, Git refs, or Runtime data."
-            )
-        return f"{core}\n\nConfigured profile instructions:\n{card.developer_instructions}"
-
     def _prompt(
         self,
         card: AgentCard,
@@ -326,55 +314,42 @@ class AgentCollaborationService:
                 "candidate_commit_sha": context.current_candidate_commit_sha,
             },
         }
-        lines = [
-            message,
-            render_invocation_envelope(
-                role=card.role.value,
-                operation=f"{operation}:{kind.value}",
-                project_root=self.workspaces.project_path,
-                observation_skill=self.observation_skill,
-                triage_id=context.triage_id,
-                fixed_work_object=fixed_work_object,
-                workspace="Current persistent Agent workspace only.",
-                output_contract=(
-                    "Role document plus result.json and a short JSON summary."
-                    if kind is AgentInteractionKind.TASK
-                    else "One short JSON summary; no Outbox document."
-                ),
-            ),
-            "Work only inside your current Agent workspace. Do not modify the Project "
-            "repository, Git refs, Runtime database, or files outside this workspace.",
-        ]
-        if artifacts:
-            lines.append(
-                "The referenced Project/Agent artifacts are attached as file mentions. "
-                "Treat them as read-only inputs."
-            )
-        if kind is AgentInteractionKind.MESSAGE:
-            lines.append(
-                "This is a Message interaction. No Outbox result is required. Return a "
-                "short JSON summary and do not copy full workspace documents into it."
-            )
-            return "\n\n".join(lines)
-
-        if invocation is None:
-            raise AssertionError("Task interaction has no Outbox invocation")
         document_name = "plan.md" if card.role is AgentRole.PLANNER else "review.md"
-        role_purpose = (
-            "Create or refine the Project Plan."
-            if card.role is AgentRole.PLANNER
-            else "Review the subject supplied by the request; it may be a Plan or Candidate."
-        )
-        lines.extend(
+        output_contract: dict[str, object] = {
+            "interaction": kind.value,
+            "final_response": {"format": "json", "required_fields": ["summary"]},
+            "outbox": None,
+        }
+        if kind is AgentInteractionKind.TASK:
+            if invocation is None:
+                raise AssertionError("Task interaction has no Outbox invocation")
+            output_contract["outbox"] = {
+                "result_path": str(invocation.result_path),
+                "manifest_schema": _TaskResultManifest.model_json_schema(),
+                "artifact_contract": {
+                    "path": f"documents/{document_name}",
+                    "media_type": "text/markdown",
+                },
+            }
+        return "\n\n".join(
             (
-                f"This is the {card.role.value} Task Contract. {role_purpose}",
-                f"Create or update exactly documents/{document_name} in this workspace.",
-                "Before the final response, write a UTF-8 JSON object to exactly "
-                f"{invocation.result_path}. It must contain only version=1, a short "
-                "summary, and one artifacts entry with "
-                f'path="documents/{document_name}" and media_type="text/markdown".',
-                "Return only a short JSON summary in the final response. Do not copy the "
-                "document body into the final response.",
+                message,
+                self.prompts.render_invocation(
+                    InvocationContract(
+                        role=PromptRole(card.role.value),
+                        operation=f"{operation}:{kind.value}",
+                        project_root=self.workspaces.project_path,
+                        observation_skill=self.observation_skill,
+                        triage_id=context.triage_id,
+                        fixed_work_object=fixed_work_object,
+                        workspace={
+                            "write_scope": "current_agent_workspace",
+                            "project_and_runtime": "read_only",
+                            "attached_artifacts": "read_only",
+                        },
+                        output_contract=output_contract,
+                    )
+                ),
+                self.prompts.task_instructions(PromptRole(card.role.value)),
             )
         )
-        return "\n\n".join(lines)

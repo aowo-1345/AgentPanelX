@@ -10,18 +10,8 @@ from agentplanex.domains import (
 )
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.base import Model
+from agentplanex.services.agent_contracts import AgentPromptCatalog, PromptRole
 from agentplanex.services.owner_context import ProjectOwnerContextQuery
-
-HISTORICAL_OWNER_FORK_CONTRACT = """
-You are a Historical Project Owner Fork at a fixed message checkpoint.
-Answer only from information visible in the supplied checkpoint context.
-Do not use or claim knowledge of later project state.
-Clearly distinguish checkpoint facts, your current inference, and unknowns.
-Cite relevant message, Summary, or artifact checkpoints when they are available.
-Your answers are historical witness testimony, not an objective root-cause verdict.
-Do not propose or perform changes to the current Runtime, Message History, or Git.
-Do not expose hidden chain-of-thought; provide concise evidence-based rationale.
-""".strip()
 
 
 @dataclass(slots=True)
@@ -31,6 +21,7 @@ class HistoricalOwnerFork:
     context: RestoredOwnerContext
     model: Model
     model_name: str
+    role_instructions: str
     fidelity: HistoricalOwnerFidelity = field(default_factory=HistoricalOwnerFidelity)
     _messages: list[Message] = field(init=False, repr=False)
     _transcript: list[HistoricalOwnerExchange] = field(
@@ -47,7 +38,7 @@ class HistoricalOwnerFork:
         if system.get("role") != "system":
             raise ValueError("Restored Owner context must start with System Prompt")
         original = str(system.get("content", "")).strip()
-        system["content"] = f"{original}\n\n{HISTORICAL_OWNER_FORK_CONTRACT}"
+        system["content"] = f"{original}\n\n{self.role_instructions.strip()}"
 
     @property
     def transcript(self) -> tuple[HistoricalOwnerExchange, ...]:
@@ -82,6 +73,7 @@ class HistoricalOwnerForkService:
     """Open isolated Fork sessions from the shared read-only Context Query."""
 
     contexts: ProjectOwnerContextQuery
+    prompts: AgentPromptCatalog
 
     def open(
         self,
@@ -95,4 +87,7 @@ class HistoricalOwnerForkService:
             context=self.contexts.restore(message_id, summary_id=summary_id),
             model=model,
             model_name=model_name,
+            role_instructions=self.prompts.role_instructions(
+                PromptRole.HISTORICAL_OWNER
+            ),
         )
