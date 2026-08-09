@@ -5,6 +5,7 @@ from pathlib import Path
 from agentplanex.domains import (
     Action,
     OwnerActivation,
+    ProjectRuntimeContext,
     ToolExecutionResult,
 )
 from agentplanex.infrastructure.git_repository import GitRepository
@@ -96,12 +97,13 @@ class ProjectRuntime:
             activations=activations,
             review_plan=hard_gate.review,
         )
+        git = GitRepository(project_path)
         delivery = DeliveryService(
             project_path=project_path,
             database=database,
             event_bus=event_bus,
             runtime_contexts=runtime_contexts,
-            git=GitRepository(project_path),
+            git=git,
             review_milestones=hard_gate.review_milestones,
         )
         delivery_runner = DeliveryRunner(
@@ -112,11 +114,11 @@ class ProjectRuntime:
                 collaboration.observation_skill,
                 collaboration.prompts,
             ),
-            git=GitRepository(project_path),
+            git=git,
         )
         controls = ProjectControlQuery(
             database=database,
-            git=GitRepository(project_path),
+            git=git,
         )
         executions = create_project_executions(
             project_path,
@@ -163,6 +165,17 @@ class ProjectRuntime:
             activations=activations,
             driver=driver,
         )
+        self._git = git
+
+    def initialize(self) -> ProjectRuntimeContext:
+        """Initialize this Feature Runtime without messages, activations, or models."""
+        context = self._service.initialize()
+        self._git.ensure_runtime_excluded()
+        return context
+
+    def begin_feature(self, triage_id: str) -> ProjectRuntimeContext:
+        """Begin one selected Feature without creating an Owner activation."""
+        return self._service.begin_feature(triage_id)
 
     def submit_message(self, content: str) -> OwnerActivation:
         """Persist user input and enqueue one durable Owner activation."""

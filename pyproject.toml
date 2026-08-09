@@ -17,6 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
+agentplanex = "agentplanex.app_cli:main"
 agentplanex-owner = "agentplanex.cli:main"
 
 [dependency-groups]

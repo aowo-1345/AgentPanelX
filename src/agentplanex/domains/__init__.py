@@ -56,6 +56,14 @@ from agentplanex.domains.tools import (
     ToolExecutor,
     ToolSchema,
 )
+from agentplanex.domains.workspace import (
+    BoardFeature,
+    FeatureBinding,
+    FeatureState,
+    FeatureView,
+    ManagedProject,
+    ProjectBoard,
+)
 
 __all__ = [
     "BASH_TOOL_NAME",
@@ -69,11 +77,16 @@ __all__ = [
     "AgentRole",
     "ArtifactDescriptor",
     "ArtifactRef",
+    "BoardFeature",
     "ConversationReference",
     "ExecutionEvent",
     "ExecutionEventType",
+    "FeatureBinding",
+    "FeatureState",
+    "FeatureView",
     "HistoricalOwnerExchange",
     "HistoricalOwnerFidelity",
+    "ManagedProject",
     "Message",
     "MessageHistory",
     "Milestone",
@@ -82,6 +95,7 @@ __all__ = [
     "OwnerActivation",
     "OwnerActivationMode",
     "OwnerActivationStatus",
+    "ProjectBoard",
     "ProjectOwnerAgent",
     "ProjectOwnerTask",
     "ProjectOwnerTaskType",

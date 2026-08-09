@@ -3,6 +3,7 @@
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 _RUNTIME_DIRECTORY = ".agentplanex"
 _WORKTREE_DIRECTORY = "delivery-worktrees"
@@ -34,6 +35,35 @@ class GitRepository:
             raise GitRepositoryError(
                 "Git worktree has uncommitted changes: " + ", ".join(changed)
             )
+
+    def ensure_runtime_excluded(self) -> None:
+        """Keep project-local Runtime data out of the attached Feature branch."""
+        result = self._run("rev-parse", "--git-path", "info/exclude")
+        exclude_path = Path(result.stdout.strip())
+        if not exclude_path.is_absolute():
+            exclude_path = self.project_path / exclude_path
+        temporary: Path | None = None
+        try:
+            existing = exclude_path.read_text(encoding="utf-8")
+            runtime_pattern = f"{_RUNTIME_DIRECTORY}/"
+            if runtime_pattern in existing.splitlines():
+                return
+            separator = "" if not existing or existing.endswith("\n") else "\n"
+            temporary = exclude_path.with_name(
+                f".{exclude_path.name}.{uuid4().hex}.tmp"
+            )
+            temporary.write_text(
+                f"{existing}{separator}{runtime_pattern}\n",
+                encoding="utf-8",
+            )
+            temporary.replace(exclude_path)
+        except OSError as error:
+            raise GitRepositoryError(
+                "Cannot update project-local Git exclude"
+            ) from error
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def changed_paths(self) -> tuple[str, ...]:
         """Return changed project paths while excluding Runtime-owned data."""

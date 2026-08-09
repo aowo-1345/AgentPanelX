@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.yaml")
 DEFAULT_JBB_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_WORKSPACE_DATA_HOME = Path(
+    ".agentplanex"
+)
 
 
 class _SettingsModel(BaseModel):
@@ -144,6 +147,17 @@ class HardGateSettings(_SettingsModel):
     )
 
 
+class WorkspaceSettings(_SettingsModel):
+    """User-level Registry and long-lived Feature worktree location."""
+
+    data_home: Path = DEFAULT_WORKSPACE_DATA_HOME
+
+    @field_validator("data_home")
+    @classmethod
+    def _expand_data_home(cls, value: Path) -> Path:
+        return value.expanduser()
+
+
 class RuntimeSettings(_SettingsModel):
     """Project Runtime tool settings."""
 
@@ -159,6 +173,7 @@ class Settings(_SettingsModel):
 
     project_owner_agent: ProjectOwnerAgentSettings
     runtime: RuntimeSettings
+    workspace: WorkspaceSettings = WorkspaceSettings()
 
 
 def load_settings(path: Path | None = None) -> Settings:

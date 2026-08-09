@@ -44,6 +44,7 @@ class SQLiteDatabase:
             isolation_level=None,
         )
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute(
             f"PRAGMA busy_timeout = {int(self.busy_timeout_seconds * 1000)}"

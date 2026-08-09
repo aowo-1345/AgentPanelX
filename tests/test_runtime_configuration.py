@@ -32,6 +32,7 @@ from agentplanex.services import project_owner as project_owner_service
 from agentplanex.services.owner_activation import ActivationDriveResult
 from agentplanex.settings import (
     DEFAULT_SETTINGS_PATH,
+    DEFAULT_WORKSPACE_DATA_HOME,
     BashSettings,
     ModelSettings,
     ProjectOwnerAgentSettings,
@@ -148,6 +149,15 @@ def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> Non
     assert settings.project_owner_agent.max_consecutive_format_errors == 2
     assert settings.runtime.bash.timeout_seconds == 3.5
     assert settings.runtime.bash.output_limit == 4096
+
+
+def test_repository_settings_select_the_local_agentplanex_data_home() -> None:
+    settings = load_settings(DEFAULT_SETTINGS_PATH)
+
+    assert settings.workspace.data_home == DEFAULT_WORKSPACE_DATA_HOME
+    assert settings.workspace.data_home == Path(
+        ".agentplanex"
+    )
 
 
 def test_unknown_settings_are_rejected(tmp_path: Path) -> None:

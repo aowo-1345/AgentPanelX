@@ -62,6 +62,19 @@ class ProjectRuntimeService:
     activations: SQLiteOwnerActivationRepository
     driver: OwnerActivationDriver
 
+    def initialize(self) -> ProjectRuntimeContext:
+        """Create or restore the sole Context and Owner without external input."""
+        with self.database.transaction() as connection:
+            return self.owner.ensure_state(connection)
+
+    def begin_feature(self, triage_id: str) -> ProjectRuntimeContext:
+        """Move one initialized Feature from TRIAGE to TODO without other work."""
+        return self.runtime_contexts.transition(
+            triage_id,
+            reason=RuntimeContextChangeReason.FEATURE_BEGUN,
+            mutate=_begin_feature,
+        )
+
     def submit_user_message(self, content: str) -> OwnerActivation:
         """Persist a user message and its durable Owner activation atomically."""
         task = ProjectOwnerTask(
@@ -384,6 +397,15 @@ def _start_conversation(context: ProjectRuntimeContext) -> ProjectRuntimeContext
         if context.status == "TRIAGE"
         else context
     )
+
+
+def _begin_feature(context: ProjectRuntimeContext) -> ProjectRuntimeContext:
+    if context.status != "TRIAGE":
+        raise ValueError(
+            "Feature can only begin from TRIAGE: "
+            f"{context.triage_id} is {context.status}"
+        )
+    return replace(context, status="TODO")
 
 
 def _plan_rejection_message(feedback: str) -> str:
