@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import ClassVar
 
 import pytest
@@ -17,6 +18,7 @@ from agentplanex.domains import (
     ProjectRuntimeContext,
     SummaryHistory,
 )
+from agentplanex.infrastructure import local_shell as local_shell_module
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
@@ -508,3 +510,38 @@ def test_runtime_applies_bash_limits(
     assert result is not None
 
     assert expected in result.content
+
+
+def test_project_owner_bash_fails_closed_without_bubblewrap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(local_shell_module.shutil, "which", lambda *_args, **_kwargs: None)
+
+    result = local_shell_module.run_local_shell(
+        "printf unsafe > escaped",
+        cwd=tmp_path,
+    )
+
+    assert result == {
+        "output": "",
+        "returncode": -1,
+        "exception_info": "Bubblewrap is required for Project Owner Bash",
+    }
+    assert not (tmp_path / "escaped").exists()
+
+
+def test_project_owner_bash_runs_below_private_tmp() -> None:
+    with TemporaryDirectory(prefix="agentplanex-bwrap-test-", dir="/tmp") as directory:
+        project_path = Path(directory)
+        result = local_shell_module.run_local_shell(
+            "printf 'inside-tmp\\n' > probe && test ! -e /run/docker.sock",
+            cwd=project_path,
+        )
+
+        assert result == {
+            "output": "",
+            "returncode": 0,
+            "exception_info": "",
+        }
+        assert (project_path / "probe").read_text(encoding="utf-8") == "inside-tmp\n"

@@ -1,6 +1,7 @@
 """Observable tests for the direct Tool Action debug entry point."""
 
 import json
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable
@@ -525,6 +526,78 @@ def test_executes_project_bound_action_without_constructing_a_model(
         "exit": None,
     }
     assert (project_path / ".agentplanex" / "agentplanex.sqlite3").is_file()
+
+
+def test_project_owner_bash_writes_only_inside_project(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    relative_outside = project_path.parent / f"{project_path.name}-relative-outside"
+    absolute_outside = project_path.parent / f"{project_path.name}-absolute-outside"
+    protected_git = project_path / ".git" / "owner-write-probe"
+    protected_runtime = project_path / ".agentplanex" / "owner-write-probe"
+    monkeypatch.setenv("AGENTPLANEX_SANDBOX_PROBE", "must-not-cross")
+    command = "\n".join(
+        (
+            "set -eu",
+            "printf 'inside-ok\\n' > owner-write-probe",
+            (
+                "if printf blocked > ../"
+                f"{shlex.quote(relative_outside.name)} 2>/dev/null; then exit 91; fi"
+            ),
+            (
+                f"if printf blocked > {shlex.quote(str(absolute_outside))} "
+                "2>/dev/null; then exit 92; fi"
+            ),
+            "if printf blocked > .git/owner-write-probe 2>/dev/null; then exit 93; fi",
+            (
+                "if printf blocked > .agentplanex/owner-write-probe "
+                "2>/dev/null; then exit 94; fi"
+            ),
+            "test -z \"${AGENTPLANEX_SANDBOX_PROBE:-}\"",
+            "test ! -e /run/docker.sock",
+            "test ! -e /var/run/docker.sock",
+            "test -r /etc/resolv.conf",
+            "git status --short --untracked-files=no",
+            "uv --version",
+        )
+    )
+
+    try:
+        result = debug_tool_cli.main(
+            [
+                "--cwd",
+                str(project_path),
+                "--print",
+                json.dumps(
+                    {
+                        "tool": "bash",
+                        "call_id": "sandbox-write-probe",
+                        "arguments": {"command": command},
+                    }
+                ),
+            ]
+        )
+        response = json.loads(capfd.readouterr().out)
+
+        assert result == 0
+        assert response["ok"] is True
+        assert response["result"]["returncode"] == 0
+        assert "uv " in response["result"]["output"]
+        assert (project_path / "owner-write-probe").read_text(encoding="utf-8") == (
+            "inside-ok\n"
+        )
+        assert not relative_outside.exists()
+        assert not absolute_outside.exists()
+        assert not protected_git.exists()
+        assert not protected_runtime.exists()
+    finally:
+        relative_outside.unlink(missing_ok=True)
+        absolute_outside.unlink(missing_ok=True)
+        protected_git.unlink(missing_ok=True)
+        protected_runtime.unlink(missing_ok=True)
 
 
 def test_tool_driven_delivery_uses_same_activation_without_owner_model(
