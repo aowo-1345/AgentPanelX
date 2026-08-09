@@ -1,6 +1,7 @@
 """Web-ready projection with independently degradable Feature panels."""
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,7 @@ from agentplanex.domains import (
     MessageHistory,
     MilestoneSnapshot,
     OwnerActivation,
+    OwnerActivationStatus,
     ProjectOwnerTaskType,
     ProjectRuntimeContext,
     StageRun,
@@ -30,12 +32,23 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.services.planning import SPEC_DOCUMENT_NAMES
 
+type ToolActivityStatus = Literal["running", "completed", "failed"]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolActivity:
+    name: str
+    status: ToolActivityStatus
+    input_preview: str
+    output_preview: str | None = None
+
 
 @dataclass(frozen=True, slots=True)
 class VisibleMessage:
     message_id: str
-    role: Literal["user", "assistant", "status"]
+    role: Literal["user", "assistant", "status", "tool"]
     content: str
+    tool_activity: ToolActivity | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +63,7 @@ class ProjectWorkspaceView:
 
     context: ProjectRuntimeContext
     owner_activation: OwnerActivation | None
+    activation_has_reply: bool
     runtime_error: str | None
     snapshot: MilestoneSnapshot | None
     milestones_error: str | None
@@ -99,12 +113,16 @@ class ProjectWorkspaceQuery:
         activation, active_stage, runtime_error = self._runtime(triage_id)
         snapshot, milestones_error = self._milestones(context)
         timeline, timeline_error = self._timeline(triage_id)
-        conversation, conversation_error = self._conversation(triage_id)
+        conversation, conversation_error, activation_has_reply = self._conversation(
+            triage_id,
+            activation,
+        )
         plan_documents, plan_error = _read_plan_documents(self.git)
         branch, head, git_error = _git_panel(self.git)
         return ProjectWorkspaceView(
             context=context,
             owner_activation=activation,
+            activation_has_reply=activation_has_reply,
             runtime_error=runtime_error,
             snapshot=snapshot,
             milestones_error=milestones_error,
@@ -177,21 +195,26 @@ class ProjectWorkspaceQuery:
     def _conversation(
         self,
         triage_id: str,
-    ) -> tuple[tuple[VisibleMessage, ...], str | None]:
+        activation: OwnerActivation | None,
+    ) -> tuple[tuple[VisibleMessage, ...], str | None, bool]:
         try:
             with self.database.connection() as connection:
                 owner = self.owners.get_by_triage_id(connection, triage_id)
                 if owner is None:
-                    return (), None
+                    return (), None, False
                 histories = self.messages.list_by_session_id(
                     connection, owner.project_owner_session_id
                 )
                 activations = self.activations.list_by_triage_id(
                     connection, triage_id
                 )
-            return _visible_messages(histories, activations), None
+            return (
+                _visible_messages(histories, activations),
+                None,
+                _activation_has_reply(histories, activation),
+            )
         except (sqlite3.Error, ValueError) as error:
-            return (), str(error)
+            return (), str(error), False
 
 
 def _human_actions(
@@ -248,10 +271,35 @@ def _visible_messages(
     activations: tuple[OwnerActivation, ...],
 ) -> tuple[VisibleMessage, ...]:
     activation_by_message = {item.message_id: item for item in activations}
+    tool_index_by_call_id: dict[str, int] = {}
     visible: list[VisibleMessage] = []
+    current_activation: OwnerActivation | None = None
     for history in histories:
         activation = activation_by_message.get(history.message_id)
+        if activation is not None:
+            current_activation = activation
         for index, message in enumerate(history.message):
+            tool_calls = _tool_calls(message)
+            for call_id, tool_name, arguments in tool_calls:
+                tool_index_by_call_id[call_id] = len(visible)
+                visible.append(
+                    VisibleMessage(
+                        f"{history.message_id}:{index}:tool:{call_id}",
+                        "tool",
+                        tool_name,
+                        ToolActivity(
+                            name=tool_name,
+                            status=(
+                                "running"
+                                if current_activation is not None
+                                and current_activation.status
+                                is OwnerActivationStatus.RUNNING
+                                else "failed"
+                            ),
+                            input_preview=_tool_preview(arguments),
+                        ),
+                    )
+                )
             response_text = _assistant_response_text(message)
             if response_text:
                 visible.append(
@@ -259,6 +307,50 @@ def _visible_messages(
                         f"{history.message_id}:{index}", "assistant", response_text
                     )
                 )
+                continue
+            if tool_calls:
+                continue
+            if message.get("type") == "function_call_output":
+                output_call_id = message.get("call_id")
+                output = _decoded_tool_output(message.get("output"))
+                output_preview = _tool_preview(output)
+                status: ToolActivityStatus = (
+                    "failed" if _tool_output_failed(output) else "completed"
+                )
+                tool_index = (
+                    tool_index_by_call_id.get(output_call_id)
+                    if isinstance(output_call_id, str)
+                    else None
+                )
+                if tool_index is not None:
+                    current = visible[tool_index]
+                    activity = current.tool_activity
+                    if activity is not None:
+                        visible[tool_index] = VisibleMessage(
+                            message_id=current.message_id,
+                            role="tool",
+                            content=current.content,
+                            tool_activity=ToolActivity(
+                                name=activity.name,
+                                status=status,
+                                input_preview=activity.input_preview,
+                                output_preview=output_preview,
+                            ),
+                        )
+                else:
+                    visible.append(
+                        VisibleMessage(
+                            f"{history.message_id}:{index}:tool:{output_call_id}",
+                            "tool",
+                            "tool",
+                            ToolActivity(
+                                name="tool",
+                                status=status,
+                                input_preview="{}",
+                                output_preview=output_preview,
+                            ),
+                        )
+                    )
                 continue
             role = message.get("role")
             content = message.get("content")
@@ -290,6 +382,152 @@ def _visible_messages(
                 )
             )
     return tuple(visible)
+
+
+def _tool_calls(message: Message) -> tuple[tuple[str, str, object], ...]:
+    candidates: list[object]
+    if message.get("type") == "function_call":
+        candidates = [message]
+    elif message.get("object") == "response" and isinstance(
+        message.get("output"), list
+    ):
+        candidates = message["output"]
+    else:
+        return ()
+    calls: list[tuple[str, str, object]] = []
+    for item in candidates:
+        if not isinstance(item, dict) or item.get("type") != "function_call":
+            continue
+        call_id = item.get("call_id")
+        tool_name = item.get("name")
+        if (
+            isinstance(call_id, str)
+            and call_id.strip()
+            and isinstance(tool_name, str)
+            and tool_name.strip()
+        ):
+            calls.append(
+                (call_id, tool_name, _decoded_tool_arguments(item.get("arguments")))
+            )
+    return tuple(calls)
+
+
+_TOOL_PREVIEW_LIMIT = 1_200
+_SENSITIVE_KEY = re.compile(
+    r"(?:api[_-]?key|authorization|cookie|credential|password|private[_-]?key|secret|token)",
+    re.IGNORECASE,
+)
+_SENSITIVE_TEXT = re.compile(
+    r"(api[_-]?key|authorization|cookie|credential|password|private[_-]?key|secret|token)"
+    r"(\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+    re.IGNORECASE,
+)
+_BEARER_TOKEN = re.compile(r"\bBearer\s+[^\s,;]+", re.IGNORECASE)
+_URL_CREDENTIALS = re.compile(
+    r"(\b[a-z][a-z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@",
+    re.IGNORECASE,
+)
+_KNOWN_SECRET = re.compile(
+    r"\b(?:"
+    r"sk-[A-Za-z0-9_-]{8,}"
+    r"|gh[pousr]_[A-Za-z0-9_]{20,}"
+    r"|glpat-[A-Za-z0-9_-]{10,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}"
+    r"|AIza[A-Za-z0-9_-]{20,}"
+    r"|AKIA[A-Z0-9]{16}"
+    r"|[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+    r")\b"
+)
+_PRIVATE_KEY = re.compile(
+    r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----",
+    re.DOTALL,
+)
+
+
+def _decoded_tool_arguments(arguments: object) -> object:
+    if not isinstance(arguments, str):
+        return arguments if arguments is not None else {}
+    try:
+        return json.loads(arguments)
+    except json.JSONDecodeError:
+        return arguments
+
+
+def _decoded_tool_output(output: object) -> object:
+    if not isinstance(output, str):
+        return output if output is not None else {}
+    try:
+        return json.loads(output)
+    except json.JSONDecodeError:
+        return output
+
+
+def _tool_output_failed(output: object) -> bool:
+    if not isinstance(output, dict):
+        return False
+    if output.get("ok") is False:
+        return True
+    returncode = output.get("returncode")
+    if isinstance(returncode, int) and not isinstance(returncode, bool):
+        return returncode != 0
+    return bool(output.get("error_type")) or (
+        bool(output.get("error")) and output.get("ok") is not True
+    )
+
+
+def _tool_preview(value: object) -> str:
+    sanitized = _sanitize_tool_value(value)
+    if isinstance(sanitized, str):
+        rendered = sanitized
+    else:
+        rendered = json.dumps(sanitized, ensure_ascii=False, indent=2, sort_keys=True)
+    if len(rendered) <= _TOOL_PREVIEW_LIMIT:
+        return rendered
+    return f"{rendered[: _TOOL_PREVIEW_LIMIT - 1]}…"
+
+
+def _sanitize_tool_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                "[redacted]"
+                if _SENSITIVE_KEY.search(str(key))
+                else _sanitize_tool_value(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_tool_value(item) for item in value]
+    if isinstance(value, str):
+        redacted = _PRIVATE_KEY.sub("[redacted private key]", value)
+        redacted = _URL_CREDENTIALS.sub(r"\1[redacted]@", redacted)
+        redacted = _BEARER_TOKEN.sub("Bearer [redacted]", redacted)
+        redacted = _SENSITIVE_TEXT.sub(r"\1\2[redacted]", redacted)
+        return _KNOWN_SECRET.sub("[redacted]", redacted)
+    return value
+
+
+def _activation_has_reply(
+    histories: tuple[MessageHistory, ...],
+    activation: OwnerActivation | None,
+) -> bool:
+    if activation is None:
+        return False
+    inside_activation = False
+    for history in histories:
+        if history.message_id == activation.message_id:
+            inside_activation = True
+        if not inside_activation:
+            continue
+        for message in history.message:
+            content = message.get("content")
+            if (
+                message.get("role") == "assistant"
+                and isinstance(content, str)
+                and content.strip()
+            ) or _assistant_response_text(message):
+                return True
+    return False
 
 
 def _assistant_response_text(message: Message) -> str:

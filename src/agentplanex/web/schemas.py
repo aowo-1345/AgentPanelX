@@ -92,16 +92,25 @@ class RuntimeData(Schema):
     status: str
     pending_action: str | None
     activation_status: str | None
+    activation_has_reply: bool
     current_milestone_key: str | None
     current_stage_key: str | None
     blocked_reason: str | None
     blocked_capability: str | None
 
 
+class ToolActivityData(Schema):
+    name: str
+    status: Literal["running", "completed", "failed"]
+    input_preview: str
+    output_preview: str | None
+
+
 class ConversationMessage(Schema):
     message_id: str
-    role: Literal["user", "assistant", "status"]
+    role: Literal["user", "assistant", "status", "tool"]
     content: str
+    tool_activity: ToolActivityData | None
 
 
 class PlanDocumentData(Schema):
@@ -230,6 +239,7 @@ def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
                         if control.owner_activation is not None
                         else None
                     ),
+                    activation_has_reply=control.activation_has_reply,
                     current_milestone_key=context.current_milestone_key,
                     current_stage_key=context.current_stage_key,
                     blocked_reason=context.blocked_reason,
@@ -247,6 +257,16 @@ def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
                         message_id=message.message_id,
                         role=message.role,
                         content=message.content,
+                        tool_activity=(
+                            ToolActivityData(
+                                name=message.tool_activity.name,
+                                status=message.tool_activity.status,
+                                input_preview=message.tool_activity.input_preview,
+                                output_preview=message.tool_activity.output_preview,
+                            )
+                            if message.tool_activity is not None
+                            else None
+                        ),
                     )
                     for message in control.conversation
                 ]

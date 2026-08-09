@@ -1,4 +1,14 @@
-import { AlertCircle, Bot, Loader2, Send, User } from 'lucide-react';
+import {
+  AlertCircle,
+  Bot,
+  CheckCircle2,
+  ChevronRight,
+  CircleX,
+  Loader2,
+  Send,
+  TerminalSquare,
+  User,
+} from 'lucide-react';
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import type {
   ConversationMessage,
@@ -17,6 +27,7 @@ interface ChatAreaProps {
   conversation: Panel<ConversationMessage[]>;
   actions: FeatureAction[];
   activationStatus: string | null;
+  activationHasReply: boolean;
   pendingAction: FeatureAction | null;
   sending: boolean;
   notice: CommandNotice | null;
@@ -25,6 +36,10 @@ interface ChatAreaProps {
 }
 
 function MessageBubble({ message }: { message: ConversationMessage }) {
+  if (message.role === 'tool' && message.tool_activity) {
+    return <ToolActivityRow activity={message.tool_activity} />;
+  }
+
   if (message.role === 'status') {
     return (
       <div className="flex justify-center">
@@ -66,10 +81,73 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
   );
 }
 
+function toolLabel(name: string) {
+  return name
+    .split('_')
+    .filter(Boolean)
+    .map((part) => `${part[0]?.toUpperCase() ?? ''}${part.slice(1)}`)
+    .join(' ');
+}
+
+function ToolActivityRow({
+  activity,
+}: {
+  activity: NonNullable<ConversationMessage['tool_activity']>;
+}) {
+  const running = activity.status === 'running';
+  const failed = activity.status === 'failed';
+  const tone = failed ? 'text-red-300' : running ? 'text-amber-300' : 'text-emerald-300';
+  const label = activity.status[0].toUpperCase() + activity.status.slice(1);
+
+  return (
+    <div className="flex justify-start pl-8">
+      <details className="group w-full max-w-[78%] rounded-lg border border-border bg-card/70 text-xs">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-muted-foreground marker:hidden">
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
+          <TerminalSquare className="h-3.5 w-3.5 shrink-0" />
+          <span className="min-w-0 flex-1 truncate font-medium text-foreground">
+            {toolLabel(activity.name)}
+          </span>
+          <span className={`flex shrink-0 items-center gap-1.5 ${tone}`}>
+            {running ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : failed ? (
+              <CircleX className="h-3.5 w-3.5" />
+            ) : (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            )}
+            {label}
+          </span>
+        </summary>
+        <div className="space-y-3 border-t border-border px-3 py-3">
+          <ToolPreview label="Input" value={activity.input_preview} />
+          {activity.output_preview !== null && (
+            <ToolPreview label="Output" value={activity.output_preview} />
+          )}
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function ToolPreview({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background/70 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+        {value}
+      </pre>
+    </div>
+  );
+}
+
 export function ChatArea({
   conversation,
   actions,
   activationStatus,
+  activationHasReply,
   pendingAction,
   sending,
   notice,
@@ -78,10 +156,13 @@ export function ChatArea({
 }: ChatAreaProps) {
   const [text, setText] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const hasRunningTool = conversation.data?.some(
+    (message) => message.role === 'tool' && message.tool_activity?.status === 'running',
+  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversation.data, notice]);
+  }, [activationStatus, conversation.data, notice]);
 
   async function send() {
     const content = text.trim();
@@ -130,6 +211,15 @@ export function ChatArea({
           conversation.data?.map((message) => (
             <MessageBubble key={message.message_id} message={message} />
           ))
+        )}
+
+        {activationStatus === 'RUNNING' && !hasRunningTool && !activationHasReply && (
+          <div className="flex justify-center">
+            <span className="flex max-w-[85%] items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-[11px] text-emerald-300">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Project Owner Thinking…
+            </span>
+          </div>
         )}
 
         <ActionCard actions={actions} pendingAction={pendingAction} onAction={onAction} />

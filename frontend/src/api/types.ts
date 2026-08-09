@@ -73,16 +73,27 @@ export interface RuntimeData {
   status: FeatureStatus;
   pending_action: string | null;
   activation_status: string | null;
+  activation_has_reply: boolean;
   current_milestone_key: string | null;
   current_stage_key: string | null;
   blocked_reason: string | null;
   blocked_capability: string | null;
 }
 
+export type ToolActivityStatus = 'running' | 'completed' | 'failed';
+
+export interface ToolActivity {
+  name: string;
+  status: ToolActivityStatus;
+  input_preview: string;
+  output_preview: string | null;
+}
+
 export interface ConversationMessage {
   message_id: string;
-  role: 'user' | 'assistant' | 'status';
+  role: 'user' | 'assistant' | 'status' | 'tool';
   content: string;
+  tool_activity: ToolActivity | null;
 }
 
 export interface PlanDocument {

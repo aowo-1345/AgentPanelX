@@ -1,7 +1,9 @@
 """Critical Project Owner context-memory journeys and integrity boundaries."""
 
 import json
+import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from threading import Lock
@@ -134,6 +136,198 @@ def _settings(capacity_tokens: int = 2_500) -> Settings:
             )
         }
     )
+
+
+def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    settings = _settings(capacity_tokens=128_000)
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=settings,
+        approval_mode="yolo",
+        responses_transport=_OwnerTransport(settings),
+    )
+
+    activation = runtime.submit_message("Inspect the project before replying")
+    release = project_path / "release-tool"
+    command = "while [ ! -f release-tool ]; do sleep 0.02; done; printf completed"
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            runtime.drive_activation_tool,
+            {
+                "tool": "bash",
+                "call_id": "running-tool",
+                "arguments": {
+                    "command": command,
+                    "api_key": "input-secret",
+                    "notes": "x" * 2_000,
+                },
+            },
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while True:
+                conversation = runtime.project_workspace_view(
+                    activation.triage_id
+                ).conversation
+                running = next(
+                    (message for message in conversation if message.role == "tool"),
+                    None,
+                )
+                if running is not None:
+                    break
+                if time.monotonic() >= deadline:
+                    pytest.fail("Running tool activity did not become visible")
+                time.sleep(0.02)
+
+            assert running.tool_activity is not None
+            assert running.tool_activity.name == "bash"
+            assert running.tool_activity.status == "running"
+            assert "input-secret" not in running.tool_activity.input_preview
+            assert "[redacted]" in running.tool_activity.input_preview
+            assert len(running.tool_activity.input_preview) <= 1_200
+            assert running.tool_activity.output_preview is None
+        finally:
+            release.touch()
+        future.result(timeout=5)
+
+    completed = next(
+        message
+        for message in runtime.project_workspace_view(activation.triage_id).conversation
+        if message.role == "tool"
+    )
+    assert completed.message_id == running.message_id
+    assert completed.tool_activity is not None
+    assert completed.tool_activity.status == "completed"
+    assert "completed" in (completed.tool_activity.output_preview or "")
+
+    runtime.drive_activation_tool(
+        {
+            "tool": "bash",
+            "call_id": "failed-tool",
+            "arguments": {
+                "command": (
+                    "printf '%s\\n' 'OPENAI_API_KEY=redacted-output-token-123456' "
+                    "'https://user:pass@example.com' "
+                    "'ghp_abcdefghijklmnopqrstuvwxyz123456' "
+                    "'glpat-abcdefghijklmnopqrst' "
+                    "'slack-redaction-fixture' "
+                    "'AIzaabcdefghijklmnopqrstuvwxyz123456' "
+                    "'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+                    "signaturevalue123456' >&2; exit 7"
+                ),
+            },
+        }
+    )
+    failed = [
+        message
+        for message in runtime.project_workspace_view(activation.triage_id).conversation
+        if message.role == "tool"
+    ][-1]
+    assert failed.tool_activity is not None
+    assert failed.tool_activity.status == "failed"
+    assert "output-secret" not in failed.tool_activity.input_preview
+    assert "output-secret" not in (failed.tool_activity.output_preview or "")
+    for secret_marker in ("user:pass", "ghp_", "glpat-", "xoxb-", "AIza", "eyJ"):
+        assert secret_marker not in failed.tool_activity.input_preview
+        assert secret_marker not in (failed.tool_activity.output_preview or "")
+    assert "[redacted]" in (failed.tool_activity.output_preview or "")
+
+
+def test_workspace_conversation_marks_an_interrupted_tool_as_failed(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    settings = _settings(capacity_tokens=128_000)
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=settings,
+        approval_mode="yolo",
+        responses_transport=_OwnerTransport(settings),
+    )
+
+    activation = runtime.submit_message("Inspect the project before replying")
+    release = project_path / "release-interrupted-tool"
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            runtime.drive_activation_tool,
+            {
+                "tool": "bash",
+                "call_id": "interrupted-tool",
+                "arguments": {
+                    "command": (
+                        "while [ ! -f release-interrupted-tool ]; "
+                        "do sleep 0.02; done"
+                    )
+                },
+            },
+        )
+        try:
+            deadline = time.monotonic() + 5
+            while True:
+                activity = next(
+                    (
+                        message.tool_activity
+                        for message in runtime.project_workspace_view(
+                            activation.triage_id
+                        ).conversation
+                        if message.role == "tool"
+                    ),
+                    None,
+                )
+                if activity is not None:
+                    break
+                if time.monotonic() >= deadline:
+                    pytest.fail("Interrupted tool activity did not become visible")
+                time.sleep(0.02)
+
+            assert activity.status == "running"
+            interrupted = runtime.fail_interrupted_activation()
+            assert interrupted is not None
+            assert interrupted.status.value == "FAILED"
+            activity = next(
+                message.tool_activity
+                for message in runtime.project_workspace_view(
+                    activation.triage_id
+                ).conversation
+                if message.role == "tool"
+            )
+            assert activity is not None
+            assert activity.status == "failed"
+            assert activity.output_preview is None
+        finally:
+            release.touch()
+        assert isinstance(future.exception(timeout=5), LookupError)
+
+
+def test_workspace_conversation_projects_model_tool_as_one_completed_activity(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    settings = _settings(capacity_tokens=128_000)
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=settings,
+        approval_mode="yolo",
+        responses_transport=_OwnerTransport(settings, first_owner_tool=True),
+    )
+
+    activation = runtime.submit_message("Inspect the project before replying")
+    driven = runtime.drive_next_activation()
+
+    assert driven.exit is not None
+    assert driven.exit.content == "owner-finished"
+    conversation = runtime.project_workspace_view(activation.triage_id).conversation
+    assert [message.role for message in conversation] == ["user", "tool", "assistant"]
+    activity = conversation[1].tool_activity
+    assert activity is not None
+    assert activity.name == "bash"
+    assert activity.status == "completed"
+    assert "for i in" in activity.input_preview
+    assert "observation" in (activity.output_preview or "")
+    assert conversation[2].content == "owner-finished"
 
 
 def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(

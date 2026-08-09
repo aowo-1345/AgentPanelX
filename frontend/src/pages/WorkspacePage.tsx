@@ -247,6 +247,7 @@ export function WorkspacePage() {
                 conversation={workspace.conversation}
                 actions={workspace.available_actions}
                 activationStatus={activationStatus}
+                activationHasReply={workspace.runtime.data?.activation_has_reply ?? false}
                 pendingAction={pendingAction}
                 sending={sending}
                 notice={notice}
