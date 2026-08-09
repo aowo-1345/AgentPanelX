@@ -281,15 +281,14 @@ def _visible_messages(
                             _plan_decision_text(content),
                         )
                     )
-    visible.extend(
-        VisibleMessage(
-            f"{activation.activation_id}:failure",
-            "status",
-            f"Project Owner failed: {activation.failure}",
-        )
-        for activation in activations
-        if activation.failure is not None
-    )
+        if activation is not None and activation.failure is not None:
+            visible.append(
+                VisibleMessage(
+                    f"{activation.activation_id}:failure",
+                    "status",
+                    f"Project Owner failed: {activation.failure}",
+                )
+            )
     return tuple(visible)
 
 
