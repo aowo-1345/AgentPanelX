@@ -146,6 +146,20 @@ class WorkspaceRegistry:
             ).fetchall()
         return tuple(_feature_from_row(row) for row in rows)
 
+    def delete_feature(self, project_id: str, triage_id: str) -> None:
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                """
+                DELETE FROM feature_binding
+                WHERE project_id = ? AND triage_id = ?
+                """,
+                (project_id, triage_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(
+                    f"Feature not found in managed Project: {project_id}/{triage_id}"
+                )
+
 
 def _project_from_row(row: sqlite3.Row) -> ManagedProject:
     return ManagedProject(

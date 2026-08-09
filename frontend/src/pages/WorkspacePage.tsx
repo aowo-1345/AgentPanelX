@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, readableError } from '@/api/client';
@@ -51,6 +51,9 @@ export function WorkspacePage() {
   const [sending, setSending] = useState(false);
   const [pendingAction, setPendingAction] = useState<FeatureAction | null>(null);
   const [notice, setNotice] = useState<CommandNotice | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   const applyWorkspace = useCallback((next: Workspace) => {
     setWorkspace((current) => mergeWorkspace(current, next));
@@ -154,6 +157,20 @@ export function WorkspacePage() {
     }
   }
 
+  async function deleteFeature() {
+    if (!projectId || !triageId || deleting) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await api.deleteFeature(projectId, triageId);
+      navigate('/', { replace: true });
+    } catch (caught) {
+      setDeleteError(readableError(caught));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const isRefreshing = loadState === 'refreshing';
   const initialLoading = loadState === 'loading' && workspace === null;
 
@@ -183,14 +200,28 @@ export function WorkspacePage() {
           ) : null}
         </div>
 
-        <button
-          className="btn btn-ghost h-8 w-8 shrink-0 p-0"
-          onClick={() => void load(true)}
-          disabled={initialLoading || isRefreshing}
-          aria-label="Refresh workspace"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-        </button>
+        <div className="flex items-center gap-1">
+          {workspace && (
+            <button
+              className="btn btn-ghost h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-red-300"
+              onClick={() => {
+                setDeleteError('');
+                setDeleteOpen(true);
+              }}
+              aria-label="Delete feature"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            className="btn btn-ghost h-8 w-8 shrink-0 p-0"
+            onClick={() => void load(true)}
+            disabled={initialLoading || isRefreshing}
+            aria-label="Refresh workspace"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </header>
 
       {initialLoading ? (
@@ -233,6 +264,59 @@ export function WorkspacePage() {
           />
         </div>
       ) : null}
+
+      {deleteOpen && workspace && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-feature-title"
+        >
+          <div className="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="rounded-lg bg-red-500/10 p-2 text-red-300">
+                <Trash2 className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 id="delete-feature-title" className="text-sm font-semibold">
+                  Delete “{workspace.feature.name}”?
+                </h2>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                  AgentPlaneX will remove this Feature from the Board and delete its managed
+                  worktree and local Runtime history. Its Git branch and commits will be preserved.
+                  Dirty or active worktrees are refused.
+                </p>
+                <div className="mt-3 space-y-1 rounded-lg border border-border bg-background/60 p-3 font-mono text-[10px] text-muted-foreground">
+                  <div className="break-all">{workspace.feature.worktree_path}</div>
+                  {workspace.feature.branch && <div className="break-all">{workspace.feature.branch}</div>}
+                </div>
+                {deleteError && (
+                  <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                    {deleteError}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                className="btn btn-secondary h-9"
+                onClick={() => setDeleteOpen(false)}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn h-9 border border-red-500/30 bg-red-500/15 text-red-200 hover:bg-red-500/25"
+                onClick={() => void deleteFeature()}
+                disabled={deleting}
+              >
+                {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                {deleting ? 'Deleting…' : 'Delete feature'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

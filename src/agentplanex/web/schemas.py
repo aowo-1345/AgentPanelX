@@ -61,6 +61,10 @@ class BoardFeatureResponse(Schema):
     current_stage_key: str | None
 
 
+class WorkspaceFeatureResponse(BoardFeatureResponse):
+    worktree_path: str
+
+
 class MessageRequest(Schema):
     content: str = Field(min_length=1)
 
@@ -140,7 +144,7 @@ class GitData(Schema):
 
 class WorkspaceResponse(Schema):
     project: ProjectResponse
-    feature: BoardFeatureResponse
+    feature: WorkspaceFeatureResponse
     available_actions: list[FeatureAction]
     runtime: Panel[RuntimeData]
     conversation: Panel[list[ConversationMessage]]
@@ -197,7 +201,7 @@ def activation_response(activation: OwnerActivation) -> ActivationResponse:
 def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
     control = workspace.control
     context = control.context
-    feature = BoardFeatureResponse(
+    feature = WorkspaceFeatureResponse(
         project_id=workspace.project.project_id,
         project_name=workspace.project.name,
         triage_id=workspace.binding.triage_id,
@@ -207,6 +211,7 @@ def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
         pending_action=context.pending_action,
         current_milestone_key=context.current_milestone_key,
         current_stage_key=context.current_stage_key,
+        worktree_path=str(workspace.binding.worktree_path),
     )
     snapshot = control.snapshot
     return WorkspaceResponse(

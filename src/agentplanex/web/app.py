@@ -103,6 +103,13 @@ def _install_routes(
             workspace.create_feature(project_id=project_id, name=request.name)
         )
 
+    @app.delete(
+        "/api/projects/{project_id}/features/{triage_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    def delete_feature(project_id: str, triage_id: str) -> None:
+        workspace.delete_feature(project_id=project_id, triage_id=triage_id)
+
     @app.get(
         "/api/projects/{project_id}/features/{triage_id}/workspace",
         response_model=WorkspaceResponse,

@@ -1,6 +1,8 @@
 """Git operations used by the user-level Project and Feature workspace."""
 
+import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -73,6 +75,56 @@ class WorkspaceGit:
         if not branch:
             raise WorkspaceGitError(f"Feature worktree is detached: {worktree_path}")
         return branch
+
+    def remove_feature_worktree(
+        self,
+        repository_path: Path,
+        *,
+        worktree_path: Path,
+    ) -> None:
+        """Remove one registered linked worktree without forcing dirty data away."""
+        target = worktree_path.resolve()
+        registered = {
+            Path(line.removeprefix("worktree ")).resolve()
+            for line in self._run(
+                repository_path,
+                "worktree",
+                "list",
+                "--porcelain",
+                "-z",
+            ).split("\0")
+            if line.startswith("worktree ")
+        }
+        if target not in registered:
+            if target.exists():
+                raise WorkspaceGitError(
+                    "Refusing to remove a directory that is not a registered Git "
+                    f"worktree: {target}"
+                )
+            return
+
+        runtime_path = target / ".agentplanex"
+        quarantine: Path | None = None
+        runtime_backup: Path | None = None
+        if runtime_path.exists():
+            quarantine = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{target.name}-runtime-delete-",
+                    dir=target.parent,
+                )
+            )
+            runtime_backup = quarantine / ".agentplanex"
+            runtime_path.rename(runtime_backup)
+        try:
+            self._run(repository_path, "worktree", "remove", str(target))
+        except Exception:
+            if runtime_backup is not None and runtime_backup.exists():
+                runtime_backup.rename(runtime_path)
+            if quarantine is not None:
+                quarantine.rmdir()
+            raise
+        if quarantine is not None:
+            shutil.rmtree(quarantine)
 
     @staticmethod
     def _run(repository_path: Path, *arguments: str) -> str:

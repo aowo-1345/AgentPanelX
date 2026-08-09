@@ -89,6 +89,11 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
 
+  deleteFeature: (projectId: string, triageId: string) =>
+    request<void>(featurePath(projectId, triageId), {
+      method: 'DELETE',
+    }),
+
   getWorkspace: (projectId: string, triageId: string, signal?: AbortSignal) =>
     request<Workspace>(`${featurePath(projectId, triageId)}/workspace`, { signal }),
 

@@ -171,7 +171,8 @@ def _request(
     )
     try:
         with urlopen(request, timeout=2) as response:
-            return response.status, json.load(response)
+            body = response.read()
+            return response.status, json.loads(body) if body else None
     except HTTPError as error:
         return error.code, json.load(error)
 
@@ -252,12 +253,41 @@ def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
             assert isinstance(feature, dict)
             triage_id = feature["triage_id"]
             feature_path = Path(feature["worktree_path"])
+
+            status, disposable = _request(
+                base_url,
+                "POST",
+                f"/api/projects/{project_id}/features",
+                {"name": "Disposable Feature"},
+            )
+            assert status == 201
+            assert isinstance(disposable, dict)
+            disposable_path = Path(disposable["worktree_path"])
+            disposable_branch = disposable["branch"]
+            assert _request(
+                base_url,
+                "DELETE",
+                f"/api/projects/{project_id}/features/{disposable['triage_id']}",
+            ) == (204, None)
+            assert not disposable_path.exists()
+            assert _git(repository_path, "rev-parse", "--verify", disposable_branch)
+
             for document_name, content in (
                 ("architecture.md", "# Architecture\n\nHTTP stays an adapter.\n"),
                 ("requirements.md", "# Requirements\n\nExpose the workspace.\n"),
                 ("roadmap.md", "# Roadmap\n\nShip the backend.\n"),
             ):
                 (feature_path / document_name).write_text(content, encoding="utf-8")
+
+            status, refused = _request(
+                base_url,
+                "DELETE",
+                f"/api/projects/{project_id}/features/{triage_id}",
+            )
+            assert status == 400
+            assert isinstance(refused, dict)
+            assert "worktree remove" in refused["detail"]
+            assert feature_path.exists()
 
             status, board = _request(base_url, "GET", "/api/features")
             assert status == 200
@@ -349,6 +379,14 @@ def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
             assert interrupted_workspace["runtime"]["data"]["activation_status"] == (
                 "RUNNING"
             )
+            status, active_delete = _request(
+                base_url,
+                "DELETE",
+                f"/api/projects/{project_id}/features/{triage_id}",
+            )
+            assert status == 400
+            assert isinstance(active_delete, dict)
+            assert "being processed" in active_delete["detail"]
 
             status, pending_feature = _request(
                 base_url,

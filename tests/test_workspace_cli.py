@@ -14,6 +14,8 @@ import pytest
 import yaml
 
 from agentplanex.bootstrap import create_workspace
+from agentplanex.domains import FeatureBinding
+from agentplanex.infrastructure.workspace_git import WorkspaceGitError
 from agentplanex.project_owner_agent.models.jbb import JBBModel
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
@@ -139,6 +141,59 @@ def _database_schema(database_path: Path) -> dict[str, tuple[str, ...]]:
         }
     finally:
         connection.close()
+
+
+def test_workspace_deletes_only_clean_managed_feature_worktrees() -> None:
+    repository_path, config_path = _prepare_case("workspace-feature-deletion")
+    workspace = create_workspace(load_settings(config_path))
+    project = workspace.register_project(
+        name="Deletion Project",
+        repository_path=repository_path,
+        main_branch="main",
+    )
+
+    removable = workspace.create_feature(project_id=project.project_id, name="Remove me")
+    removable_path = removable.worktree_path
+    removable_branch = removable.branch
+    assert (removable_path / ".agentplanex" / "agentplanex.sqlite3").is_file()
+
+    workspace.delete_feature(
+        project_id=project.project_id,
+        triage_id=removable.triage_id,
+    )
+
+    assert not removable_path.exists()
+    assert workspace.list_features(project.project_id) == ()
+    assert _git(repository_path, "rev-parse", "--verify", removable_branch)
+
+    dirty = workspace.create_feature(project_id=project.project_id, name="Keep me")
+    dirty_file = dirty.worktree_path / "unfinished.txt"
+    dirty_file.write_text("do not delete\n", encoding="utf-8")
+
+    with pytest.raises(WorkspaceGitError, match="worktree remove"):
+        workspace.delete_feature(
+            project_id=project.project_id,
+            triage_id=dirty.triage_id,
+        )
+
+    assert dirty_file.read_text(encoding="utf-8") == "do not delete\n"
+    assert (dirty.worktree_path / ".agentplanex" / "agentplanex.sqlite3").is_file()
+    assert workspace.list_features(project.project_id) == (dirty,)
+
+    workspace.registry.insert_feature(
+        FeatureBinding(
+            triage_id="outside-data-home",
+            project_id=project.project_id,
+            name="Outside",
+            worktree_path=repository_path,
+        )
+    )
+    with pytest.raises(ValueError, match="outside its configured Workspace"):
+        workspace.delete_feature(
+            project_id=project.project_id,
+            triage_id="outside-data-home",
+        )
+    assert (repository_path / ".git").exists()
 
 
 def test_installed_cli_runs_two_isolated_features_end_to_end(

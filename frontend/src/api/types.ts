@@ -54,6 +54,10 @@ export interface BoardFeature {
   current_stage_key: string | null;
 }
 
+export interface WorkspaceFeature extends BoardFeature {
+  worktree_path: string;
+}
+
 export interface ActivationReceipt {
   activation_id: string;
   status: string;
@@ -121,7 +125,7 @@ export interface GitData {
 
 export interface Workspace {
   project: Project;
-  feature: BoardFeature;
+  feature: WorkspaceFeature;
   available_actions: FeatureAction[];
   runtime: Panel<RuntimeData>;
   conversation: Panel<ConversationMessage[]>;
