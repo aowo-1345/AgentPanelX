@@ -43,6 +43,23 @@ class ProjectOwnerContextQuery:
                 summary_id=summary_id,
             )
 
+    def latest_summary_id_through(self, through_message_id: str) -> str | None:
+        """Resolve an Attribution checkpoint without changing raw restore defaults."""
+
+        checkpoint_id = through_message_id.strip()
+        if not checkpoint_id:
+            raise ValueError("through_message_id must not be empty")
+        with self.database.read_only_connection() as connection:
+            through = self.messages.get(connection, checkpoint_id)
+            if through is None:
+                raise LookupError(f"Message checkpoint not found: {checkpoint_id}")
+            summary = self.summaries.latest_through_message(
+                connection,
+                through.project_owner_session_id,
+                through.sequence,
+            )
+        return summary.summary_id if summary is not None else None
+
     def restore_in_connection(
         self,
         connection: sqlite3.Connection,
@@ -93,14 +110,8 @@ class ProjectOwnerContextQuery:
             {"role": "system", "content": owner.system_prompt}
         ]
         if summary is not None:
-            restored_messages.append(
-                {
-                    "role": "user",
-                    "content": render_summary_context(
-                        summary,
-                        self.summary_context_header,
-                    ),
-                }
+            restored_messages.extend(
+                render_summary_messages(summary, self.summary_context_header)
             )
         restored_messages.extend(
             dict(message)
@@ -114,7 +125,12 @@ class ProjectOwnerContextQuery:
             through_message_id=through.message_id,
             through_sequence=through.sequence,
             summary_id=summary.summary_id if summary is not None else None,
-            summary_content=summary.summary_content if summary is not None else None,
+            intent_summary_content=(
+                summary.intent_summary_content if summary is not None else None
+            ),
+            trajectory_summary_content=(
+                summary.trajectory_summary_content if summary is not None else None
+            ),
             covered_through_message_id=(
                 summary.covered_through_message_id if summary is not None else None
             ),
@@ -146,7 +162,7 @@ class ProjectOwnerContextQuery:
         connection: sqlite3.Connection,
         summary: SummaryHistory | None,
     ) -> int | None:
-        if summary is None or summary.covered_through_message_id is None:
+        if summary is None:
             return None
         watermark = self.messages.get(
             connection,
@@ -160,7 +176,33 @@ class ProjectOwnerContextQuery:
         return watermark.sequence
 
 
-def render_summary_context(summary: SummaryHistory, header: str) -> str:
-    """Render an immutable Summary as non-authoritative model context."""
+def render_summary_messages(
+    summary: SummaryHistory,
+    header: str,
+) -> tuple[Message, Message]:
+    """Render one immutable Summary as two model-visible context messages."""
 
-    return f"{header.strip()}\n\n{summary.summary_content}"
+    return (
+        {"role": "developer", "content": header.strip()},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": (
+                        "<intent-summary>\n"
+                        f"{summary.intent_summary_content}\n"
+                        "</intent-summary>"
+                    ),
+                },
+                {
+                    "type": "input_text",
+                    "text": (
+                        "<trajectory-summary>\n"
+                        f"{summary.trajectory_summary_content}\n"
+                        "</trajectory-summary>"
+                    ),
+                },
+            ],
+        },
+    )

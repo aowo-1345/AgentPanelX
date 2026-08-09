@@ -23,12 +23,22 @@ class ModelSettings(_SettingsModel):
     timeout_seconds: float = Field(default=60.0, gt=0)
 
 
+class ContextMemorySettings(_SettingsModel):
+    """Project Owner query-time context compaction limits."""
+
+    capacity_tokens: int = Field(default=128_000, gt=0)
+    compaction_threshold: float = Field(default=0.8, gt=0, le=1)
+
+
 class ProjectOwnerAgentSettings(_SettingsModel):
     """Long-lived Project Owner control-loop settings."""
 
     model: ModelSettings
     step_limit: int = Field(default=20, gt=0)
     max_consecutive_format_errors: int = Field(default=3, gt=0)
+    context_memory: ContextMemorySettings = Field(
+        default_factory=ContextMemorySettings
+    )
 
 
 class BashSettings(_SettingsModel):
@@ -95,6 +105,9 @@ class PromptSettings(_SettingsModel):
 
     observation_instruction: str = Field(min_length=1)
     summary_context_header: str = Field(min_length=1)
+    trajectory_summary: str = Field(min_length=1)
+    initial_intent_summary: str = Field(min_length=1)
+    update_intent_summary: str = Field(min_length=1)
     project_owner: AgentPromptSettings
     historical_owner: AgentPromptSettings
     planner: TaskAgentPromptSettings
@@ -103,7 +116,13 @@ class PromptSettings(_SettingsModel):
     milestone_hard_gate: TaskAgentPromptSettings
     stage_executor: TaskAgentPromptSettings
 
-    @field_validator("observation_instruction", "summary_context_header")
+    @field_validator(
+        "observation_instruction",
+        "summary_context_header",
+        "trajectory_summary",
+        "initial_intent_summary",
+        "update_intent_summary",
+    )
     @classmethod
     def _shared_text_not_blank(cls, value: str) -> str:
         if not value.strip():

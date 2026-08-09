@@ -53,6 +53,12 @@ BLOCKED Event
 
 ### 3. 恢复 Historical Project Owner
 
+先通过 Runtime 的共享只读 `ProjectOwnerContextQuery.latest_summary_id_through()`
+解析不晚于 BLOCKED `message_id` 的最近 Summary watermark。不要直接查询
+`summary_history` SQL，也不要读取 `project_owner_agent.summary_id` 猜测历史版本。
+如果查询返回 Summary ID，把它作为下面的显式选择；如果返回 `None`，省略
+`--summary-id` 并恢复完整 raw history。
+
 先检查将要恢复的 Owner 上下文：
 
 ```bash

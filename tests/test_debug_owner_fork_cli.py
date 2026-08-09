@@ -89,8 +89,9 @@ def historical_project(
         summary = SummaryHistory(
             project_owner_session_id=owner.project_owner_session_id,
             summary_id="summary-owner-fork",
-            summary_content="The first exchange was handled.",
             covered_through_message_id=histories[1].message_id,
+            intent_summary_content="Continue the requested work.",
+            trajectory_summary_content="The first exchange was handled.",
         )
         summaries.insert(connection, summary)
         owners.update(connection, replace(owner, summary_id=summary.summary_id))
@@ -138,6 +139,12 @@ def test_owner_fork_cli_prints_raw_and_summary_context_without_runtime_writes(
     ]
     assert projected_code == 0
     assert projected["context"]["summary"]["summary_id"] == summary.summary_id
+    assert projected["context"]["summary"]["intent_summary_content"] == (
+        "Continue the requested work."
+    )
+    assert projected["context"]["summary"]["trajectory_summary_content"] == (
+        "The first exchange was handled."
+    )
     assert [
         message.get("content") for message in projected["context"]["messages"]
     ][-1] == "second"

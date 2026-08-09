@@ -225,7 +225,9 @@ erDiagram
 | `message_history.message` | 持久化的 provider/model message JSON。 |
 | `summary_history.project_owner_session_id`、`summary_id` | 会话归属与 summary 身份。 |
 | `summary_history.covered_through_message_id` | 已纳入 summary 的最后一条原始 message。 |
-| `summary_history.summary_content` | 被压缩但保留的会话上下文。 |
+| `summary_history.intent_summary_content` | 滚动保留的用户目标、约束、纠正和未决问题。 |
+| `summary_history.trajectory_summary_content` | 压缩保留的对话轨迹、工具活动、进度和下一步。 |
+| `summary_history.covered_through_message_id` | 双 Summary 已覆盖到的原始 Message watermark。 |
 
 ## 状态含义
 

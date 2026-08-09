@@ -103,10 +103,10 @@ class SQLiteMessageHistoryRepository:
                 after_message_id,
                 checkpoint_name="Summary watermark",
             )
-            if watermark.sequence >= trigger.sequence:
+            if watermark.sequence > trigger.sequence:
                 raise ValueError(
-                    "Summary watermark must precede activation message: "
-                    f"{watermark.message_id} !< {trigger.message_id}"
+                    "Summary watermark must not follow activation message: "
+                    f"{watermark.message_id} !<= {trigger.message_id}"
                 )
             after_sequence = watermark.sequence
 

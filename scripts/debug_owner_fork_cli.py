@@ -147,9 +147,12 @@ def _restored_context_json(restored: RestoredOwnerContext) -> dict[str, object]:
             "sequence": restored.through_sequence,
         },
         "summary": (
-            {
-                "summary_id": restored.summary_id,
-                "summary_content": restored.summary_content,
+                {
+                    "summary_id": restored.summary_id,
+                    "intent_summary_content": restored.intent_summary_content,
+                    "trajectory_summary_content": (
+                        restored.trajectory_summary_content
+                    ),
                 "covered_through_message_id": restored.covered_through_message_id,
                 "covered_through_sequence": restored.covered_through_sequence,
             }

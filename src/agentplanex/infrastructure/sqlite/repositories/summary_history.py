@@ -20,15 +20,17 @@ class SQLiteSummaryHistoryRepository:
                 project_owner_session_id,
                 summary_id,
                 covered_through_message_id,
-                summary_content
+                intent_summary_content,
+                trajectory_summary_content
             )
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
             """,
             (
                 summary.project_owner_session_id,
                 summary.summary_id,
                 summary.covered_through_message_id,
-                summary.summary_content,
+                summary.intent_summary_content,
+                summary.trajectory_summary_content,
             ),
         )
 
@@ -43,7 +45,8 @@ class SQLiteSummaryHistoryRepository:
                 project_owner_session_id,
                 summary_id,
                 covered_through_message_id,
-                summary_content
+                intent_summary_content,
+                trajectory_summary_content
             FROM summary_history
             WHERE summary_id = ?
             """,
@@ -54,9 +57,42 @@ class SQLiteSummaryHistoryRepository:
         return SummaryHistory(
             project_owner_session_id=cast(str, row["project_owner_session_id"]),
             summary_id=cast(str, row["summary_id"]),
-            summary_content=cast(str, row["summary_content"]),
-            covered_through_message_id=cast(
-                str | None,
-                row["covered_through_message_id"],
-            ),
+            covered_through_message_id=cast(str, row["covered_through_message_id"]),
+            intent_summary_content=cast(str, row["intent_summary_content"]),
+            trajectory_summary_content=cast(str, row["trajectory_summary_content"]),
+        )
+
+    def latest_through_message(
+        self,
+        connection: sqlite3.Connection,
+        session_id: str,
+        through_sequence: int,
+    ) -> SummaryHistory | None:
+        row = connection.execute(
+            """
+            SELECT
+                summaries.project_owner_session_id,
+                summaries.summary_id,
+                summaries.covered_through_message_id,
+                summaries.intent_summary_content,
+                summaries.trajectory_summary_content
+            FROM summary_history AS summaries
+            JOIN message_history AS watermark
+              ON watermark.message_id = summaries.covered_through_message_id
+             AND watermark.project_owner_session_id = summaries.project_owner_session_id
+            WHERE summaries.project_owner_session_id = ?
+              AND watermark.sequence <= ?
+            ORDER BY watermark.sequence DESC
+            LIMIT 1
+            """,
+            (session_id, through_sequence),
+        ).fetchone()
+        if row is None:
+            return None
+        return SummaryHistory(
+            project_owner_session_id=cast(str, row["project_owner_session_id"]),
+            summary_id=cast(str, row["summary_id"]),
+            covered_through_message_id=cast(str, row["covered_through_message_id"]),
+            intent_summary_content=cast(str, row["intent_summary_content"]),
+            trajectory_summary_content=cast(str, row["trajectory_summary_content"]),
         )

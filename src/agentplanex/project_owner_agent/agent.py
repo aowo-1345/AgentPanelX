@@ -21,6 +21,17 @@ from agentplanex.project_owner_agent.models.base import Message, Model
 type MessageAppender = Callable[
     [ProjectRuntimeContext, tuple[Message, ...]], None
 ]
+type QueryPreparer = Callable[
+    [ProjectRuntimeContext, int, Sequence[Message]], Sequence[Message]
+]
+
+
+def _unchanged_query(
+    _context: ProjectRuntimeContext,
+    _query_index: int,
+    messages: Sequence[Message],
+) -> Sequence[Message]:
+    return messages
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,11 +57,13 @@ class DefaultAgent:
         *,
         append_messages: MessageAppender,
         initial_messages: Sequence[Message] = (),
+        prepare_query: QueryPreparer = _unchanged_query,
         config: AgentConfig,
     ) -> None:
         self.model = model
         self.execute_tool = execute_tool
         self.append_persisted_messages = append_messages
+        self.prepare_query_messages = prepare_query
         self.config = config
         self.messages = [dict(message) for message in initial_messages]
         self.n_calls = 0
@@ -100,6 +113,14 @@ class DefaultAgent:
         """Query the model, persisting only a terminal reply here."""
         if self.n_calls >= self.config.step_limit:
             raise StepLimitExceeded()
+        self.messages = [
+            dict(message)
+            for message in self.prepare_query_messages(
+                context,
+                self.n_calls,
+                self.messages,
+            )
+        ]
         self.n_calls += 1
         try:
             message = self.model.query(self.messages)

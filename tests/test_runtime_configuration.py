@@ -381,8 +381,9 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
         frozen_summary = SummaryHistory(
             project_owner_session_id=owner.project_owner_session_id,
             summary_id="summary-frozen",
-            summary_content="First and second were already handled.",
             covered_through_message_id=covered_through_message_id,
+            intent_summary_content="Continue the current work.",
+            trajectory_summary_content="First and second were already handled.",
         )
         summaries.insert(connection, frozen_summary)
         owners.update(connection, replace(owner, summary_id=frozen_summary.summary_id))
@@ -396,8 +397,11 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
         newer_summary = SummaryHistory(
             project_owner_session_id=owner.project_owner_session_id,
             summary_id="summary-newer",
-            summary_content="This summary must not replace the frozen checkpoint.",
-            covered_through_message_id=covered_through_message_id,
+            covered_through_message_id=activation.message_id,
+            intent_summary_content="Continue the newer work.",
+            trajectory_summary_content=(
+                "This summary must not replace the frozen checkpoint."
+            ),
         )
         summaries.insert(connection, newer_summary)
         owners.update(connection, replace(owner, summary_id=newer_summary.summary_id))
@@ -416,7 +420,7 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
     restored_contents = [
         message.get("content") for message in _ReplyingModel.queries[-1]
     ]
-    assert len(restored_contents) == 3
+    assert len(restored_contents) == 4
     system = str(restored_contents[0])
     configured = _settings().runtime.prompts
     assert system.startswith(configured.project_owner.role.strip())
@@ -424,8 +428,21 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
     assert f'"project_root": "{project_path.resolve()}"' in system
     assert f'"activation_id": "{activation.activation_id}"' in system
     assert restored_contents[1:] == [
-        f"{configured.summary_context_header.strip()}\n\n"
-        "First and second were already handled.",
+        configured.summary_context_header.strip(),
+        [
+            {
+                "type": "input_text",
+                "text": "<intent-summary>\nContinue the current work.\n</intent-summary>",
+            },
+            {
+                "type": "input_text",
+                "text": (
+                    "<trajectory-summary>\n"
+                    "First and second were already handled.\n"
+                    "</trajectory-summary>"
+                ),
+            },
+        ],
         "third",
     ]
 
@@ -461,8 +478,9 @@ def test_activation_rejects_summary_from_another_owner_session(
         invalid_summary = SummaryHistory(
             project_owner_session_id="another-owner-session",
             summary_id="summary-wrong-session",
-            summary_content="This summary belongs to another Owner.",
             covered_through_message_id=watermark.message_id,
+            intent_summary_content="Continue another session.",
+            trajectory_summary_content="This summary belongs to another Owner.",
         )
         summaries.insert(connection, invalid_summary)
         owners.update(connection, replace(owner, summary_id=invalid_summary.summary_id))

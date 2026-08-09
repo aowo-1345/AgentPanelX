@@ -127,7 +127,7 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
     assert '"operation": "owner_activation:USER_INPUT"' in instructions
 
 
-def test_existing_owner_prompt_is_upgraded_before_the_next_invocation(
+def test_existing_owner_prompt_remains_the_session_contract_after_restart(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -141,7 +141,7 @@ def test_existing_owner_prompt_is_upgraded_before_the_next_invocation(
         settings=_settings(owner_prompt=old_prompt),
         approval_mode="yolo",
     )
-    activation = runtime.submit_message("Use the upgraded Owner contract.")
+    activation = runtime.submit_message("Use the persisted Owner contract.")
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=_settings(owner_prompt=current_prompt),
@@ -157,11 +157,12 @@ def test_existing_owner_prompt_is_upgraded_before_the_next_invocation(
     runtime.drive_next_activation()
 
     instructions = str(_RecordingOwnerModel.queries[-1][0]["content"])
-    assert instructions.startswith(current_prompt)
+    assert instructions.startswith(old_prompt)
+    assert current_prompt not in instructions
     with database.read_only_connection() as connection:
         owner = owners.get_by_triage_id(connection, activation.triage_id)
     assert owner is not None
-    assert owner.system_prompt == current_prompt
+    assert owner.system_prompt == old_prompt
 
 
 def test_runtime_uses_packaged_observation_skill_independent_of_target_project(

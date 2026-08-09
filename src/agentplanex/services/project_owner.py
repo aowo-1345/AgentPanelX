@@ -34,6 +34,7 @@ from agentplanex.project_owner_agent.exception import AgentFlowExit
 from agentplanex.project_owner_agent.interactive import InteractiveAgent
 from agentplanex.project_owner_agent.models.jbb import (
     JBBModel,
+    JBBResponses,
     format_tool_call_message,
     format_tool_output_message,
 )
@@ -45,6 +46,7 @@ from agentplanex.services.agent_contracts import (
 )
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.owner_context import ProjectOwnerContextQuery
+from agentplanex.services.owner_context_memory import ProjectOwnerContextMemory
 from agentplanex.settings import Settings
 
 
@@ -59,6 +61,8 @@ class ProjectOwnerService:
     tool_executor: ToolExecutor
     event_bus: EventBus
     owner_contexts: ProjectOwnerContextQuery
+    context_memory: ProjectOwnerContextMemory
+    responses: JBBResponses
     observation_skill: Path
     prompts: AgentPromptCatalog
     contexts: SQLiteProjectRuntimeContextRepository = field(
@@ -100,11 +104,8 @@ class ProjectOwnerService:
                 tools=tool_names,
             )
             self.owners.insert(connection, owner)
-        elif owner.tools != tool_names:
-            raise ValueError(f"Unsupported persisted Project Owner tools: {owner.tools!r}")
-        elif owner.system_prompt != configured_prompt:
-            owner = replace(owner, system_prompt=configured_prompt)
-            self.owners.update(connection, owner)
+        else:
+            self.tools.select(owner.tools)
 
         return replace(context, project_owner_agent=owner)
 
@@ -136,7 +137,7 @@ class ProjectOwnerService:
             owner = context.project_owner_agent
             if owner is None:
                 raise RuntimeError("Project Owner was not restored")
-            agent = self._build_agent(messages, owner.system_prompt)
+            agent = self._build_agent(messages, owner.system_prompt, owner, activation)
         except Exception as error:
             return _unhandled_exit(error)
 
@@ -271,7 +272,6 @@ class ProjectOwnerService:
         fixed_work_object = {
             "activation_id": activation.activation_id,
             "message_id": activation.message_id,
-            "summary_id": activation.summary_id,
             "runtime_status": context.status,
             "pending_action": context.pending_action,
             "current_plan_commit_sha": context.current_plan_commit_sha,
@@ -306,14 +306,18 @@ class ProjectOwnerService:
         self,
         messages: tuple[Message, ...],
         system_prompt: str,
+        owner: ProjectOwnerAgent,
+        activation: OwnerActivation,
     ) -> DefaultAgent:
         owner_settings = self.settings.project_owner_agent
         model_settings = owner_settings.model
+        fixed_tools = self.tools.select(owner.tools)
         model = JBBModel(
             model=model_settings.name,
-            tools=self.tools,
+            tools=fixed_tools,
             base_url=model_settings.base_url,
             timeout_seconds=model_settings.timeout_seconds,
+            transport=self.responses.transport,
         )
         config = AgentConfig(
             system_prompt=system_prompt,
@@ -326,6 +330,14 @@ class ProjectOwnerService:
                 self._execute_latest_context,
                 append_messages=self.append_messages,
                 initial_messages=messages,
+                prepare_query=lambda context, query_index, current: (
+                    self.context_memory.prepare_query(
+                        context,
+                        activation,
+                        query_index,
+                        current,
+                    )
+                ),
                 config=config,
             )
             if self.approval_mode == "yolo"
@@ -334,6 +346,14 @@ class ProjectOwnerService:
                 self._execute_latest_context,
                 append_messages=self.append_messages,
                 initial_messages=list(messages),
+                prepare_query=lambda context, query_index, current: (
+                    self.context_memory.prepare_query(
+                        context,
+                        activation,
+                        query_index,
+                        current,
+                    )
+                ),
                 approval=TerminalApproval(
                     require_tty=os.getenv(
                         "AGENTPLANEX_REQUIRE_INTERACTIVE_TERMINAL", "1"

@@ -59,6 +59,14 @@ class ToolCatalog:
             "arguments": arguments,
         }
 
+    def select(self, names: Sequence[str]) -> "ToolCatalog":
+        """Return the persisted ordered capability contract for one Owner."""
+
+        selected: list[ToolDefinition] = []
+        for name in names:
+            selected.append(self._get(name))
+        return ToolCatalog(selected)
+
     def _get(self, name: str) -> ToolDefinition:
         for tool in self.tools:
             if tool.name == name:

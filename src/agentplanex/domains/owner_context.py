@@ -14,7 +14,8 @@ class RestoredOwnerContext:
     through_message_id: str
     through_sequence: int
     summary_id: str | None
-    summary_content: str | None
+    intent_summary_content: str | None
+    trajectory_summary_content: str | None
     covered_through_message_id: str | None
     covered_through_sequence: int | None
     system_prompt: str
@@ -37,14 +38,18 @@ class RestoredOwnerContext:
             for value in (
                 self.covered_through_message_id,
                 self.covered_through_sequence,
-                self.summary_content,
+                self.intent_summary_content,
+                self.trajectory_summary_content,
             )
         ):
             raise ValueError("Raw Owner context cannot contain a Summary watermark")
         if self.summary_id is not None and not self.summary_id.strip():
             raise ValueError("summary_id must not be empty")
-        if self.summary_id is not None and self.summary_content is None:
-            raise ValueError("Summary-projected context must contain summary_content")
+        if self.summary_id is not None and (
+            self.intent_summary_content is None
+            or self.trajectory_summary_content is None
+        ):
+            raise ValueError("Summary-projected context must contain both summaries")
         if (self.covered_through_message_id is None) != (
             self.covered_through_sequence is None
         ):
@@ -52,7 +57,7 @@ class RestoredOwnerContext:
         if self.covered_through_sequence is not None:
             if self.covered_through_sequence <= 0:
                 raise ValueError("covered_through_sequence must be positive")
-            if self.covered_through_sequence >= self.through_sequence:
-                raise ValueError("Summary watermark must precede through_sequence")
+            if self.covered_through_sequence > self.through_sequence:
+                raise ValueError("Summary watermark must not follow through_sequence")
         if not self.messages:
             raise ValueError("Restored Owner context must contain messages")

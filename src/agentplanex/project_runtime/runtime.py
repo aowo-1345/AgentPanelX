@@ -14,6 +14,11 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.project_owner_agent.approval import ApprovalMode
+from agentplanex.project_owner_agent.models.jbb import (
+    JBBResponses,
+    OpenAIResponsesTransport,
+    ResponsesTransport,
+)
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import (
     AgentCollaborationService,
@@ -35,6 +40,7 @@ from agentplanex.services.owner_activation import (
     OwnerActivationDriver,
 )
 from agentplanex.services.owner_context import ProjectOwnerContextQuery
+from agentplanex.services.owner_context_memory import ProjectOwnerContextMemory
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning import PlanDecision
 from agentplanex.services.stage_executor import CodexStageExecutor
@@ -50,6 +56,7 @@ class ProjectRuntime:
         project_path: Path,
         settings: Settings,
         approval_mode: ApprovalMode,
+        responses_transport: ResponsesTransport | None = None,
     ) -> None:
         project_path = project_path.resolve()
         if not project_path.is_dir():
@@ -59,6 +66,16 @@ class ProjectRuntime:
         database = SQLiteDatabase.for_project(project_path)
         initialize_schema(database)
         event_bus = EventBus((SQLiteTimelineRecorder(database),))
+        model_settings = settings.project_owner_agent.model
+        transport = (
+            responses_transport
+            if responses_transport is not None
+            else OpenAIResponsesTransport(
+                base_url=model_settings.base_url,
+                timeout_seconds=model_settings.timeout_seconds,
+            )
+        )
+        responses = JBBResponses(model=model_settings.name, transport=transport)
         runtime_contexts = RuntimeContextService(database, event_bus)
         activations = SQLiteOwnerActivationRepository()
         collaboration = AgentCollaborationService.from_settings(
@@ -109,6 +126,13 @@ class ProjectRuntime:
             collaboration,
             event_bus,
         )
+        context_memory = ProjectOwnerContextMemory(
+            database=database,
+            settings=settings,
+            tools=executions.tools,
+            responses=responses,
+            event_bus=event_bus,
+        )
         owner = ProjectOwnerService(
             database=database,
             settings=settings,
@@ -117,6 +141,8 @@ class ProjectRuntime:
             tool_executor=executions.execute,
             event_bus=event_bus,
             owner_contexts=owner_contexts,
+            context_memory=context_memory,
+            responses=responses,
             observation_skill=collaboration.observation_skill,
             prompts=collaboration.prompts,
         )

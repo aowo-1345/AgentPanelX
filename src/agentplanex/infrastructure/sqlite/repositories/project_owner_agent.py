@@ -66,6 +66,33 @@ class SQLiteProjectOwnerAgentRepository:
         ).fetchone()
         return self._from_row(row) if row is not None else None
 
+    def advance_summary(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        session_id: str,
+        expected_message_id: str,
+        expected_summary_id: str | None,
+        summary_id: str,
+    ) -> None:
+        cursor = connection.execute(
+            """
+            UPDATE project_owner_agent
+            SET summary_id = ?
+            WHERE project_owner_session_id = ?
+              AND message_id = ?
+              AND summary_id IS ?
+            """,
+            (
+                summary_id,
+                session_id,
+                expected_message_id,
+                expected_summary_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError("Project Owner context changed during compaction")
+
     def get_by_triage_id(
         self,
         connection: sqlite3.Connection,

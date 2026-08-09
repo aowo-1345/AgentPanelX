@@ -153,6 +153,29 @@ class SQLiteOwnerActivationRepository:
             failure=None,
         )
 
+    def set_initial_summary(
+        self,
+        connection: sqlite3.Connection,
+        activation_id: str,
+        summary_id: str,
+    ) -> None:
+        cursor = connection.execute(
+            """
+            UPDATE owner_activation
+            SET summary_id = ?
+            WHERE activation_id = ? AND status = ?
+            """,
+            (
+                summary_id,
+                activation_id,
+                OwnerActivationStatus.RUNNING.value,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise RuntimeError(
+                f"Running Owner activation not found: {activation_id}"
+            )
+
     def mark_failed(
         self,
         connection: sqlite3.Connection,

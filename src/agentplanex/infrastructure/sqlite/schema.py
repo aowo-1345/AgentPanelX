@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _INITIAL_SCHEMA = (
     """
@@ -41,8 +41,12 @@ _INITIAL_SCHEMA = (
     CREATE TABLE summary_history (
         project_owner_session_id TEXT NOT NULL,
         summary_id TEXT PRIMARY KEY,
-        covered_through_message_id TEXT,
-        summary_content TEXT NOT NULL
+        covered_through_message_id TEXT NOT NULL,
+        intent_summary_content TEXT NOT NULL
+            CHECK (length(trim(intent_summary_content)) > 0),
+        trajectory_summary_content TEXT NOT NULL
+            CHECK (length(trim(trajectory_summary_content)) > 0),
+        UNIQUE (project_owner_session_id, covered_through_message_id)
     )
     """,
     """
@@ -185,11 +189,6 @@ def initialize_schema(database: SQLiteDatabase) -> None:
                 connection.execute(statement)
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             return
-
-        if current_version == 8:
-            connection.execute("ALTER TABLE owner_activation ADD COLUMN summary_id TEXT")
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            current_version = SCHEMA_VERSION
 
         if current_version != SCHEMA_VERSION:
             raise RuntimeError(

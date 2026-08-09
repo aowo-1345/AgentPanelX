@@ -64,8 +64,9 @@ def test_context_can_be_reloaded_and_assembled(project_path: Path) -> None:
     summary = SummaryHistory(
         "session-1",
         "summary-1",
+        "message-1",
+        "Deliver the refactor.",
         "The project is being refactored.",
-        covered_through_message_id="message-1",
     )
     message_history = MessageHistory(
         "session-1",
@@ -184,12 +185,18 @@ def test_message_checkpoint_range_is_bounded_and_session_safe(
                 after_message_id="message-other-session",
                 through_message_id="message-3",
             )
-        with pytest.raises(ValueError, match="must precede activation message"):
+        assert messages.list_between_checkpoints(
+            connection,
+            "session-1",
+            after_message_id="message-3",
+            through_message_id="message-3",
+        ) == ()
+        with pytest.raises(ValueError, match="must not follow activation message"):
             messages.list_between_checkpoints(
                 connection,
                 "session-1",
                 after_message_id="message-3",
-                through_message_id="message-3",
+                through_message_id="message-2",
             )
 
     assert selected == histories[1:3]
@@ -257,7 +264,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 9
+    assert schema_version[0] == 10
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -309,7 +316,8 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "project_owner_session_id",
             "summary_id",
             "covered_through_message_id",
-            "summary_content",
+            "intent_summary_content",
+            "trajectory_summary_content",
         ),
         "milestone_snapshot": (
             "snapshot_id",
@@ -383,7 +391,7 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             assert actual_columns == columns
 
 
-def test_schema_upgrades_v8_activation_checkpoints_without_losing_rows(
+def test_schema_rejects_old_versions_and_requires_recreation(
     project_path: Path,
 ) -> None:
     database = SQLiteDatabase.for_project(project_path)
@@ -421,22 +429,8 @@ def test_schema_upgrades_v8_activation_checkpoints_without_losing_rows(
         )
         connection.execute("PRAGMA user_version = 8")
 
-    initialize_schema(database)
-
-    with database.connection() as connection:
-        schema_version = connection.execute("PRAGMA user_version").fetchone()
-        row = connection.execute(
-            """
-            SELECT activation_id, message_id, summary_id
-            FROM owner_activation
-            WHERE activation_id = ?
-            """,
-            ("activation-existing",),
-        ).fetchone()
-    assert schema_version is not None
-    assert schema_version[0] == 9
-    assert row is not None
-    assert tuple(row) == ("activation-existing", "message-existing", None)
+    with pytest.raises(RuntimeError, match="recreate this development database"):
+        initialize_schema(database)
 
 
 def test_competing_connections_claim_only_one_activation(

@@ -2,12 +2,14 @@
 
 import json
 from collections.abc import Mapping
-from typing import Any, NoReturn, cast
+from dataclasses import dataclass
+from threading import Lock
+from typing import Any, Literal, NoReturn, Protocol, cast
 
 from openai import OpenAI
 from openai.types.responses import FunctionToolParam, ResponseInputParam
 
-from agentplanex.domains import Action, ActionOutput
+from agentplanex.domains import Action, ActionOutput, ToolSchema
 from agentplanex.project_owner_agent.exception import (
     FormatError,
     JBBModelError,
@@ -18,6 +20,117 @@ from agentplanex.project_owner_agent.tools.base import ToolCatalog
 
 DEFAULT_JBB_BASE_URL = "https://api.openai.com/v1"
 
+type ToolChoice = Literal["auto", "none"]
+
+
+@dataclass(frozen=True, slots=True)
+class ResponsesRequest:
+    """One provider-neutral Responses request at the external transport seam."""
+
+    model: str
+    instructions: str
+    input: tuple[Message, ...]
+    tools: tuple[ToolSchema, ...]
+    tool_choice: ToolChoice
+
+
+class ResponsesTransport(Protocol):
+    def create(self, request: ResponsesRequest) -> object: ...
+
+
+class OpenAIResponsesTransport:
+    """Send shared Owner and Summary requests through the configured gateway."""
+
+    def __init__(self, *, base_url: str, timeout_seconds: float) -> None:
+        self.base_url = base_url
+        self.timeout_seconds = timeout_seconds
+        self.client: OpenAI | None = None
+        self._lock = Lock()
+
+    def create(self, request: ResponsesRequest) -> object:
+        if self.client is None:
+            with self._lock:
+                if self.client is None:
+                    try:
+                        self.client = OpenAI(
+                            base_url=self.base_url,
+                            timeout=self.timeout_seconds,
+                        )
+                    except Exception as error:
+                        raise JBBModelError(
+                            f"Failed to initialize JBB gateway: {error}"
+                        ) from error
+        if request.tools:
+            return self.client.responses.create(
+                model=request.model,
+                instructions=request.instructions,
+                input=cast(ResponseInputParam, list(request.input)),
+                tools=cast(list[FunctionToolParam], list(request.tools)),
+                store=False,
+                stream=False,
+                service_tier="priority",
+                tool_choice=request.tool_choice,
+                parallel_tool_calls=False,
+            )
+        return self.client.responses.create(
+            model=request.model,
+            instructions=request.instructions,
+            input=cast(ResponseInputParam, list(request.input)),
+            store=False,
+            stream=False,
+            service_tier="priority",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class JBBResponses:
+    """Serialize one shared Responses request and expose its raw output."""
+
+    model: str
+    transport: ResponsesTransport
+
+    def request(
+        self,
+        messages: list[Message],
+        *,
+        tools: ToolCatalog | None,
+        tool_choice: ToolChoice,
+    ) -> tuple[Message, list[object]]:
+        instructions, response_input = _prepare_input(messages)
+        request = ResponsesRequest(
+            model=self.model,
+            instructions=instructions,
+            input=tuple(response_input),
+            tools=tuple(tools.provider_schemas()) if tools is not None else (),
+            tool_choice=tool_choice,
+        )
+        try:
+            response = self.transport.create(request)
+        except Exception as error:
+            if isinstance(error, JBBModelError):
+                raise
+            raise JBBModelError(f"JBB gateway request failed: {error}") from error
+        message = _serialize(response)
+        return message, _as_list(_get(response, "output"))
+
+    def text(
+        self,
+        messages: list[Message],
+        *,
+        tools: ToolCatalog,
+    ) -> str:
+        message, output = self.request(
+            messages,
+            tools=tools,
+            tool_choice="none",
+        )
+        if any(_get(item, "type") == "function_call" for item in output):
+            raise JBBModelError("Summary response attempted a tool call")
+        reply = _extract_reply(output)
+        if not reply:
+            raise JBBModelError(f"Summary response has no text: {message!r}")
+        return reply
+
 
 class JBBModel:
     def __init__(
@@ -27,6 +140,7 @@ class JBBModel:
         tools: ToolCatalog | None,
         base_url: str = DEFAULT_JBB_BASE_URL,
         timeout_seconds: float = 60.0,
+        transport: ResponsesTransport | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -38,43 +152,24 @@ class JBBModel:
         self.base_url = base_url
         self.tools = tools
         self.timeout_seconds = timeout_seconds
-        try:
-            self.client = OpenAI(
-                base_url=base_url,
-                timeout=timeout_seconds,
-            )
-        except Exception as error:
-            raise JBBModelError(f"Failed to initialize JBB gateway: {error}") from error
+        self.responses = JBBResponses(
+            model=model,
+            transport=(
+                transport
+                if transport is not None
+                else OpenAIResponsesTransport(
+                    base_url=base_url,
+                    timeout_seconds=timeout_seconds,
+                )
+            ),
+        )
 
     def query(self, messages: list[Message]) -> Message:
-        instructions, response_input = _prepare_input(messages)
-        try:
-            if self.tools is None:
-                response = self.client.responses.create(
-                    model=self.model,
-                    instructions=instructions,
-                    input=cast(ResponseInputParam, response_input),
-                    store=False,
-                    stream=False,
-                    service_tier="priority",
-                )
-            else:
-                response = self.client.responses.create(
-                    model=self.model,
-                    instructions=instructions,
-                    input=cast(ResponseInputParam, response_input),
-                    tools=cast(list[FunctionToolParam], self.tools.provider_schemas()),
-                    store=False,
-                    stream=False,
-                    service_tier="priority",
-                    tool_choice="auto",
-                    parallel_tool_calls=False,
-                )
-        except Exception as error:
-            raise JBBModelError(f"JBB gateway request failed: {error}") from error
-
-        message = _serialize(response)
-        output = _as_list(_get(response, "output"))
+        message, output = self.responses.request(
+            messages,
+            tools=self.tools,
+            tool_choice="auto" if self.tools is not None else "none",
+        )
         if self.tools is None and any(
             _get(item, "type") == "function_call" for item in output
         ):
@@ -154,7 +249,7 @@ def _prepare_input(messages: list[Message]) -> tuple[str, list[Message]]:
     instructions = ""
     result: list[Message] = []
     for message in messages:
-        if message.get("role") == "system":
+        if message.get("role") == "system" and not instructions:
             instructions = str(message.get("content", ""))
         elif message.get("object") == "response":
             result.extend(
