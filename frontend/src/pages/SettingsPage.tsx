@@ -19,11 +19,12 @@ export function SettingsPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  const loadProjects = useCallback(async () => {
+  const loadProjects = useCallback(async (refresh = false) => {
     setLoading(true);
     setError('');
     try {
-      setProjects(await api.listProjects());
+      setProjects(await (refresh ? api.refreshProjects() : api.listProjects()));
+      if (refresh) setSuccess('Project branches refreshed from their configured remotes.');
     } catch (caught) {
       setError(readableError(caught));
     } finally {
@@ -84,7 +85,7 @@ export function SettingsPage() {
               </div>
               <button
                 className="btn btn-ghost h-8 w-8 p-0"
-                onClick={() => void loadProjects()}
+                onClick={() => void loadProjects(true)}
                 disabled={loading}
                 aria-label="Refresh projects"
               >

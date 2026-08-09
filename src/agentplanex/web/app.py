@@ -68,6 +68,10 @@ def _install_routes(
     def list_projects() -> list[ProjectResponse]:
         return [project_response(item) for item in workspace.list_projects()]
 
+    @app.post("/api/projects/refresh", response_model=list[ProjectResponse])
+    def refresh_projects() -> list[ProjectResponse]:
+        return [project_response(item) for item in workspace.refresh_projects()]
+
     @app.post(
         "/api/projects",
         response_model=ProjectResponse,

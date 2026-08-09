@@ -75,6 +75,8 @@ function featurePath(projectId: string, triageId?: string): string {
 export const api = {
   listProjects: () => request<Project[]>('/api/projects'),
 
+  refreshProjects: () => request<Project[]>('/api/projects/refresh', { method: 'POST' }),
+
   createProject: (input: CreateProjectInput) =>
     request<Project>('/api/projects', {
       method: 'POST',
