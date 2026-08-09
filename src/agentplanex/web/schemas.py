@@ -35,6 +35,7 @@ class ProjectResponse(Schema):
     name: str
     repository_path: str
     main_branch: str
+    git_version: str | None = None
 
 
 class CreateFeatureRequest(Schema):
@@ -165,12 +166,17 @@ class WorkspaceResponse(Schema):
     git: Panel[GitData]
 
 
-def project_response(project: ManagedProject) -> ProjectResponse:
+def project_response(
+    project: ManagedProject,
+    *,
+    git_version: str | None = None,
+) -> ProjectResponse:
     return ProjectResponse(
         project_id=project.project_id,
         name=project.name,
         repository_path=str(project.repository_path),
         main_branch=project.main_branch,
+        git_version=git_version,
     )
 
 

@@ -32,6 +32,7 @@ export interface Project {
   name: string;
   repository_path: string;
   main_branch: string;
+  git_version: string | null;
 }
 
 export interface CreatedFeature {

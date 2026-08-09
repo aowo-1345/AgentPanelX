@@ -121,6 +121,7 @@ export function SettingsPage() {
                         <h2 className="truncate text-sm font-medium">{project.name}</h2>
                         <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
                           {project.main_branch}
+                          {project.git_version && ` · ${project.git_version.slice(0, 7)}`}
                         </span>
                       </div>
                       <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">

@@ -111,13 +111,16 @@ class WorkspaceService:
     def list_projects(self) -> tuple[ManagedProject, ...]:
         return self.registry.list_projects()
 
+    def project_git_version(self, project: ManagedProject) -> str:
+        return self.git.local_branch_commit(
+            project.repository_path,
+            project.main_branch,
+        )
+
     def refresh_projects(self) -> tuple[ManagedProject, ...]:
         projects = self.registry.list_projects()
         for project in projects:
-            self.git.local_branch_commit(
-                project.repository_path,
-                project.main_branch,
-            )
+            self.project_git_version(project)
         return projects
 
     def create_feature(self, *, project_id: str, name: str) -> FeatureView:

@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from agentplanex.bootstrap import create_workspace
+from agentplanex.domains import ManagedProject
 from agentplanex.services.workspace import WorkspaceService
 from agentplanex.services.workspace_worker import WorkspaceWorker
 from agentplanex.settings import Settings, load_settings
@@ -64,13 +65,19 @@ def _install_routes(
     workspace: WorkspaceService,
     worker: WorkspaceWorker,
 ) -> None:
+    def project_with_version(project: ManagedProject) -> ProjectResponse:
+        return project_response(
+            project,
+            git_version=workspace.project_git_version(project),
+        )
+
     @app.get("/api/projects", response_model=list[ProjectResponse])
     def list_projects() -> list[ProjectResponse]:
-        return [project_response(item) for item in workspace.list_projects()]
+        return [project_with_version(item) for item in workspace.list_projects()]
 
     @app.post("/api/projects/refresh", response_model=list[ProjectResponse])
     def refresh_projects() -> list[ProjectResponse]:
-        return [project_response(item) for item in workspace.refresh_projects()]
+        return [project_with_version(item) for item in workspace.refresh_projects()]
 
     @app.post(
         "/api/projects",
@@ -78,7 +85,7 @@ def _install_routes(
         status_code=status.HTTP_201_CREATED,
     )
     def create_project(request: CreateProjectRequest) -> ProjectResponse:
-        return project_response(
+        return project_with_version(
             workspace.register_project(
                 name=request.name,
                 repository_path=Path(request.repository_path),
