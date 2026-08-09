@@ -307,6 +307,9 @@ class AgentCollaborationService:
                 "status": context.status,
                 "pending_action": context.pending_action,
                 "plan_commit_sha": context.current_plan_commit_sha,
+                "pending_plan_subject_digest": (
+                    context.pending_plan_subject_digest
+                ),
                 "snapshot_id": context.current_snapshot_id,
                 "run_id": context.current_run_id,
                 "milestone_key": context.current_milestone_key,

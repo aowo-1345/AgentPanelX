@@ -1,5 +1,6 @@
 """Milestone publication and rolling-delivery state transitions."""
 
+import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -32,6 +33,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.services.event_bus import EventBus
+from agentplanex.services.planning import SPEC_DOCUMENT_NAMES
 from agentplanex.services.runtime_context import RuntimeContextService
 
 
@@ -78,7 +80,8 @@ class MilestonesUpdated:
     context: ProjectRuntimeContext
     snapshot: MilestoneSnapshot | None
     accepted: bool
-    review: MilestoneReviewResult
+    subject_digest: str
+    review: MilestoneReviewResult | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,8 +133,10 @@ class CandidateDecision:
 
     context: ProjectRuntimeContext
     decision: Literal["accept", "reject"]
+    milestone_key: str
     candidate_commit_sha: str
     snapshot: MilestoneSnapshot | None
+    next_milestone_key: str | None
     completed: bool
 
 
@@ -183,78 +188,36 @@ class DeliveryService:
         reason: str,
         milestones: tuple[Milestone, ...],
     ) -> MilestonesUpdated:
-        """Publish an immutable complete View only after deterministic and Gate checks."""
+        """Publish a complete View after checks and the IN_PROGRESS Hard Gate."""
         normalized_reason = " ".join(reason.split())
         if not normalized_reason:
             raise DeliveryError("Milestone update reason must not be empty")
         current = self._current_context(context.triage_id)
         previous = self._assert_publishable(current, milestones)
+        self._assert_approved_specs(current)
         plan_commit_sha = current.current_plan_commit_sha
         if plan_commit_sha is None:
             raise DeliveryError("Milestone publication requires an approved Plan")
         subject_digest = milestone_view_digest(milestones)
-        invocation_id = uuid4().hex
-        self.event_bus.publish(
-            ExecutionEvent(
-                triage_id=current.triage_id,
-                event_type=ExecutionEventType.AGENT_INVOCATION_STARTED,
-                payload={
-                    "invocation_id": invocation_id,
-                    "operation": "milestone_hard_gate",
-                    "subject_digest": subject_digest,
-                },
+        review = (
+            self._run_milestone_hard_gate(
+                current,
+                plan_commit_sha,
+                milestones,
+                subject_digest,
             )
-        )
-        try:
-            review = self.review_milestones(
-                MilestoneReviewRequest(
-                    triage_id=current.triage_id,
-                    plan_commit_sha=plan_commit_sha,
-                    milestones=milestones,
-                    subject_digest=subject_digest,
-                )
-            )
-            self._validate_review(review, subject_digest)
-        except Exception as error:
-            self.event_bus.publish(
-                ExecutionEvent(
-                    triage_id=current.triage_id,
-                    event_type=ExecutionEventType.AGENT_INVOCATION_FAILED,
-                    payload={
-                        "invocation_id": invocation_id,
-                        "operation": "milestone_hard_gate",
-                        "subject_digest": subject_digest,
-                        "failure_type": type(error).__name__,
-                    },
-                )
-            )
-            raise
-        self.event_bus.publish(
-            ExecutionEvent(
-                triage_id=current.triage_id,
-                event_type=ExecutionEventType.AGENT_INVOCATION_COMPLETED,
-                payload={
-                    "invocation_id": invocation_id,
-                    "operation": "milestone_hard_gate",
-                    "subject_digest": review.subject_digest,
-                    "decision": review.decision,
-                    "required_change_count": len(review.required_changes),
-                    "review_artifact": {
-                        "uri": review.audit_artifact.uri,
-                        "media_type": review.audit_artifact.media_type,
-                        "size": review.audit_artifact.size,
-                        "sha256": review.audit_artifact.sha256,
-                    },
-                },
-            )
+            if current.status == "IN_PROGRESS"
+            else None
         )
         current = self._current_context(context.triage_id)
         previous = self._assert_publishable(current, milestones)
-        if review.decision == "revise":
+        self._assert_approved_specs(current)
+        if review is not None and review.decision == "revise":
             return MilestonesUpdated(
                 context=current,
                 snapshot=None,
                 accepted=False,
+                subject_digest=subject_digest,
                 review=review,
             )
 
@@ -279,7 +242,11 @@ class DeliveryService:
                 connection,
                 current.triage_id,
                 reason=RuntimeContextChangeReason.MILESTONES_UPDATED,
-                mutate=lambda latest: self._publish_snapshot(latest, snapshot),
+                mutate=lambda latest: self._publish_snapshot(
+                    connection,
+                    latest,
+                    snapshot,
+                ),
             )
         if context_event is not None:
             self.event_bus.publish(context_event)
@@ -293,6 +260,7 @@ class DeliveryService:
                     "plan_commit_sha": snapshot.plan_commit_sha,
                     "milestone_count": len(snapshot.milestones),
                     "subject_digest": subject_digest,
+                    "hard_gate_invoked": review is not None,
                 },
             )
         )
@@ -300,6 +268,7 @@ class DeliveryService:
             context=updated,
             snapshot=snapshot,
             accepted=True,
+            subject_digest=subject_digest,
             review=review,
         )
 
@@ -311,6 +280,7 @@ class DeliveryService:
         current = self._current_context(context.triage_id)
         snapshot = self._snapshot_for_context(current)
         milestone = self._first_pending(snapshot)
+        self._assert_approved_specs(current)
         if current.rolling_started_at is None:
             if current.status != "TODO" or current.pending_action is not None:
                 raise DeliveryError(
@@ -338,6 +308,8 @@ class DeliveryService:
                 snapshot=snapshot,
                 milestone=milestone,
             )
+        if current.status == "BLOCKED":
+            self._assert_retryable_blocked(current)
         return self._queue_next_run(current, snapshot, milestone, first_run=False)
 
     def start_first_run(
@@ -484,7 +456,12 @@ class DeliveryService:
                 activation = append_execution_result(
                     connection,
                     updated,
-                    _candidate_ready_message(running, output_commit_sha),
+                    _candidate_ready_message(
+                        updated,
+                        milestone,
+                        running,
+                        output_commit_sha,
+                    ),
                 )
 
         if context_event is not None:
@@ -561,7 +538,7 @@ class DeliveryService:
             activation = append_execution_result(
                 connection,
                 updated,
-                _stage_failed_message(failed),
+                _stage_failed_message(updated, failed),
             )
         if context_event is not None:
             self.event_bus.publish(context_event)
@@ -604,6 +581,7 @@ class DeliveryService:
         completed = False
         integrated_commit_sha = candidate_commit_sha
         if decision == "accept":
+            self._assert_candidate_preserves_specs(current, candidate_commit_sha)
             git = self._git()
             try:
                 if current.git_branch is None or current.git_main_version is None:
@@ -700,11 +678,18 @@ class DeliveryService:
                     },
                 )
             )
+        next_milestone = successor.first_pending() if successor is not None else None
         return CandidateDecision(
             context=updated,
             decision=decision,
+            milestone_key=milestone.key,
             candidate_commit_sha=candidate_commit_sha,
             snapshot=successor,
+            next_milestone_key=(
+                next_milestone.key
+                if next_milestone is not None
+                else (milestone.key if decision == "reject" else None)
+            ),
             completed=completed,
         )
 
@@ -723,14 +708,21 @@ class DeliveryService:
             input_commit_sha = git.head_sha()
         except GitRepositoryError as error:
             raise DeliveryError(str(error)) from error
+        retry_from_blocked = not first_run and current.status == "BLOCKED"
+        if retry_from_blocked:
+            self._assert_retryable_blocked(current)
         if not first_run:
-            if current.status != "IN_PROGRESS" or current.pending_action is not None:
+            if (
+                current.status not in {"IN_PROGRESS", "BLOCKED"}
+                or current.pending_action is not None
+            ):
                 raise DeliveryError(
-                    "A later Milestone Run requires IN_PROGRESS with no pending action"
+                    "A later Milestone Run requires IN_PROGRESS or a retryable BLOCKED "
+                    "project with no pending action"
                 )
             if current.git_branch != branch or current.git_main_version != input_commit_sha:
                 raise DeliveryError("Project target Git state changed outside Delivery")
-        if current.current_run_id is not None:
+        if current.current_run_id is not None and not retry_from_blocked:
             raise DeliveryError("Project already has an active Milestone Run")
         if current.current_candidate_commit_sha is not None:
             raise DeliveryError("Current Candidate must be decided before another Run")
@@ -770,16 +762,20 @@ class DeliveryService:
                     or latest.rolling_started_at is not None
                 ):
                     raise DeliveryError("Project is no longer waiting for first Run approval")
-            elif (
-                latest.status != "IN_PROGRESS"
-                or latest.pending_action is not None
-                or latest.rolling_started_at is None
-            ):
-                raise DeliveryError("Project is no longer ready for another Milestone Run")
-            if (
-                latest.current_run_id is not None
-                or latest.current_candidate_commit_sha is not None
-            ):
+            else:
+                if retry_from_blocked:
+                    self._assert_retryable_blocked(latest, connection=connection)
+                elif (
+                    latest.status != "IN_PROGRESS"
+                    or latest.pending_action is not None
+                    or latest.rolling_started_at is None
+                ):
+                    raise DeliveryError(
+                        "Project is no longer ready for another Milestone Run"
+                    )
+            if latest.current_run_id is not None and not retry_from_blocked:
+                raise DeliveryError("Project gained an active Run or Candidate")
+            if latest.current_candidate_commit_sha is not None:
                 raise DeliveryError("Project gained an active Run or Candidate")
             self.stage_runs.insert(connection, stage_run)
             updated, context_event = self._runtime_contexts().transition_in_transaction(
@@ -1069,12 +1065,14 @@ class DeliveryService:
                 "Milestones cannot be updated while waiting for "
                 f"{context.pending_action}"
             )
-        if context.status not in {"TODO", "IN_PROGRESS"}:
+        if context.status not in {"TODO", "IN_PROGRESS", "BLOCKED"}:
             raise DeliveryError(
                 "Milestones cannot be updated from status " f"{context.status}"
             )
         if context.current_run_id is not None:
-            raise DeliveryError("Milestones cannot be updated during an active Run")
+            if context.status != "BLOCKED":
+                raise DeliveryError("Milestones cannot be updated during an active Run")
+            self._assert_retryable_blocked(context)
         if context.current_candidate_commit_sha is not None:
             raise DeliveryError("Milestones cannot be updated while a Candidate is pending")
         if not milestones:
@@ -1113,6 +1111,153 @@ class DeliveryService:
             )
         return previous
 
+    def _assert_approved_specs(self, context: ProjectRuntimeContext) -> None:
+        plan_commit_sha = context.current_plan_commit_sha
+        if plan_commit_sha is None:
+            raise DeliveryError("Delivery requires an approved Plan commit")
+        try:
+            changed = self._git().paths_changed_from_commit(
+                plan_commit_sha,
+                self._spec_documents(),
+            )
+        except GitRepositoryError as error:
+            raise DeliveryError(str(error)) from error
+        if changed:
+            raise DeliveryError(
+                "Canonical Plan Specs changed after user approval; update the Specs "
+                "and request Plan approval before continuing delivery: "
+                + ", ".join(changed)
+            )
+
+    def _assert_candidate_preserves_specs(
+        self,
+        context: ProjectRuntimeContext,
+        candidate_commit_sha: str,
+    ) -> None:
+        plan_commit_sha = context.current_plan_commit_sha
+        if plan_commit_sha is None:
+            raise DeliveryError("Candidate acceptance requires an approved Plan commit")
+        try:
+            changed = self._git().paths_changed_from_commit(
+                plan_commit_sha,
+                self._spec_documents(),
+                target_commit_sha=candidate_commit_sha,
+            )
+        except GitRepositoryError as error:
+            raise DeliveryError(str(error)) from error
+        if changed:
+            raise DeliveryError(
+                "Candidate changes canonical Plan Specs and cannot be accepted; reject "
+                "it, update the Specs, and request Plan approval before retrying: "
+                + ", ".join(changed)
+            )
+
+    def _assert_retryable_blocked(
+        self,
+        context: ProjectRuntimeContext,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> None:
+        if (
+            context.status != "BLOCKED"
+            or context.pending_action is not None
+            or context.rolling_started_at is None
+            or context.current_candidate_commit_sha is not None
+        ):
+            raise DeliveryError("Project is not a retryable failed delivery")
+        if context.current_run_id is None:
+            return
+
+        def validate(opened: sqlite3.Connection) -> None:
+            runs = self.stage_runs.list_by_run_id(opened, context.current_run_id or "")
+            failed = runs[-1] if runs else None
+            if (
+                failed is None
+                or failed.status is not StageRunStatus.FAILED
+                or failed.stage_key != context.current_stage_key
+                or failed.milestone_key != context.current_milestone_key
+                or failed.snapshot_id != context.current_snapshot_id
+            ):
+                raise DeliveryError(
+                    "BLOCKED delivery does not point to a terminal failed Stage"
+                )
+
+        if connection is not None:
+            validate(connection)
+            return
+        with self.database.connection() as opened:
+            validate(opened)
+
+    def _run_milestone_hard_gate(
+        self,
+        context: ProjectRuntimeContext,
+        plan_commit_sha: str,
+        milestones: tuple[Milestone, ...],
+        subject_digest: str,
+    ) -> MilestoneReviewResult:
+        invocation_id = uuid4().hex
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=context.triage_id,
+                event_type=ExecutionEventType.AGENT_INVOCATION_STARTED,
+                payload={
+                    "invocation_id": invocation_id,
+                    "operation": "milestone_hard_gate",
+                    "subject_digest": subject_digest,
+                },
+            )
+        )
+        try:
+            review = self.review_milestones(
+                MilestoneReviewRequest(
+                    triage_id=context.triage_id,
+                    plan_commit_sha=plan_commit_sha,
+                    milestones=milestones,
+                    subject_digest=subject_digest,
+                )
+            )
+            self._validate_review(review, subject_digest)
+        except Exception as error:
+            self.event_bus.publish(
+                ExecutionEvent(
+                    triage_id=context.triage_id,
+                    event_type=ExecutionEventType.AGENT_INVOCATION_FAILED,
+                    payload={
+                        "invocation_id": invocation_id,
+                        "operation": "milestone_hard_gate",
+                        "subject_digest": subject_digest,
+                        "failure_type": type(error).__name__,
+                    },
+                )
+            )
+            raise
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=context.triage_id,
+                event_type=ExecutionEventType.AGENT_INVOCATION_COMPLETED,
+                payload={
+                    "invocation_id": invocation_id,
+                    "operation": "milestone_hard_gate",
+                    "subject_digest": review.subject_digest,
+                    "decision": review.decision,
+                    "required_change_count": len(review.required_changes),
+                    "review_artifact": {
+                        "uri": review.audit_artifact.uri,
+                        "project_relative_path": (
+                            review.audit_artifact.project_relative_path
+                        ),
+                        "media_type": review.audit_artifact.media_type,
+                        "size": review.audit_artifact.size,
+                        "sha256": review.audit_artifact.sha256,
+                    },
+                },
+            )
+        )
+        return review
+
+    def _spec_documents(self) -> tuple[Path, ...]:
+        return tuple(self.project_path / name for name in SPEC_DOCUMENT_NAMES)
+
     @staticmethod
     def _validate_review(
         review: MilestoneReviewResult,
@@ -1133,16 +1278,25 @@ class DeliveryService:
                 "Milestone Hard Gate revise must contain required changes"
             )
 
-    @staticmethod
     def _publish_snapshot(
+        self,
+        connection: sqlite3.Connection,
         context: ProjectRuntimeContext,
         snapshot: MilestoneSnapshot,
     ) -> ProjectRuntimeContext:
         if context.current_plan_commit_sha != snapshot.plan_commit_sha:
             raise DeliveryError("Approved Plan changed while publishing Milestones")
-        if context.current_run_id is not None or context.current_candidate_commit_sha is not None:
+        if context.current_candidate_commit_sha is not None:
             raise DeliveryError("Project began delivery while publishing Milestones")
-        return replace(context, current_snapshot_id=snapshot.snapshot_id)
+        if context.current_run_id is not None:
+            self._assert_retryable_blocked(context, connection=connection)
+        return replace(
+            context,
+            current_snapshot_id=snapshot.snapshot_id,
+            current_run_id=None,
+            current_milestone_key=None,
+            current_stage_key=None,
+        )
 
     def _current_context(self, triage_id: str) -> ProjectRuntimeContext:
         with self.database.connection() as connection:
@@ -1194,18 +1348,68 @@ def _stage_index(milestone: Milestone, stage_key: str) -> int:
     raise LookupError(f"Stage not found in Milestone: {stage_key}")
 
 
-def _candidate_ready_message(stage_run: StageRun, candidate_commit_sha: str) -> str:
-    return (
-        "Stage execution completed. Candidate is ready for "
-        f"Milestone {stage_run.milestone_key} at commit {candidate_commit_sha}. "
-        "Review it if useful, then accept or reject it with "
-        "decide_milestone_candidate."
+def _candidate_ready_message(
+    context: ProjectRuntimeContext,
+    milestone: Milestone,
+    stage_run: StageRun,
+    candidate_commit_sha: str,
+) -> str:
+    run_id = stage_run.run_id
+    return json.dumps(
+        {
+            "event": "MILESTONE_CANDIDATE_READY",
+            "work_object": {
+                "snapshot_id": stage_run.snapshot_id,
+                "run_id": run_id,
+                "milestone_key": stage_run.milestone_key,
+                "base_commit_sha": context.git_main_version,
+                "candidate_commit_sha": candidate_commit_sha,
+                "candidate_ref": delivery_candidate_ref(run_id),
+            },
+            "evidence": {
+                "delivery_documents": [
+                    f"docs/agentplanex/deliveries/{run_id}/{stage.key}.md"
+                    for stage in milestone.stages
+                ],
+                "review_status": "NOT_REQUESTED",
+            },
+            "required_decision": (
+                "Inspect the fixed Candidate, delegate a Reviewer when useful, then "
+                "accept or reject it with decide_milestone_candidate. Afterwards "
+                "reassess whether to run next, update Milestones, revise Specs, or "
+                "return control to the user."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
     )
 
 
-def _stage_failed_message(stage_run: StageRun) -> str:
-    return (
-        "Stage execution failed for "
-        f"Milestone {stage_run.milestone_key}, Stage {stage_run.stage_key}. "
-        f"Failure: {stage_run.failure}"
+def _stage_failed_message(
+    context: ProjectRuntimeContext,
+    stage_run: StageRun,
+) -> str:
+    return json.dumps(
+        {
+            "event": "STAGE_EXECUTION_FAILED",
+            "runtime_status": context.status,
+            "work_object": {
+                "snapshot_id": stage_run.snapshot_id,
+                "run_id": stage_run.run_id,
+                "stage_run_id": stage_run.stage_run_id,
+                "milestone_key": stage_run.milestone_key,
+                "stage_key": stage_run.stage_key,
+                "input_commit_sha": stage_run.input_commit_sha,
+            },
+            "failure": stage_run.failure,
+            "required_decision": (
+                "Diagnose the fixed failure. Consult Planner or Reviewer, update the "
+                "Milestone View or Specs when their contract is wrong, or retry the "
+                "first unfinished Milestone with run_next_milestone when the approved "
+                "Plan and current Snapshot remain valid. BLOCKED does not invoke a "
+                "Hard Gate."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
     )

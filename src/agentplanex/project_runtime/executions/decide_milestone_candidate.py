@@ -41,7 +41,9 @@ class DecideMilestoneCandidateExecution(ProjectExecution):
             "decision": result.decision,
             "triage_id": result.context.triage_id,
             "status": result.context.status,
+            "milestone_key": result.milestone_key,
             "candidate_commit_sha": result.candidate_commit_sha,
+            "next_milestone_key": result.next_milestone_key,
             "completed": result.completed,
         }
         if result.snapshot is not None:

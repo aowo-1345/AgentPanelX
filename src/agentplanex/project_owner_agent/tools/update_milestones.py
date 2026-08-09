@@ -8,7 +8,13 @@ UPDATE_MILESTONES_TOOL_NAME = "update_milestones"
 UPDATE_MILESTONES_TOOL_SCHEMA: ToolSchema = {
     "type": "function",
     "name": UPDATE_MILESTONES_TOOL_NAME,
-    "description": "Replace the complete Milestone View for the current project.",
+    "description": (
+        "Replace the complete Milestone View derived from the approved canonical Plan. "
+        "This is a full replacement, not a patch. Use it for the initial delivery "
+        "breakdown or when remaining objectives/order must change; Candidate acceptance "
+        "alone records completion. Runtime invokes the Milestone Hard Gate only while "
+        "rolling delivery is IN_PROGRESS."
+    ),
     "parameters": {
         "type": "object",
         "properties": {

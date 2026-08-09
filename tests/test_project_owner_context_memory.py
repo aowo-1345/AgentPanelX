@@ -120,7 +120,7 @@ def _tool_response(
     }
 
 
-def _settings(capacity_tokens: int = 1_500) -> Settings:
+def _settings(capacity_tokens: int = 2_500) -> Settings:
     configured = load_settings(DEFAULT_SETTINGS_PATH)
     return configured.model_copy(
         update={

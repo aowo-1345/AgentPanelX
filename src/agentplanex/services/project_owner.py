@@ -275,7 +275,15 @@ class ProjectOwnerService:
             "message_id": activation.message_id,
             "runtime_status": context.status,
             "pending_action": context.pending_action,
+            "git_branch": context.git_branch,
+            "git_main_version": context.git_main_version,
+            "rolling_started_at": (
+                context.rolling_started_at.isoformat()
+                if context.rolling_started_at is not None
+                else None
+            ),
             "current_plan_commit_sha": context.current_plan_commit_sha,
+            "pending_plan_subject_digest": context.pending_plan_subject_digest,
             "current_snapshot_id": context.current_snapshot_id,
             "current_run_id": context.current_run_id,
             "current_milestone_key": context.current_milestone_key,

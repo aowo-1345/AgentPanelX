@@ -58,6 +58,7 @@ class ArtifactDescriptor:
     """A validated Agent output exposed to the Project Owner."""
 
     uri: str
+    project_relative_path: str
     media_type: str
     size: int
     sha256: str

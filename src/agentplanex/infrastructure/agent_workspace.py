@@ -270,6 +270,12 @@ class AgentWorkspaceStore:
         )
         return ArtifactDescriptor(
             uri=f"artifact://local/{uri_path}",
+            project_relative_path=str(
+                Path(_RUNTIME_DIRECTORY)
+                / _WORKSPACE_DIRECTORY
+                / workspace.workspace_id
+                / relative
+            ),
             media_type="text/markdown",
             size=len(content),
             sha256=hashlib.sha256(content).hexdigest(),

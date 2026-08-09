@@ -11,6 +11,22 @@ description: 理解 AgentPlaneX 项目的执行上下文、交付历史与 Timel
 
 始终成对审计 SQLite 与 Git：SQLite 证明控制面状态、对象关系和已记录的业务事实；Git 证明 Spec、代码、交付文档、commit 可达性与 ref 身份。`.agentplanex/agent-workspaces/` 中的 Agent artifact 是由 SQLite artifact descriptor 锚定的辅助证据，不是第三个独立状态权威。
 
+## 共享工作流与角色边界
+
+三份 Spec 合起来是规范性的 Project Plan。`requirements.md` 记录用户目标、范围和验收标准，`architecture.md` 记录系统边界和长期设计约束，`roadmap.md` 记录总体交付策略。Planner 的 `documents/plan.md` 是可被 Owner 采纳的建议；Reviewer 或 Hard Gate 的 `documents/review.md` 是固定对象的审查证据。两者都不会自动改写 Spec、Runtime 或接受分支。
+
+`TODO` 用于与用户维护 Spec、请求 Plan 批准和建立初始完整 Milestone View，不自动调用 Hard Gate。首次 Run 获用户批准后进入 `IN_PROGRESS`；此后提交新的 Plan 或完整 Milestone View 时，Runtime 才自动调用相应 Hard Gate。`BLOCKED` 用于 Owner 处理终态失败，不调用 Hard Gate；若批准的 Plan 和 Snapshot 仍有效，可以重新运行第一个未完成 Milestone。
+
+各角色共享同一套事实，但职责不同：
+
+| 角色 | 负责 | 不负责 |
+|---|---|---|
+| Project Owner | 维护用户意图和三份 Spec，采纳或拒绝 Agent 建议，发布完整 Milestone View，对 Candidate 作最终决定 | 冒充 Planner、Reviewer、Hard Gate 或 Executor，自行替用户批准 Plan |
+| Planner | 针对委派问题讨论或产出 `documents/plan.md` | 直接修改 canonical Spec、发布 Milestones 或批准 Plan |
+| Reviewer | 审查固定 Plan、Milestone 或 Candidate，并产出可追溯证据 | 接受 Candidate、改变 Runtime 或替 Owner 决策 |
+| Hard Gate | 在 Runtime 指定的 `IN_PROGRESS` 受保护操作中判断固定 subject 是否可继续 | 在 `TODO`/`BLOCKED` 自行运行、修改 subject 或决定用户意图 |
+| Stage Executor | 在固定 worktree 中实现固定 Stage 并留下 delivery document | 修改三份 canonical Spec、重规划 Milestone、提交或接受 Candidate |
+
 ## 核心流程
 
 ```mermaid
@@ -23,9 +39,12 @@ sequenceDiagram
     participant Git as Git commits 与 refs
 
     User->>Owner: 提供意图或受控决策
-    Owner->>Runtime: 发出受保护的 Tool Action
-    Runtime->>SQLite: 校验契约并更新 Context
-    Runtime->>SQLite: 发布不可变 Milestone Snapshot
+    Owner->>Git: 维护三份 canonical Spec
+    Owner->>Runtime: 请求用户批准精确 Plan
+    Runtime->>Git: 仅在用户批准后提交 Spec baseline
+    Owner->>Runtime: 发布完整 Milestone View
+    Runtime->>SQLite: 发布不可变 Snapshot
+    User->>Runtime: 批准首次 Run
     Runtime->>Runner: 入队下一个有序 StageRun
     Runner->>Git: 从固定输入执行并创建 Stage commit/ref
     Runner->>Runtime: 回报 Stage 成功、失败或 Candidate 就绪
@@ -59,7 +78,7 @@ sequenceDiagram
     │   │   ├── workspace.json
     │   │   ├── documents/plan.md               # Planner Task artifact；不自动进入接受分支
     │   │   └── outbox/{invocation_id}/result.json
-    │   └── {reviewer_workspace_id}/            # 每次 Hard Gate 使用的隔离 workspace
+    │   └── {reviewer_workspace_id}/            # Reviewer/Hard Gate 的隔离 workspace
     │       ├── workspace.json
     │       ├── inputs/milestones.json          # 仅 Milestone Gate 需要时出现
     │       ├── documents/review.md              # Gate 审计 artifact；不进入接受分支
@@ -95,16 +114,25 @@ sequenceDiagram
     participant DB as SQLite<br/>Context / Snapshot / StageRun / Timeline
 
     Note over Owner,DB: Plan 与 Milestone 证据
-    Owner->>Runtime: 形成或修改 Plan
-    Runtime->>Artifacts: 执行 Planner / Plan Hard Gate Contract
-    Artifacts-->>Runtime: plan.md / review.md + artifact descriptor
-    Runtime->>DB: 记录 subject、Gate 结果与 Timeline
-    User->>Runtime: 批准已审查的 Plan
+    Owner->>Artifacts: 可选委派 Planner
+    Artifacts-->>Owner: plan.md + artifact descriptor
+    Owner->>Runtime: 请求批准精确三份 Spec
+    alt TODO 或 BLOCKED
+        Runtime->>DB: 不运行 Hard Gate，记录待批准 Spec 摘要
+    else IN_PROGRESS
+        Runtime->>Artifacts: 执行固定 Plan Hard Gate Contract
+        Runtime->>DB: 记录 review descriptor 与待批准 Spec 摘要
+    end
+    User->>Runtime: 批准 Plan
     Runtime->>Git: 创建 Plan commit
     Runtime->>DB: 关联 plan_commit_sha
     Owner->>Runtime: 发布完整 Milestone View
-    Runtime->>Artifacts: 执行 Milestone Hard Gate Contract
-    Runtime->>DB: 记录 review descriptor 与不可变 Snapshot
+    alt TODO 或 BLOCKED
+        Runtime->>DB: 不运行 Hard Gate，记录不可变 Snapshot
+    else IN_PROGRESS
+        Runtime->>Artifacts: 执行固定 Milestone Hard Gate Contract
+        Runtime->>DB: 记录 review descriptor 与不可变 Snapshot
+    end
 
     Note over Owner,DB: Stage 与 Candidate 证据
     Runtime->>DB: 固定 Snapshot、Stage 与 input_commit_sha
@@ -136,10 +164,11 @@ sequenceDiagram
 
 | 审计对象 | 最小闭环 |
 |---|---|
-| Plan / Gate | `subject_digest` → `review.md` descriptor → `plan_commit_sha` |
+| Plan 批准 | `subject_digest` → 用户决定 → `plan_commit_sha` |
+| Rolling Hard Gate | `subject_digest` → `review.md` descriptor → 受保护操作结果 |
 | Stage / Delivery | Snapshot 与 `input_commit_sha` → Stage commit/ref → 代码 diff 与 delivery document |
 | Candidate 决策 | Candidate ref → 接受/拒绝事实 → 接受分支可达性与后继 Snapshot |
 
 先用 Context 定位“现在”，再用不可变 SQLite 行和 Git 对象解释“如何到达”。任何单个当前指针、Timeline 事件或 workspace 文件都不足以独立完成归因；若 Timeline 缺失，明确记录证据缺口，不要据此推翻已经成立的 SQLite 终态或 Git 事实。
 
-在解释 Timeline payload、SQLite 关系、状态值或开展角色相关调查前，阅读 [references/detail.md](references/detail.md)。只读查询 SQLite 和 Git。所有状态变化必须经过运行时的 Tool 或受控命令，禁止直接编辑 SQLite、Git ref 或证据文件。
+正常协作先使用本页的流程和角色边界。需要解释 Timeline payload、SQLite 关系、状态值或历史对象时，再阅读 [references/detail.md](references/detail.md)。只读查询 SQLite 和 Git。所有状态变化必须经过运行时的 Tool 或受控命令，禁止直接编辑 SQLite、Git ref 或证据文件。

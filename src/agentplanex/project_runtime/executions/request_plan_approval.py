@@ -42,25 +42,32 @@ class RequestPlanApprovalExecution(ProjectExecution):
                 }
             )
 
-        review = requested.review
         output = {
             "ok": True,
             "accepted": requested.accepted,
             "triage_id": requested.context.triage_id,
             "status": requested.context.status,
             "pending_action": requested.context.pending_action,
-            "review": {
+            "subject_digest": requested.subject_digest,
+            "hard_gate_invoked": requested.review is not None,
+            "review": None,
+        }
+        review = requested.review
+        if review is not None:
+            output["review"] = {
                 "decision": review.decision,
                 "summary": review.summary,
                 "required_changes": list(review.required_changes),
                 "artifact": {
                     "uri": review.audit_artifact.uri,
+                    "project_relative_path": (
+                        review.audit_artifact.project_relative_path
+                    ),
                     "media_type": review.audit_artifact.media_type,
                     "size": review.audit_artifact.size,
                     "sha256": review.audit_artifact.sha256,
                 },
-            },
-        }
+            }
         if not requested.accepted:
             return ToolExecutionResult(output=output)
         return ToolExecutionResult(
@@ -68,8 +75,7 @@ class RequestPlanApprovalExecution(ProjectExecution):
             exit=AgentExit(
                 status=AgentExitStatus.PLAN_APPROVAL_REQUESTED,
                 content=(
-                    "The current Plan passed Hard Gate review and is waiting "
-                    "for user approval."
+                    "The exact current Plan is waiting for explicit user approval."
                 ),
             ),
         )

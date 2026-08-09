@@ -233,9 +233,9 @@ erDiagram
 
 ### 项目 Runtime
 
-`TRIAGE` 是初始探索状态。`TODO` 表示 Plan 已批准，可以发布 Milestone。`READY` 等待首次 Run 的显式批准。`IN_PROGRESS` 表示 Rolling Delivery 正在进行。`BLOCKED` 记录需要新的 Owner 决策或修正 Plan 的失败。`DONE` 表示最终未完成 Milestone 的 Candidate 已被接受。
+`TRIAGE` 是初始探索状态。`TODO` 表示尚未开始 Rolling Delivery：Owner 可以维护和请求批准 Plan，也可以在已有批准 Plan 后发布初始 Milestone View。是否已有批准基线必须检查 `current_plan_commit_sha`，不能仅由状态推断。`READY` 等待首次 Run 的显式批准。`IN_PROGRESS` 表示 Rolling Delivery 正在进行；此时提交新的 Plan 或完整 Milestone View 会自动运行相应 Hard Gate。`BLOCKED` 记录需要 Owner 决策的终态失败，不运行 Hard Gate；若 Plan 与 Snapshot 未变化，可以重新运行第一个未完成 Milestone。`DONE` 表示最终未完成 Milestone 的 Candidate 已被接受。
 
-`pending_action` 独立于描述性的 Timeline 历史。`PLAN_APPROVAL` 表示已审查的 Plan 等待用户决策。`FIRST_RUN_APPROVAL` 表示 Milestone 已发布，但首次 Run 尚未显式开始。
+`pending_action` 独立于描述性的 Timeline 历史。`PLAN_APPROVAL` 表示精确 Plan subject 等待用户决策；只有在 `IN_PROGRESS` 提交时才必然具有 Hard Gate review。`FIRST_RUN_APPROVAL` 表示 Milestone 已发布，但首次 Run 尚未显式开始。
 
 ### StageRun 与 Activation
 
@@ -251,7 +251,7 @@ erDiagram
 |---|---|---|
 | 项目负责人循环 | `REACT_LOOP_ENTERED`、`REACT_LOOP_EXITED` | 一次项目负责人 Activation 进入或离开 ReAct loop。`react_loop_id` 使用稳定的 `activation_id`；payload 标识 `driver_mode`、`task_type` 或 `agent_exit_status`。 |
 | 当前 Context | `RUNTIME_CONTEXT_UPDATED` | 一次已持久化的 Context 变化。payload 有 `reason` 和 `changes`，每个变化包含 `from` 与 `to`。 |
-| 外部 Agent | `AGENT_INVOCATION_STARTED`、`AGENT_INVOCATION_COMPLETED`、`AGENT_INVOCATION_FAILED` | Hard Gate 或 Stage Executor 的调用。payload 含 `invocation_id`、`operation`、相关对象 ID，以及适用时的失败类型。 |
+| 外部 Agent | `AGENT_INVOCATION_STARTED`、`AGENT_INVOCATION_COMPLETED`、`AGENT_INVOCATION_FAILED` | Planner/Reviewer A2A、Hard Gate 或 Stage Executor 的调用。payload 含 `invocation_id`、`operation`、相关对象 ID，以及适用时的失败类型。 |
 | 计划 | `PLAN_APPROVAL_REQUESTED`、`PLAN_APPROVED`、`PLAN_REJECTED` | Plan 进入审批、带 `plan_commit_sha` 通过审批，或被拒绝。 |
 | 里程碑 | `MILESTONES_UPDATED`、`FIRST_RUN_APPROVAL_REQUESTED`、`MILESTONE_RUN_QUEUED` | 完整 Snapshot 被发布、首次人类启动关卡打开，或下一个有序 StageRun 入队。payload 锚定 Snapshot、Milestone、Run 与 Stage。 |
 | 阶段 | `STAGE_RUN_STARTED`、`STAGE_RUN_SUCCEEDED`、`STAGE_RUN_FAILED` | Stage 被 claim、终态产出或终态失败。payload 锚定 `stage_run_id`、`run_id`、commit 与失败详情。 |
@@ -266,7 +266,7 @@ erDiagram
 |---|---|---|
 | 执行者 | `stage_run_id` | 对应 Snapshot JSON、`input_commit_sha`、前一 StageRun 输出和固定交付文档路径。 |
 | 规划者 | Spec 文件与当前 Plan/Snapshot 标识 | 只有任务确实需要 Plan 变更理由时，才读取 Owner message history。 |
-| 硬门控 | 精确的 Plan commit 或 Snapshot 及 subject digest | 不可变 subject 和证据 artifact；不得决定或修改 Context。 |
+| 硬门控 | `IN_PROGRESS` 受保护操作提供的精确 Plan/完整 Milestone subject digest | 不可变 subject 和证据 artifact；不得决定或修改 Context，也不得在 `TODO`/`BLOCKED` 自行运行。 |
 | 审查者 | Candidate SHA 与 `run_id` | 最终 StageRun、全部有序 Stage 输出、Snapshot、交付文档和 Git diff。 |
 | 项目负责人 | 当前 Context 与 activation `message_id` | 当前 Snapshot、Candidate/Run 事实，以及与待决策相关的 Timeline 事实。 |
 | 调查 Agent | `triage_id`、`event_id`、Run、Snapshot 或 commit | 沿上述逻辑关系遍历，并独立验证 Git 可达性或 diff。 |

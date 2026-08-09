@@ -39,24 +39,31 @@ class UpdateMilestonesExecution(ProjectExecution):
                 output={"ok": False, "error": f"Invalid Milestone View: {error}"}
             )
 
-        review = updated.review
         output: dict[str, object] = {
             "ok": True,
             "accepted": updated.accepted,
             "triage_id": updated.context.triage_id,
             "status": updated.context.status,
-            "review": {
+            "subject_digest": updated.subject_digest,
+            "hard_gate_invoked": updated.review is not None,
+            "review": None,
+        }
+        review = updated.review
+        if review is not None:
+            output["review"] = {
                 "decision": review.decision,
                 "summary": review.summary,
                 "required_changes": list(review.required_changes),
                 "artifact": {
                     "uri": review.audit_artifact.uri,
+                    "project_relative_path": (
+                        review.audit_artifact.project_relative_path
+                    ),
                     "media_type": review.audit_artifact.media_type,
                     "size": review.audit_artifact.size,
                     "sha256": review.audit_artifact.sha256,
                 },
-            },
-        }
+            }
         if updated.snapshot is not None:
             output["snapshot"] = {
                 "snapshot_id": updated.snapshot.snapshot_id,

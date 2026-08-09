@@ -8,7 +8,12 @@ DECIDE_MILESTONE_CANDIDATE_TOOL_NAME = "decide_milestone_candidate"
 DECIDE_MILESTONE_CANDIDATE_TOOL_SCHEMA: ToolSchema = {
     "type": "function",
     "name": DECIDE_MILESTONE_CANDIDATE_TOOL_NAME,
-    "description": "Accept or reject the current unresolved Milestone Candidate.",
+    "description": (
+        "Accept or reject the exact current Milestone Candidate after inspecting its "
+        "fixed Git evidence and any delegated review. Accept integrates it and records "
+        "Milestone completion; reject preserves it for audit and leaves the Milestone "
+        "unfinished."
+    ),
     "parameters": {
         "type": "object",
         "properties": {

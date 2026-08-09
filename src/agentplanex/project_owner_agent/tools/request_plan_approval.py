@@ -9,8 +9,10 @@ REQUEST_PLAN_APPROVAL_TOOL_SCHEMA: ToolSchema = {
     "type": "function",
     "name": REQUEST_PLAN_APPROVAL_TOOL_NAME,
     "description": (
-        "Request human approval for the current architecture.md, requirements.md, "
-        "and roadmap.md specification documents."
+        "Submit the exact current architecture.md, requirements.md, and roadmap.md "
+        "as one canonical Plan for explicit user approval. This never approves the "
+        "Plan on the Owner's behalf. Runtime invokes the Plan Hard Gate only while "
+        "rolling delivery is IN_PROGRESS."
     ),
     "parameters": {
         "type": "object",

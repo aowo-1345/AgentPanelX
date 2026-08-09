@@ -95,6 +95,25 @@ class GitRepository:
                 paths.append(path)
         return tuple(paths)
 
+    def paths_changed_from_commit(
+        self,
+        commit_sha: str,
+        paths: tuple[Path, ...],
+        *,
+        target_commit_sha: str | None = None,
+    ) -> tuple[str, ...]:
+        """Return selected paths differing from a fixed commit or the worktree."""
+        relative_paths = tuple(self._relative_path(path) for path in paths)
+        arguments = ["diff", "--name-only", commit_sha]
+        if target_commit_sha is not None:
+            arguments.append(target_commit_sha)
+        arguments.extend(("--", *relative_paths))
+        return tuple(
+            path
+            for path in self._run(*arguments).stdout.splitlines()
+            if path
+        )
+
     def commit_paths(self, paths: tuple[Path, ...], *, message: str) -> str:
         """Commit only the given project-relative paths and return HEAD."""
         relative_paths = tuple(self._relative_path(path) for path in paths)

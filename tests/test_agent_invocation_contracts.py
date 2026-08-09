@@ -117,7 +117,7 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
     instructions = str(_RecordingOwnerModel.queries[-1][0]["content"])
     skill_path = resolve_observation_skill()
     assert "Project Owner" in instructions
-    assert "project governance" in instructions
+    assert "three canonical project-root Specs" in instructions
     assert "agentplanex-project-observe" in instructions
     assert skill_path.is_file()
     assert f'"observation_skill": "{skill_path}"' in instructions

@@ -89,6 +89,11 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
                     f"implemented {stage_key}\n",
                     encoding="utf-8",
                 )
+                if "CHANGE_CANONICAL_SPEC" in request.message:
+                    (request.workspace / "architecture.md").write_text(
+                        "# Architecture\n\nExecutor changed the canonical Spec.\n",
+                        encoding="utf-8",
+                    )
         if is_gate or is_task:
             declared = output_contract if is_gate else output_contract["outbox"]
             assert isinstance(declared, dict)
@@ -290,6 +295,8 @@ def _approve_current_plan(
     request = json.loads(capfd.readouterr().out)
     assert request_code == 0
     assert request["result"]["accepted"] is True
+    assert request["result"]["hard_gate_invoked"] is False
+    assert request["result"]["review"] is None
 
     approve_code = debug_tool_cli.main(
         ["--cwd", str(project_path), "--print", "approve"]
@@ -343,6 +350,8 @@ def _publish_milestones(
     assert response["result"]["accepted"] is True
     result = response["result"]
     assert isinstance(result, dict)
+    assert result["hard_gate_invoked"] is False
+    assert result["review"] is None
     return result
 
 
@@ -371,6 +380,42 @@ def _request_and_start_first_run(
     result = started["result"]
     assert isinstance(result, dict)
     return result
+
+
+def _reach_idle_in_progress(
+    project_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    _approve_current_plan(project_path, monkeypatch, capfd)
+    _publish_milestones(
+        project_path,
+        capfd,
+        stages=[{"key": "stage-1", "objective": "Produce a reviewable Candidate."}],
+    )
+    _request_and_start_first_run(project_path, capfd)
+    assert debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive-delivery"]
+    ) == 0
+    capfd.readouterr()
+    assert debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    ) == 0
+    capfd.readouterr()
+    assert debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"decide_milestone_candidate","arguments":'
+            '{"decision":"reject","reason":"Exercise rolling replanning."}}',
+        ]
+    ) == 0
+    capfd.readouterr()
+    context = _load_context(project_path)
+    assert context.status == "IN_PROGRESS"
+    assert context.current_run_id is None
+    assert context.current_candidate_commit_sha is None
 
 
 def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
@@ -423,8 +468,6 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
     assert [event.event_type.value for event in events] == [
         "RUNTIME_CONTEXT_UPDATED",
         "REACT_LOOP_ENTERED",
-        "AGENT_INVOCATION_STARTED",
-        "AGENT_INVOCATION_COMPLETED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "REACT_LOOP_EXITED",
@@ -444,23 +487,9 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
         "driver_mode": "MODEL",
     }
     assert events[1].message_id == histories[0].message_id
-    invocation_id = events[2].payload["invocation_id"]
-    assert isinstance(invocation_id, str)
-    assert events[2].payload == {
-        "invocation_id": invocation_id,
-        "operation": "plan_hard_gate",
-        "subject_digest": reviewed_digest,
-    }
-    assert events[3].payload["invocation_id"] == invocation_id
-    assert events[3].payload["operation"] == "plan_hard_gate"
-    assert events[3].payload["subject_digest"] == reviewed_digest
-    assert events[3].payload["decision"] == "pass"
-    assert events[3].payload["required_change_count"] == 0
     assert events[2].message_id == histories[1].message_id
     assert events[3].message_id == histories[1].message_id
-    assert events[4].message_id == histories[1].message_id
-    assert events[5].message_id == histories[1].message_id
-    assert events[4].payload == {
+    assert events[2].payload == {
         "reason": "PLAN_APPROVAL_REQUESTED",
         "changes": {
             "pending_action": {"from": None, "to": "PLAN_APPROVAL"},
@@ -470,9 +499,12 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
             },
         },
     }
-    assert events[5].payload == {}
-    assert events[6].message_id == histories[2].message_id
-    assert events[6].payload == {
+    assert events[3].payload == {
+        "subject_digest": reviewed_digest,
+        "hard_gate_invoked": False,
+    }
+    assert events[4].message_id == histories[2].message_id
+    assert events[4].payload == {
         "agent_exit_status": "PlanApprovalRequested",
         "driver_mode": "MODEL",
     }
@@ -900,6 +932,12 @@ def test_talk_task_keeps_workspace_and_publishes_document_uri(
     assert first_artifact["uri"].startswith(
         "artifact://local/agent-workspaces/"
     )
+    assert first_artifact["project_relative_path"].startswith(
+        ".agentplanex/agent-workspaces/"
+    )
+    assert (project_path / first_artifact["project_relative_path"]).is_file()
+    assert first_result["runtime_anchor"]["status"] == "TRIAGE"
+    assert first_result["runtime_anchor"]["candidate_commit_sha"] is None
     store = AgentWorkspaceStore(project_path, 65_536, 262_144)
     first_document = store.resolve_artifact(first_artifact["uri"])
     assert "Create the initial Plan document." in first_document.path.read_text(
@@ -995,10 +1033,11 @@ def test_talk_task_keeps_workspace_and_publishes_document_uri(
 
 def test_plan_hard_gate_revise_returns_review_without_transition(
     initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
-    _write_specs(project_path)
+    _reach_idle_in_progress(project_path, monkeypatch, capfd)
     (project_path / "requirements.md").write_text(
         "# Requirements\n\nNEEDS_REVIEW_CHANGES\n",
         encoding="utf-8",
@@ -1030,7 +1069,7 @@ def test_plan_hard_gate_revise_returns_review_without_transition(
     assert context.pending_action is None
     assert context.pending_plan_subject_digest is None
     assert _git(project_path, "rev-parse", "HEAD") == initial_head
-    events = _loaded_events(project_path)
+    events = _loaded_events(project_path)[-2:]
     assert [event.event_type.value for event in events] == [
         "AGENT_INVOCATION_STARTED",
         "AGENT_INVOCATION_COMPLETED",
@@ -1048,7 +1087,7 @@ def test_plan_hard_gate_timeout_records_failed_invocation_only(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
-    _write_specs(project_path)
+    _reach_idle_in_progress(project_path, monkeypatch, capfd)
 
     def timeout(
         _self: CodexTurnTransport,
@@ -1070,7 +1109,7 @@ def test_plan_hard_gate_timeout_records_failed_invocation_only(
     assert code == 1
     assert response["result"]["ok"] is False
     assert "timed out" in response["result"]["error"]
-    events = _loaded_events(project_path)
+    events = _loaded_events(project_path)[-2:]
     assert [event.event_type.value for event in events] == [
         "AGENT_INVOCATION_STARTED",
         "AGENT_INVOCATION_FAILED",
@@ -1081,6 +1120,92 @@ def test_plan_hard_gate_timeout_records_failed_invocation_only(
     context = _load_context(project_path)
     assert context.pending_action is None
     assert context.pending_plan_subject_digest is None
+
+
+def test_in_progress_blocks_spec_drift_then_gates_plan_reapproval(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    _reach_idle_in_progress(project_path, monkeypatch, capfd)
+    (project_path / "architecture.md").write_text(
+        "# Architecture\n\nAdopt a revised boundary.\n",
+        encoding="utf-8",
+    )
+
+    run_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"run_next_milestone","arguments":{}}',
+        ]
+    )
+    blocked = json.loads(capfd.readouterr().out)
+    assert run_code == 1
+    assert "request Plan approval before continuing delivery" in blocked["result"][
+        "error"
+    ]
+
+    request_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"request_plan_approval","arguments":{}}',
+        ]
+    )
+    requested = json.loads(capfd.readouterr().out)
+    assert request_code == 0
+    assert requested["result"]["accepted"] is True
+    assert requested["result"]["hard_gate_invoked"] is True
+    assert requested["result"]["review"]["decision"] == "pass"
+    assert requested["result"]["status"] == "IN_PROGRESS"
+
+
+def test_in_progress_milestone_replacement_runs_hard_gate(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    _reach_idle_in_progress(project_path, monkeypatch, capfd)
+
+    code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "update_milestones",
+                    "arguments": {
+                        "reason": "Refine the remaining delivery breakdown.",
+                        "milestones": [
+                            {
+                                "key": "milestone-1",
+                                "objective": "Deliver the requested behavior.",
+                                "state": "pending",
+                                "stages": [
+                                    {
+                                        "key": "stage-refined",
+                                        "objective": "Implement the refined work.",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                }
+            ),
+        ]
+    )
+    updated = json.loads(capfd.readouterr().out)
+    assert code == 0
+    assert updated["result"]["accepted"] is True
+    assert updated["result"]["hard_gate_invoked"] is True
+    assert updated["result"]["review"]["decision"] == "pass"
+    assert updated["result"]["snapshot"]["previous_snapshot_id"] is not None
 
 
 def test_plan_approval_rejects_specs_changed_after_hard_gate(
@@ -1114,7 +1239,7 @@ def test_plan_approval_rejects_specs_changed_after_hard_gate(
 
     assert approve_code == 1
     assert approve_response["ok"] is False
-    assert "changed after Hard Gate review" in approve_response["error"]
+    assert "changed after approval was requested" in approve_response["error"]
     context = _load_context(project_path)
     assert context.pending_action == "PLAN_APPROVAL"
     assert context.pending_plan_subject_digest is not None
@@ -1200,7 +1325,7 @@ def test_unexpected_gate_failure_is_not_converted_to_tool_observation(
     project_path = initialize_git_project()
     _write_specs(project_path)
     database = SQLiteDatabase.for_project(project_path)
-    context = ProjectRuntimeContext("triage-unexpected")
+    context = ProjectRuntimeContext("triage-unexpected", status="IN_PROGRESS")
     contexts = SQLiteProjectRuntimeContextRepository()
     with database.transaction() as connection:
         contexts.insert(connection, context)
@@ -1306,6 +1431,24 @@ def test_complete_rolling_delivery_is_observable_through_debug_commands(
             f"{run_id}/stage-2.md"
         ),
     )
+    candidate_message = next(
+        json.loads(content)
+        for content in _loaded_message_contents(project_path)
+        if '"event": "MILESTONE_CANDIDATE_READY"' in content
+    )
+    assert candidate_message["work_object"] == {
+        "snapshot_id": initial_snapshot_id,
+        "run_id": run_id,
+        "milestone_key": "milestone-1",
+        "base_commit_sha": plan_commit_sha,
+        "candidate_commit_sha": candidate_commit_sha,
+        "candidate_ref": f"refs/agentplanex/candidates/{run_id}",
+    }
+    assert candidate_message["evidence"]["review_status"] == "NOT_REQUESTED"
+    assert candidate_message["evidence"]["delivery_documents"] == [
+        f"docs/agentplanex/deliveries/{run_id}/stage-1.md",
+        f"docs/agentplanex/deliveries/{run_id}/stage-2.md",
+    ]
 
     candidate_view_code = debug_tool_cli.main(
         ["--cwd", str(project_path), "--print", "view"]
@@ -1317,19 +1460,46 @@ def test_complete_rolling_delivery_is_observable_through_debug_commands(
     )
     assert candidate_view["allowed_actions"] == ["drive"]
 
-    activation_code = debug_tool_cli.main(
-        ["--cwd", str(project_path), "--print", "drive"]
+    review_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            "drive",
+            "tool",
+            json.dumps(
+                {
+                    "tool": "talk_to_agent",
+                    "arguments": {
+                        "agent_id": "reviewer",
+                        "kind": "task",
+                        "message": "Review the exact current Milestone Candidate.",
+                        "artifacts": [],
+                    },
+                }
+            ),
+        ]
     )
-    activation = json.loads(capfd.readouterr().out)
-    assert activation_code == 0
-    assert activation["activation"]["task_type"] == "EXECUTION_RESULT"
-    assert activation["activation"]["status"] == "COMPLETED"
+    review = json.loads(capfd.readouterr().out)
+    assert review_code == 0
+    assert review["activation"]["task_type"] == "EXECUTION_RESULT"
+    assert review["activation"]["status"] == "PENDING"
+    assert review["result"]["runtime_anchor"]["candidate_commit_sha"] == (
+        candidate_commit_sha
+    )
+    review_artifact = review["result"]["artifacts"][0]
+    assert review_artifact["project_relative_path"].endswith(
+        "/documents/review.md"
+    )
+    assert (project_path / review_artifact["project_relative_path"]).is_file()
 
     decision_code = debug_tool_cli.main(
         [
             "--cwd",
             str(project_path),
             "--print",
+            "drive",
+            "tool",
             json.dumps(
                 {
                     "tool": "decide_milestone_candidate",
@@ -1344,8 +1514,11 @@ def test_complete_rolling_delivery_is_observable_through_debug_commands(
     decision = json.loads(capfd.readouterr().out)
     assert decision_code == 0
     assert decision["result"]["completed"] is True
+    assert decision["result"]["milestone_key"] == "milestone-1"
+    assert decision["result"]["next_milestone_key"] is None
     assert decision["result"]["status"] == "DONE"
     assert decision["exit"]["status"] == "TriageDevelopmentCompleted"
+    assert decision["activation"]["status"] == "COMPLETED"
     assert _git(project_path, "rev-parse", "HEAD") == candidate_commit_sha
 
     final_code = debug_tool_cli.main(
@@ -1448,6 +1621,53 @@ def test_rejected_candidate_stays_reachable_and_next_run_skips_first_approval(
     assert _load_context(project_path).pending_action is None
 
 
+def test_candidate_that_changes_canonical_specs_cannot_be_accepted(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    plan_commit_sha = _approve_current_plan(project_path, monkeypatch, capfd)
+    _publish_milestones(
+        project_path,
+        capfd,
+        stages=[
+            {
+                "key": "stage-1",
+                "objective": "CHANGE_CANONICAL_SPEC while implementing code.",
+            }
+        ],
+    )
+    _request_and_start_first_run(project_path, capfd)
+    assert debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive-delivery"]
+    ) == 0
+    driven = json.loads(capfd.readouterr().out)
+    candidate_commit_sha = driven["result"]["candidate_commit_sha"]
+    assert isinstance(candidate_commit_sha, str)
+    assert debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    ) == 0
+    capfd.readouterr()
+
+    decision_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"decide_milestone_candidate","arguments":'
+            '{"decision":"accept","reason":"Attempt integration."}}',
+        ]
+    )
+    decision = json.loads(capfd.readouterr().out)
+    assert decision_code == 1
+    assert "Candidate changes canonical Plan Specs" in decision["result"]["error"]
+    assert _git(project_path, "rev-parse", "HEAD") == plan_commit_sha
+    assert _load_context(project_path).current_candidate_commit_sha == (
+        candidate_commit_sha
+    )
+
+
 def test_invalid_stage_output_becomes_failed_fact_block_and_owner_activation(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -1493,6 +1713,15 @@ def test_invalid_stage_output_becomes_failed_fact_block_and_owner_activation(
     assert view["context"]["current_candidate_commit_sha"] is None
     assert view["stage_runs"][0]["status"] == "FAILED"
     assert view["allowed_actions"] == ["drive"]
+    failure_message = next(
+        json.loads(content)
+        for content in _loaded_message_contents(project_path)
+        if '"event": "STAGE_EXECUTION_FAILED"' in content
+    )
+    assert failure_message["runtime_status"] == "BLOCKED"
+    assert failure_message["work_object"]["run_id"] == run_id
+    assert failure_message["work_object"]["stage_key"] == "stage-fail"
+    assert "run_next_milestone" in failure_message["required_decision"]
 
     event_types = [event.event_type.value for event in _loaded_events(project_path)]
     assert "AGENT_INVOCATION_FAILED" in event_types
@@ -1512,6 +1741,111 @@ def test_invalid_stage_output_becomes_failed_fact_block_and_owner_activation(
         text=True,
     )
     assert candidate_ref.returncode != 0
+
+    assert debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    ) == 0
+    capfd.readouterr()
+    retry_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"run_next_milestone","arguments":{}}',
+        ]
+    )
+    retry = json.loads(capfd.readouterr().out)
+    assert retry_code == 0
+    assert retry["result"]["state"] == "MILESTONE_RUN_QUEUED"
+    assert retry["result"]["run_id"] != run_id
+    assert retry["result"]["status"] == "IN_PROGRESS"
+    assert _load_context(project_path).status == "IN_PROGRESS"
+
+
+def test_blocked_replanning_skips_plan_and_milestone_hard_gates(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    _approve_current_plan(project_path, monkeypatch, capfd)
+    _publish_milestones(
+        project_path,
+        capfd,
+        stages=[
+            {
+                "key": "stage-fail",
+                "objective": "FAIL_STAGE_CONTRACT before replanning.",
+            }
+        ],
+    )
+    _request_and_start_first_run(project_path, capfd)
+    assert debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive-delivery"]
+    ) == 0
+    failed = json.loads(capfd.readouterr().out)
+    assert failed["result"]["context_status"] == "BLOCKED"
+    assert debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive"]
+    ) == 0
+    capfd.readouterr()
+
+    update_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "update_milestones",
+                    "arguments": {
+                        "reason": "Replace the failed delivery path.",
+                        "milestones": [
+                            {
+                                "key": "milestone-1",
+                                "objective": "Deliver through the replacement path.",
+                                "state": "pending",
+                                "stages": [
+                                    {
+                                        "key": "stage-retry",
+                                        "objective": "Implement the corrected approach.",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                }
+            ),
+        ]
+    )
+    updated = json.loads(capfd.readouterr().out)
+    assert update_code == 0
+    assert updated["result"]["status"] == "BLOCKED"
+    assert updated["result"]["hard_gate_invoked"] is False
+    assert updated["result"]["review"] is None
+    assert _load_context(project_path).current_run_id is None
+
+    request_code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            '{"tool":"request_plan_approval","arguments":{}}',
+        ]
+    )
+    requested = json.loads(capfd.readouterr().out)
+    assert request_code == 0
+    assert requested["result"]["status"] == "BLOCKED"
+    assert requested["result"]["hard_gate_invoked"] is False
+    assert requested["result"]["review"] is None
+    gate_starts = [
+        event
+        for event in _loaded_events(project_path)
+        if event.event_type.value == "AGENT_INVOCATION_STARTED"
+        and event.payload.get("operation")
+        in {"plan_hard_gate", "milestone_hard_gate"}
+    ]
+    assert gate_starts == []
 
 
 def test_request_then_approve_commits_specs_and_queues_owner_activation(
@@ -1566,12 +1900,11 @@ def test_request_then_approve_commits_specs_and_queues_owner_activation(
     }
     assert _git(project_path, "diff", "--cached", "--name-only") == "index.html"
     assert any(
-        content.startswith("The user approved the current Plan.")
+        '"event": "PLAN_DECISION_RECEIVED"' in content
+        and '"decision": "APPROVED"' in content
         for content in _loaded_message_contents(project_path)
     )
     assert [event.event_type.value for event in _loaded_events(project_path)] == [
-        "AGENT_INVOCATION_STARTED",
-        "AGENT_INVOCATION_COMPLETED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "RUNTIME_CONTEXT_UPDATED",
@@ -1592,8 +1925,6 @@ def test_request_then_approve_commits_specs_and_queues_owner_activation(
     histories = _loaded_message_histories(project_path)
     events = _loaded_events(project_path)
     assert [event.event_type.value for event in events] == [
-        "AGENT_INVOCATION_STARTED",
-        "AGENT_INVOCATION_COMPLETED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "RUNTIME_CONTEXT_UPDATED",
@@ -1601,17 +1932,17 @@ def test_request_then_approve_commits_specs_and_queues_owner_activation(
         "REACT_LOOP_ENTERED",
         "REACT_LOOP_EXITED",
     ]
-    assert all(event.react_loop_id is None for event in events[:6])
-    assert all(event.message_id is None for event in events[:4])
-    assert events[4].message_id == histories[0].message_id
-    assert events[5].message_id == histories[0].message_id
-    assert events[5].payload == {
+    assert all(event.react_loop_id is None for event in events[:4])
+    assert all(event.message_id is None for event in events[:2])
+    assert events[2].message_id == histories[0].message_id
+    assert events[3].message_id == histories[0].message_id
+    assert events[3].payload == {
         "plan_commit_sha": context.current_plan_commit_sha
     }
-    assert events[6].message_id == histories[0].message_id
-    assert events[6].react_loop_id is not None
-    assert events[7].react_loop_id == events[6].react_loop_id
-    assert events[7].message_id == histories[1].message_id
+    assert events[4].message_id == histories[0].message_id
+    assert events[4].react_loop_id is not None
+    assert events[5].react_loop_id == events[4].react_loop_id
+    assert events[5].message_id == histories[1].message_id
 
 
 def test_request_then_reject_does_not_commit_and_queues_owner_activation(
@@ -1654,14 +1985,13 @@ def test_request_then_reject_does_not_commit_and_queues_owner_activation(
     assert context.pending_action is None
     assert context.current_plan_commit_sha is None
     assert _git(project_path, "rev-parse", "HEAD") == initial_head
-    assert (
-        "The user rejected the current Plan. "
-        "Feedback: requirements are incomplete"
-    ) in _loaded_message_contents(project_path)
+    assert any(
+        '"decision": "REJECTED"' in content
+        and '"feedback": "requirements are incomplete"' in content
+        for content in _loaded_message_contents(project_path)
+    )
 
     assert [event.event_type.value for event in _loaded_events(project_path)] == [
-        "AGENT_INVOCATION_STARTED",
-        "AGENT_INVOCATION_COMPLETED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "RUNTIME_CONTEXT_UPDATED",
@@ -1677,8 +2007,6 @@ def test_request_then_reject_does_not_commit_and_queues_owner_activation(
     histories = _loaded_message_histories(project_path)
     events = _loaded_events(project_path)
     assert [event.event_type.value for event in events] == [
-        "AGENT_INVOCATION_STARTED",
-        "AGENT_INVOCATION_COMPLETED",
         "RUNTIME_CONTEXT_UPDATED",
         "PLAN_APPROVAL_REQUESTED",
         "RUNTIME_CONTEXT_UPDATED",
@@ -1686,9 +2014,9 @@ def test_request_then_reject_does_not_commit_and_queues_owner_activation(
         "REACT_LOOP_ENTERED",
         "REACT_LOOP_EXITED",
     ]
-    assert events[4].message_id == histories[0].message_id
-    assert events[5].message_id == histories[0].message_id
-    assert events[5].payload == {}
+    assert events[2].message_id == histories[0].message_id
+    assert events[3].message_id == histories[0].message_id
+    assert events[3].payload == {}
 
 
 def test_plain_text_submits_then_drives_a_restart_safe_user_activation(

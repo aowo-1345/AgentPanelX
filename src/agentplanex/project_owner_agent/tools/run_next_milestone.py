@@ -9,7 +9,10 @@ RUN_NEXT_MILESTONE_TOOL_SCHEMA: ToolSchema = {
     "type": "function",
     "name": RUN_NEXT_MILESTONE_TOOL_NAME,
     "description": (
-        "Run the first unfinished Milestone when no earlier Candidate is awaiting a decision."
+        "Request the first unfinished Milestone from the current complete View. The first "
+        "call requests explicit user Start approval; later calls queue delivery. After a "
+        "terminal Stage failure, a BLOCKED project may retry the same first unfinished "
+        "Milestone when the approved Plan and Snapshot remain valid."
     ),
     "parameters": {
         "type": "object",

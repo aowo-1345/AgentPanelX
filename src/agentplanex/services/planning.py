@@ -77,11 +77,12 @@ class PlanDecision:
 
 @dataclass(frozen=True, slots=True)
 class PlanApprovalRequest:
-    """The observable result of one Plan Hard Gate invocation."""
+    """The observable result of submitting one exact Plan for human approval."""
 
     context: ProjectRuntimeContext
     accepted: bool
-    review: PlanReviewResult
+    subject_digest: str
+    review: PlanReviewResult | None
 
 
 @dataclass(slots=True)
@@ -129,79 +130,34 @@ class PlanningService:
         self._assert_requestable(before)
         spec_documents = self._spec_documents()
         subject_digest = self._subject_digest(spec_documents)
-        invocation_id = uuid4().hex
-        self.event_bus.publish(
-            ExecutionEvent(
-                triage_id=context.triage_id,
-                event_type=ExecutionEventType.AGENT_INVOCATION_STARTED,
-                payload={
-                    "invocation_id": invocation_id,
-                    "operation": "plan_hard_gate",
-                    "subject_digest": subject_digest,
-                },
-            )
-        )
-        try:
-            review = self.review_plan(
-                PlanReviewRequest(
-                    triage_id=context.triage_id,
-                    spec_documents=spec_documents,
-                    subject_digest=subject_digest,
-                )
-            )
-            self._validate_review(review, subject_digest)
-        except Exception as error:
-            self.event_bus.publish(
-                ExecutionEvent(
-                    triage_id=context.triage_id,
-                    event_type=ExecutionEventType.AGENT_INVOCATION_FAILED,
-                    payload={
-                        "invocation_id": invocation_id,
-                        "operation": "plan_hard_gate",
-                        "subject_digest": subject_digest,
-                        "failure_type": type(error).__name__,
-                    },
-                )
-            )
-            raise
-        self.event_bus.publish(
-            ExecutionEvent(
-                triage_id=context.triage_id,
-                event_type=ExecutionEventType.AGENT_INVOCATION_COMPLETED,
-                payload={
-                    "invocation_id": invocation_id,
-                    "operation": "plan_hard_gate",
-                    "subject_digest": review.subject_digest,
-                    "decision": review.decision,
-                    "required_change_count": len(review.required_changes),
-                    "review_artifact": {
-                        "uri": review.audit_artifact.uri,
-                        "media_type": review.audit_artifact.media_type,
-                        "size": review.audit_artifact.size,
-                        "sha256": review.audit_artifact.sha256,
-                    },
-                },
-            )
+        review = (
+            self._run_hard_gate(before, spec_documents, subject_digest)
+            if before.status == "IN_PROGRESS"
+            else None
         )
 
         after = self._current_context(context.triage_id)
         self._assert_requestable(after)
         if self._subject_digest(spec_documents) != subject_digest:
             raise PlanningError(
-                "Plan specification documents changed during Hard Gate review"
+                "Plan specification documents changed while requesting approval"
             )
-        if review.decision == "revise":
-            return PlanApprovalRequest(context=after, accepted=False, review=review)
+        if review is not None and review.decision == "revise":
+            return PlanApprovalRequest(
+                context=after,
+                accepted=False,
+                subject_digest=subject_digest,
+                review=review,
+            )
 
         runtime_contexts = self._runtime_contexts()
 
         def request(current: ProjectRuntimeContext) -> ProjectRuntimeContext:
             self._assert_requestable(current)
 
-            status = "BLOCKED" if current.status == "IN_PROGRESS" else "TODO"
             updated = replace(
                 current,
-                status=status,
+                status=("TODO" if current.status == "TRIAGE" else current.status),
                 pending_action="PLAN_APPROVAL",
                 pending_plan_subject_digest=subject_digest,
             )
@@ -216,9 +172,18 @@ class PlanningService:
             ExecutionEvent(
                 triage_id=context.triage_id,
                 event_type=ExecutionEventType.PLAN_APPROVAL_REQUESTED,
+                payload={
+                    "subject_digest": subject_digest,
+                    "hard_gate_invoked": review is not None,
+                },
             )
         )
-        return PlanApprovalRequest(context=updated, accepted=True, review=review)
+        return PlanApprovalRequest(
+            context=updated,
+            accepted=True,
+            subject_digest=subject_digest,
+            review=review,
+        )
 
     def approve_plan(
         self,
@@ -233,7 +198,7 @@ class PlanningService:
             raise PlanningError("Plan approval has no reviewed subject identity")
         if self._subject_digest(spec_documents) != expected_digest:
             raise PlanningError(
-                "Plan specification documents changed after Hard Gate review"
+                "Plan specification documents changed after approval was requested"
             )
         git = self.git
         if git is None:
@@ -247,11 +212,6 @@ class PlanningService:
             self._assert_pending_action(current)
             return replace(
                 current,
-                status=(
-                    "IN_PROGRESS"
-                    if current.rolling_started_at is not None
-                    else "TODO"
-                ),
                 pending_action=None,
                 pending_plan_subject_digest=None,
                 current_plan_commit_sha=commit_sha,
@@ -287,11 +247,6 @@ class PlanningService:
             self._assert_pending_action(current)
             return replace(
                 current,
-                status=(
-                    "IN_PROGRESS"
-                    if current.rolling_started_at is not None
-                    else "TODO"
-                ),
                 pending_action=None,
                 pending_plan_subject_digest=None,
             )
@@ -365,6 +320,71 @@ class PlanningService:
             digest.update(content)
         return digest.hexdigest()
 
+    def _run_hard_gate(
+        self,
+        context: ProjectRuntimeContext,
+        spec_documents: tuple[Path, ...],
+        subject_digest: str,
+    ) -> PlanReviewResult:
+        invocation_id = uuid4().hex
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=context.triage_id,
+                event_type=ExecutionEventType.AGENT_INVOCATION_STARTED,
+                payload={
+                    "invocation_id": invocation_id,
+                    "operation": "plan_hard_gate",
+                    "subject_digest": subject_digest,
+                },
+            )
+        )
+        try:
+            review = self.review_plan(
+                PlanReviewRequest(
+                    triage_id=context.triage_id,
+                    spec_documents=spec_documents,
+                    subject_digest=subject_digest,
+                )
+            )
+            self._validate_review(review, subject_digest)
+        except Exception as error:
+            self.event_bus.publish(
+                ExecutionEvent(
+                    triage_id=context.triage_id,
+                    event_type=ExecutionEventType.AGENT_INVOCATION_FAILED,
+                    payload={
+                        "invocation_id": invocation_id,
+                        "operation": "plan_hard_gate",
+                        "subject_digest": subject_digest,
+                        "failure_type": type(error).__name__,
+                    },
+                )
+            )
+            raise
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=context.triage_id,
+                event_type=ExecutionEventType.AGENT_INVOCATION_COMPLETED,
+                payload={
+                    "invocation_id": invocation_id,
+                    "operation": "plan_hard_gate",
+                    "subject_digest": review.subject_digest,
+                    "decision": review.decision,
+                    "required_change_count": len(review.required_changes),
+                    "review_artifact": {
+                        "uri": review.audit_artifact.uri,
+                        "project_relative_path": (
+                            review.audit_artifact.project_relative_path
+                        ),
+                        "media_type": review.audit_artifact.media_type,
+                        "size": review.audit_artifact.size,
+                        "sha256": review.audit_artifact.sha256,
+                    },
+                },
+            )
+        )
+        return review
+
     @staticmethod
     def _validate_review(review: PlanReviewResult, subject_digest: str) -> None:
         if review.subject_digest != subject_digest:
@@ -386,7 +406,7 @@ class PlanningService:
             raise PlanningError(
                 "Project already has a pending action: " f"{context.pending_action}"
             )
-        if context.status not in {"TRIAGE", "TODO", "IN_PROGRESS"}:
+        if context.status not in {"TRIAGE", "TODO", "IN_PROGRESS", "BLOCKED"}:
             raise PlanningError(
                 "Plan approval cannot be requested from status " f"{context.status}"
             )

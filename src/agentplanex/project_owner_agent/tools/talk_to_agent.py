@@ -13,7 +13,12 @@ def create_talk_to_agent_tool(agent_cards: str) -> ToolDefinition:
         "name": TALK_TO_AGENT_TOOL_NAME,
         "description": (
             "Synchronously send a Message or file-producing Task to a configured "
-            "Planner or Reviewer. Available Agent Cards:\n"
+            "Planner or Reviewer. Message is a discussion turn with no document; Task "
+            "publishes the role Contract document (Planner plan.md or Reviewer review.md). "
+            "Reuse conversation_id for follow-up work and pass returned artifact URIs as "
+            "read-only inputs. Planner output is advisory until the Owner adopts it into "
+            "canonical Specs; Reviewer output is evidence and never makes the Owner's "
+            "decision. Available Agent Cards:\n"
             f"{agent_cards}"
         ),
         "parameters": {

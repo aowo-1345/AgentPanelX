@@ -86,6 +86,7 @@ class TalkToAgentExecution(ProjectExecution):
                     "output_artifacts": [
                         {
                             "uri": artifact.uri,
+                            "project_relative_path": artifact.project_relative_path,
                             "media_type": artifact.media_type,
                             "size": artifact.size,
                             "sha256": artifact.sha256,
@@ -104,12 +105,26 @@ class TalkToAgentExecution(ProjectExecution):
                 "artifacts": [
                     {
                         "uri": artifact.uri,
+                        "project_relative_path": artifact.project_relative_path,
                         "media_type": artifact.media_type,
                         "size": artifact.size,
                         "sha256": artifact.sha256,
                     }
                     for artifact in result.artifacts
                 ],
+                "runtime_anchor": {
+                    "status": context.status,
+                    "pending_action": context.pending_action,
+                    "plan_commit_sha": context.current_plan_commit_sha,
+                    "pending_plan_subject_digest": (
+                        context.pending_plan_subject_digest
+                    ),
+                    "snapshot_id": context.current_snapshot_id,
+                    "run_id": context.current_run_id,
+                    "milestone_key": context.current_milestone_key,
+                    "stage_key": context.current_stage_key,
+                    "candidate_commit_sha": context.current_candidate_commit_sha,
+                },
             }
         )
 

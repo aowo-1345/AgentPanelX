@@ -1,5 +1,6 @@
 """Project-level command coordination over Owner, Planning, and Activations."""
 
+import json
 import sqlite3
 from dataclasses import dataclass, replace
 from typing import Literal
@@ -303,19 +304,18 @@ class ProjectRuntimeService:
         action: PlanDecisionAction,
         feedback: str,
     ) -> PlanDecision:
-        content = (
-            "The user approved the current Plan."
-            if action == "approve"
-            else _plan_rejection_message(feedback)
-        )
-        task = ProjectOwnerTask(
-            type=ProjectOwnerTaskType.PLAN_DECISION,
-            content=content,
-        )
         with self.database.transaction() as connection:
             context = self.owner.ensure_state(connection)
             self._assert_delivery_idle(connection, context.triage_id)
             self._assert_owner_idle(connection, context.triage_id)
+        task = ProjectOwnerTask(
+            type=ProjectOwnerTaskType.PLAN_DECISION,
+            content=_plan_decision_message(
+                action,
+                feedback,
+                context.pending_plan_subject_digest,
+            ),
+        )
 
         def append_message(
             connection: sqlite3.Connection,
@@ -408,6 +408,26 @@ def _begin_feature(context: ProjectRuntimeContext) -> ProjectRuntimeContext:
     return replace(context, status="TODO")
 
 
-def _plan_rejection_message(feedback: str) -> str:
-    message = "The user rejected the current Plan."
-    return f"{message} Feedback: {feedback.strip()}" if feedback.strip() else message
+def _plan_decision_message(
+    action: PlanDecisionAction,
+    feedback: str,
+    subject_digest: str | None,
+) -> str:
+    approved = action == "approve"
+    return json.dumps(
+        {
+            "event": "PLAN_DECISION_RECEIVED",
+            "decision": "APPROVED" if approved else "REJECTED",
+            "plan_subject_digest": subject_digest,
+            "feedback": feedback.strip() or None,
+            "required_response": (
+                "Reconcile the complete Milestone View with the approved Plan, then "
+                "request the first or next unfinished Milestone when delivery is ready."
+                if approved
+                else "Revise the canonical Specs with the user, then request approval "
+                "again only when the complete Plan is ready."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
