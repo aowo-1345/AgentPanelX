@@ -35,6 +35,10 @@ class RuntimeContextService:
         default_factory=SQLiteProjectRuntimeContextRepository
     )
 
+    def get(self, triage_id: str) -> ProjectRuntimeContext | None:
+        with self.database.connection() as connection:
+            return self.contexts.get(connection, triage_id)
+
     def transition(
         self,
         triage_id: str,

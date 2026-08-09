@@ -170,6 +170,7 @@ def _sandbox_command(
         "--die-with-parent",
         "--new-session",
         "--unshare-pid",
+        "--unshare-net",
         "--ro-bind",
         "/",
         "/",

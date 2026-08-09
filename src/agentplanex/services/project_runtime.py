@@ -428,6 +428,16 @@ class ProjectRuntimeService:
 
 
 def _start_conversation(context: ProjectRuntimeContext) -> ProjectRuntimeContext:
+    if context.blocked_reason is not None:
+        if context.blocked_previous_status is None:
+            raise ValueError("User-intervention blocker has no previous status")
+        return replace(
+            context,
+            status=context.blocked_previous_status,
+            blocked_reason=None,
+            blocked_capability=None,
+            blocked_previous_status=None,
+        )
     return (
         replace(context, status="TODO")
         if context.status == "TRIAGE"

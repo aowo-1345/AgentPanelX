@@ -24,6 +24,9 @@ class ProjectRuntimeContext:
     current_milestone_key: str | None = None
     current_stage_key: str | None = None
     current_candidate_commit_sha: str | None = None
+    blocked_reason: str | None = None
+    blocked_capability: str | None = None
+    blocked_previous_status: str | None = None
     project_owner_agent: ProjectOwnerAgent | None = None
 
     def __post_init__(self) -> None:
@@ -46,3 +49,19 @@ class ProjectRuntimeContext:
             raise ValueError(
                 f"Unsupported pending action: {self.pending_action!r}"
             )
+        blocker = (
+            self.blocked_reason,
+            self.blocked_capability,
+            self.blocked_previous_status,
+        )
+        if any(value is not None for value in blocker) and not all(
+            isinstance(value, str) and value.strip() for value in blocker
+        ):
+            raise ValueError("User-intervention blocker fields must be set together")
+        if self.blocked_reason is not None:
+            if self.status != "BLOCKED":
+                raise ValueError("A user-intervention blocker requires BLOCKED status")
+            if self.blocked_previous_status not in {"TODO", "IN_PROGRESS"}:
+                raise ValueError(
+                    "A user-intervention blocker must restore TODO or IN_PROGRESS"
+                )

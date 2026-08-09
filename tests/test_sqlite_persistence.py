@@ -264,7 +264,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 10
+    assert schema_version[0] == 11
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -297,6 +297,9 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "current_milestone_key",
             "current_stage_key",
             "current_candidate_commit_sha",
+            "blocked_reason",
+            "blocked_capability",
+            "blocked_previous_status",
         ),
         "project_owner_agent": (
             "triage_id",
@@ -431,6 +434,69 @@ def test_schema_rejects_old_versions_and_requires_recreation(
 
     with pytest.raises(RuntimeError, match="recreate this development database"):
         initialize_schema(database)
+
+
+def test_schema_migrates_user_intervention_blockers_from_version_10(
+    project_path: Path,
+) -> None:
+    database = SQLiteDatabase.for_project(project_path)
+    with database.transaction() as connection:
+        connection.execute(
+            """
+            CREATE TABLE project_runtime_context (
+                triage_id TEXT PRIMARY KEY,
+                idea TEXT,
+                status TEXT NOT NULL,
+                pending_action TEXT,
+                git_branch TEXT,
+                git_main_version TEXT,
+                rolling_started_at TEXT,
+                current_plan_commit_sha TEXT,
+                pending_plan_subject_digest TEXT,
+                current_snapshot_id TEXT,
+                current_run_id TEXT,
+                current_milestone_key TEXT,
+                current_stage_key TEXT,
+                current_candidate_commit_sha TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO project_runtime_context (triage_id, status)
+            VALUES ('triage-existing', 'TODO')
+            """
+        )
+        connection.execute("PRAGMA user_version = 10")
+
+    initialize_schema(database)
+
+    with database.connection() as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()
+        columns = tuple(
+            row["name"]
+            for row in connection.execute(
+                "PRAGMA table_info(project_runtime_context)"
+            ).fetchall()
+        )
+        row = connection.execute(
+            """
+            SELECT status, blocked_reason, blocked_capability,
+                   blocked_previous_status
+            FROM project_runtime_context
+            WHERE triage_id = 'triage-existing'
+            """
+        ).fetchone()
+
+    assert version is not None
+    assert version[0] == 11
+    assert columns[-3:] == (
+        "blocked_reason",
+        "blocked_capability",
+        "blocked_previous_status",
+    )
+    assert row is not None
+    assert tuple(row) == ("TODO", None, None, None)
 
 
 def test_competing_connections_claim_only_one_activation(

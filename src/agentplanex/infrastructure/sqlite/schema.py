@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _INITIAL_SCHEMA = (
     """
@@ -24,7 +24,11 @@ _INITIAL_SCHEMA = (
         current_run_id TEXT,
         current_milestone_key TEXT,
         current_stage_key TEXT,
-        current_candidate_commit_sha TEXT
+        current_candidate_commit_sha TEXT,
+        blocked_reason TEXT,
+        blocked_capability TEXT,
+        blocked_previous_status TEXT
+            CHECK (blocked_previous_status IN ('TODO', 'IN_PROGRESS'))
     )
     """,
     """
@@ -187,6 +191,23 @@ def initialize_schema(database: SQLiteDatabase) -> None:
         if current_version == 0:
             for statement in _INITIAL_SCHEMA:
                 connection.execute(statement)
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            return
+
+        if current_version == 10:
+            connection.execute(
+                "ALTER TABLE project_runtime_context ADD COLUMN blocked_reason TEXT"
+            )
+            connection.execute(
+                "ALTER TABLE project_runtime_context ADD COLUMN blocked_capability TEXT"
+            )
+            connection.execute(
+                """
+                ALTER TABLE project_runtime_context
+                ADD COLUMN blocked_previous_status TEXT
+                    CHECK (blocked_previous_status IN ('TODO', 'IN_PROGRESS'))
+                """
+            )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             return
 

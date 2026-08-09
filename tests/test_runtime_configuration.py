@@ -1,5 +1,6 @@
 """Observable Project Owner configuration and project-binding behavior."""
 
+import socket
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -98,6 +99,52 @@ class _BashCallingModel:
         raise ReplyToHuman(
             content=content,
             response={"role": "assistant", "content": content},
+        )
+
+    def format_observation_messages(
+        self,
+        message: Message,
+        outputs: list[ActionOutput],
+    ) -> list[Message]:
+        return [{"role": "tool", "content": "bash result", "extra": outputs[0]}]
+
+
+class _PolicyAwareBashModel:
+    calls = 0
+    observation: ClassVar[ActionOutput | None] = None
+
+    def __init__(self, **_kwargs: object) -> None:
+        pass
+
+    def query(self, messages: list[Message]) -> Message:
+        type(self).calls += 1
+        latest = messages[-1]
+        if latest.get("role") == "user":
+            return {
+                "role": "assistant",
+                "content": "",
+                "extra": {
+                    "actions": [
+                        {
+                            "tool": "bash",
+                            "call_id": "bash-policy-test",
+                            "arguments": {"command": latest["content"]},
+                        }
+                    ]
+                },
+            }
+
+        output = latest.get("extra")
+        assert isinstance(output, dict)
+        type(self).observation = output
+        assert output["error_type"] == "SANDBOX_POLICY_DENIED"
+        assert output["blocked_capability"] == "network"
+        raise ReplyToHuman(
+            content="Network access is blocked; user action is required.",
+            response={
+                "role": "assistant",
+                "content": "Network access is blocked; user action is required.",
+            },
         )
 
     def format_observation_messages(
@@ -651,3 +698,70 @@ def test_project_owner_bash_runs_below_private_tmp() -> None:
             "exception_info": "",
         }
         assert (project_path / "probe").read_text(encoding="utf-8") == "inside-tmp\n"
+
+
+def test_project_owner_bash_cannot_reach_a_host_tcp_listener(tmp_path: Path) -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        command = (
+            "python -c \"import socket; "
+            f"socket.create_connection(('127.0.0.1', {port}), 0.2)\""
+        )
+
+        result = local_shell_module.run_local_shell(command, cwd=tmp_path)
+
+    assert result["returncode"] != 0
+    assert result["exception_info"] == ""
+
+
+def test_sandbox_denial_blocks_until_the_user_sends_another_message(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _PolicyAwareBashModel.calls = 0
+    _PolicyAwareBashModel.observation = None
+    monkeypatch.setattr(project_owner_service, "JBBModel", _PolicyAwareBashModel)
+    project_path = initialize_git_project()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+    )
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        command = (
+            "python -c \"import socket; "
+            f"socket.create_connection(('127.0.0.1', {port}), 0.2)\""
+        )
+        runtime.submit_message(command)
+        result = runtime.drive_next_activation()
+
+    assert result.exit is not None
+    assert result.exit.status is AgentExitStatus.REPLY_TO_HUMAN
+    assert _PolicyAwareBashModel.calls == 2
+    assert _PolicyAwareBashModel.observation is not None
+    assert _PolicyAwareBashModel.observation["user_action_required"] is True
+
+    blocked = runtime.project_control_view().context
+    assert blocked.status == "BLOCKED"
+    assert blocked.blocked_capability == "network"
+    assert blocked.blocked_previous_status == "TODO"
+    assert blocked.blocked_reason is not None
+
+    denied_retry = runtime.execute_action(
+        {"tool": "bash", "arguments": {"command": "touch should-not-exist"}}
+    )
+    assert denied_retry.output["error_type"] == "USER_INTERVENTION_REQUIRED"
+    assert not (project_path / "should-not-exist").exists()
+
+    runtime.submit_message("Continue without network access.")
+    resumed = runtime.project_control_view().context
+    assert resumed.status == "TODO"
+    assert resumed.blocked_reason is None
+    assert resumed.blocked_capability is None
+    assert resumed.blocked_previous_status is None

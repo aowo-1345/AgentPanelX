@@ -31,9 +31,12 @@ class SQLiteProjectRuntimeContextRepository:
                 current_run_id,
                 current_milestone_key,
                 current_stage_key,
-                current_candidate_commit_sha
+                current_candidate_commit_sha,
+                blocked_reason,
+                blocked_capability,
+                blocked_previous_status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             self._values(context),
         )
@@ -59,7 +62,10 @@ class SQLiteProjectRuntimeContextRepository:
                 current_run_id = ?,
                 current_milestone_key = ?,
                 current_stage_key = ?,
-                current_candidate_commit_sha = ?
+                current_candidate_commit_sha = ?,
+                blocked_reason = ?,
+                blocked_capability = ?,
+                blocked_previous_status = ?
             WHERE triage_id = ?
             """,
             (*self._values(context)[1:], context.triage_id),
@@ -103,7 +109,10 @@ class SQLiteProjectRuntimeContextRepository:
         current_run_id,
         current_milestone_key,
         current_stage_key,
-        current_candidate_commit_sha
+        current_candidate_commit_sha,
+        blocked_reason,
+        blocked_capability,
+        blocked_previous_status
     """
     _SELECT = f"SELECT {_COLUMNS} FROM project_runtime_context"
 
@@ -128,6 +137,9 @@ class SQLiteProjectRuntimeContextRepository:
             context.current_milestone_key,
             context.current_stage_key,
             context.current_candidate_commit_sha,
+            context.blocked_reason,
+            context.blocked_capability,
+            context.blocked_previous_status,
         )
 
     @staticmethod
@@ -163,5 +175,11 @@ class SQLiteProjectRuntimeContextRepository:
             current_candidate_commit_sha=cast(
                 str | None,
                 row["current_candidate_commit_sha"],
+            ),
+            blocked_reason=cast(str | None, row["blocked_reason"]),
+            blocked_capability=cast(str | None, row["blocked_capability"]),
+            blocked_previous_status=cast(
+                str | None,
+                row["blocked_previous_status"],
             ),
         )

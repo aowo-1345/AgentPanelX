@@ -43,6 +43,8 @@ def create_project_executions(
         else resolve_observation_skill()
     )
     planning = planning or PlanningService.for_project(project_path)
+    if planning.runtime_contexts is None:
+        raise RuntimeError("Planning Service has no Runtime Context Service")
     delivery = delivery or DeliveryService.for_project(project_path)
     collaboration = collaboration or AgentCollaborationService.from_settings(
         project_path,
@@ -58,6 +60,7 @@ def create_project_executions(
             delivery=delivery,
             collaboration=collaboration,
             event_bus=event_bus,
+            runtime_contexts=planning.runtime_contexts,
         )
     )
 

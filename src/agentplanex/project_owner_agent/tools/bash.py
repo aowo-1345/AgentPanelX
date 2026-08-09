@@ -6,7 +6,12 @@ from agentplanex.project_owner_agent.tools.base import ToolDefinition
 BASH_TOOL_SCHEMA: ToolSchema = {
     "type": "function",
     "name": BASH_TOOL_NAME,
-    "description": "Execute a Bash command in the current working directory.",
+    "description": (
+        "Execute a Bash command with writes confined to the current Feature worktree, "
+        "with .git and .agentplanex read-only and network access disabled. If the "
+        "sandbox denies a required capability, do not retry or attempt a bypass; "
+        "explain the required user action and return control to the user."
+    ),
     "parameters": {
         "type": "object",
         "properties": {

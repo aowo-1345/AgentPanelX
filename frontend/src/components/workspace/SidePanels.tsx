@@ -53,6 +53,17 @@ function RuntimePanel({ panel }: { panel: Panel<RuntimeData> }) {
           <KeyValue label="Pending" value={runtime.pending_action} />
           <KeyValue label="Milestone" value={runtime.current_milestone_key} />
           <KeyValue label="Stage" value={runtime.current_stage_key} />
+          {runtime.blocked_reason && (
+            <div className="rounded-md border border-red-500/30 bg-red-500/10 p-2.5 text-xs">
+              <div className="font-medium text-red-300">User action required</div>
+              {runtime.blocked_capability && (
+                <div className="mt-1 font-mono text-[10px] text-red-200/70">
+                  {runtime.blocked_capability}
+                </div>
+              )}
+              <p className="mt-1.5 leading-relaxed text-red-100/80">{runtime.blocked_reason}</p>
+            </div>
+          )}
         </div>
       )}
     </PanelState>

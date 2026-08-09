@@ -94,6 +94,8 @@ class RuntimeData(Schema):
     activation_status: str | None
     current_milestone_key: str | None
     current_stage_key: str | None
+    blocked_reason: str | None
+    blocked_capability: str | None
 
 
 class ConversationMessage(Schema):
@@ -230,6 +232,8 @@ def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
                     ),
                     current_milestone_key=context.current_milestone_key,
                     current_stage_key=context.current_stage_key,
+                    blocked_reason=context.blocked_reason,
+                    blocked_capability=context.blocked_capability,
                 )
                 if control.runtime_error is None
                 else None

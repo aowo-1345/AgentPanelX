@@ -75,6 +75,8 @@ export interface RuntimeData {
   activation_status: string | null;
   current_milestone_key: string | null;
   current_stage_key: string | null;
+  blocked_reason: string | null;
+  blocked_capability: string | null;
 }
 
 export interface ConversationMessage {
