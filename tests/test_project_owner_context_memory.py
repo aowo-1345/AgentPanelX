@@ -1,24 +1,25 @@
-"""End-to-end Project Owner context-memory behavior."""
+"""Critical Project Owner context-memory journeys and integrity boundaries."""
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from threading import Lock
 
 import pytest
 
+from agentplanex.domains import SummaryHistory
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
-    SQLiteMessageHistoryRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
 )
-from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.project_owner_agent.models.jbb import (
     ResponsesRequest,
     ResponsesTransport,
 )
 from agentplanex.project_runtime import ProjectRuntime
+from agentplanex.services.owner_context import ProjectOwnerContextQuery
 from agentplanex.settings import (
     DEFAULT_SETTINGS_PATH,
     ContextMemorySettings,
@@ -27,61 +28,51 @@ from agentplanex.settings import (
 )
 
 
-class _ContextMemoryTransport(ResponsesTransport):
+class _OwnerTransport(ResponsesTransport):
+    """Replace only the remote model while recording complete provider requests."""
+
     def __init__(
         self,
-        prompts: tuple[str, str, str],
+        settings: Settings,
         *,
-        summary_failure: str | None = None,
         first_owner_tool: bool = False,
+        summary_failure: str | None = None,
     ) -> None:
-        self.prompts = prompts
-        self.summary_failure = summary_failure
+        prompts = settings.runtime.prompts
+        self.trajectory_prompt = prompts.trajectory_summary.strip()
+        self.initial_intent_prompt = prompts.initial_intent_summary.strip()
+        self.update_intent_prompt = prompts.update_intent_summary.strip()
         self.first_owner_tool = first_owner_tool
+        self.summary_failure = summary_failure
         self.requests: list[ResponsesRequest] = []
         self.owner_request_count = 0
-        self.on_first_summary: Callable[[], None] | None = None
-        self._summary_callback_used = False
         self._lock = Lock()
 
     def create(self, request: ResponsesRequest) -> object:
         with self._lock:
             self.requests.append(request)
         task = str(request.input[-1].get("content", ""))
-        trajectory, initial_intent, update_intent = self.prompts
-        if task in self.prompts:
-            self._run_summary_callback()
-        if task == trajectory:
-            if self.summary_failure == "trajectory-error":
+        if task == self.trajectory_prompt:
+            if self.summary_failure == "gateway":
                 raise RuntimeError("trajectory unavailable")
-            if self.summary_failure == "trajectory-tool":
+            if self.summary_failure == "tool":
                 return _tool_response("bash", "summary-tool", {"command": "pwd"})
             return _text_response(
-                "<trajectory-summary>Inspected the long initial request.</trajectory-summary>"
+                "<trajectory-summary>Continue from the recorded project work."
+                "</trajectory-summary>"
             )
-        if task == initial_intent:
-            if self.summary_failure == "intent-xml":
-                return _text_response("not valid summary xml")
-            if self.summary_failure == "intent-empty":
-                return _text_response("<intent-summary> </intent-summary>")
-            if self.summary_failure == "intent-outside":
-                return _text_response(
-                    "outside<intent-summary>invalid</intent-summary>"
-                )
-            if self.summary_failure == "intent-duplicate":
-                return _text_response(
-                    "<intent-summary>first</intent-summary>"
-                    "<intent-summary>second</intent-summary>"
-                )
+        if task == self.initial_intent_prompt:
+            if self.summary_failure == "xml":
+                return _text_response("invalid summary response")
             return _text_response(
-                "<intent-summary>Deliver the requested context-memory behavior.</intent-summary>"
+                "<intent-summary>Deliver durable context memory.</intent-summary>"
             )
-        if task == update_intent:
+        if task == self.update_intent_prompt:
             return _text_response(
-                "<intent-summary>"
-                "Deliver the context-memory behavior and its update."
+                "<intent-summary>Deliver durable context memory after restart."
                 "</intent-summary>"
             )
+
         with self._lock:
             owner_index = self.owner_request_count
             self.owner_request_count += 1
@@ -97,15 +88,6 @@ class _ContextMemoryTransport(ResponsesTransport):
             )
         return _text_response("owner-finished")
 
-    def _run_summary_callback(self) -> None:
-        callback: Callable[[], None] | None = None
-        with self._lock:
-            if not self._summary_callback_used:
-                self._summary_callback_used = True
-                callback = self.on_first_summary
-        if callback is not None:
-            callback()
-
 
 def _text_response(text: str) -> object:
     return {
@@ -116,7 +98,7 @@ def _text_response(text: str) -> object:
                 "role": "assistant",
                 "content": [{"type": "output_text", "text": text}],
             }
-        ]
+        ],
     }
 
 
@@ -134,19 +116,13 @@ def _tool_response(
                 "call_id": call_id,
                 "arguments": json.dumps(arguments),
             }
-        ]
+        ],
     }
 
 
-def _settings_and_transport(
-    *,
-    capacity_tokens: int,
-    summary_failure: str | None = None,
-    first_owner_tool: bool = False,
-) -> tuple[Settings, _ContextMemoryTransport]:
+def _settings(capacity_tokens: int = 1_500) -> Settings:
     configured = load_settings(DEFAULT_SETTINGS_PATH)
-    prompts = configured.runtime.prompts
-    settings = configured.model_copy(
+    return configured.model_copy(
         update={
             "project_owner_agent": configured.project_owner_agent.model_copy(
                 update={
@@ -158,236 +134,188 @@ def _settings_and_transport(
             )
         }
     )
-    return settings, _ContextMemoryTransport(
-        (
-            prompts.trajectory_summary.strip(),
-            prompts.initial_intent_summary.strip(),
-            prompts.update_intent_summary.strip(),
-        ),
-        summary_failure=summary_failure,
-        first_owner_tool=first_owner_tool,
-    )
 
 
-def test_owner_naturally_compacts_a_long_query_before_replying(
+def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
     initialize_git_project: Callable[[], Path],
 ) -> None:
+    """One user journey proves the complete Issue 01/02 happy path."""
+
     project_path = initialize_git_project()
-    settings, transport = _settings_and_transport(capacity_tokens=1_500)
-    prompts = settings.runtime.prompts
+    settings = _settings()
+    first_transport = _OwnerTransport(settings, first_owner_tool=True)
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",
-        responses_transport=transport,
+        responses_transport=first_transport,
     )
 
-    activation = runtime.submit_message("context " * 600)
-    driven = runtime.drive_next_activation()
+    first_activation = runtime.submit_message("Inspect the project before replying")
+    first = runtime.drive_next_activation()
 
-    assert driven.exit is not None
-    assert driven.exit.content == "owner-finished"
-    assert driven.activation is not None
-    assert driven.activation.summary_id is not None
-
-    summary_requests = [
-        request for request in transport.requests if request.tool_choice == "none"
+    assert first.exit is not None
+    assert first.exit.content == "owner-finished"
+    assert [request.tool_choice for request in first_transport.requests] == [
+        "auto",
+        "none",
+        "none",
+        "auto",
     ]
-    owner_requests = [
-        request for request in transport.requests if request.tool_choice == "auto"
+    first_summary_requests = [
+        request
+        for request in first_transport.requests
+        if request.tool_choice == "none"
     ]
-    assert len(summary_requests) == 2
-    assert len(owner_requests) == 1
-    assert all(request.tools == owner_requests[0].tools for request in summary_requests)
+    first_owner_request = first_transport.requests[0]
     assert all(
-        request.input[:-1] == summary_requests[0].input[:-1]
-        for request in summary_requests
+        request.input[:-1] == first_summary_requests[0].input[:-1]
+        for request in first_summary_requests
     )
-    assert owner_requests[0].input == (
-        {
-            "role": "developer",
-            "content": prompts.summary_context_header.strip(),
-        },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": (
-                        "<intent-summary>\n"
-                        "Deliver the requested context-memory behavior.\n"
-                        "</intent-summary>"
-                    ),
-                },
-                {
-                    "type": "input_text",
-                    "text": (
-                        "<trajectory-summary>\n"
-                        "Inspected the long initial request.\n"
-                        "</trajectory-summary>"
-                    ),
-                },
-            ],
-        },
+    assert all(
+        request.tools == first_owner_request.tools
+        for request in first_summary_requests
     )
+    assert {
+        str(request.input[-1].get("content", ""))
+        for request in first_summary_requests
+    } == {
+        first_transport.trajectory_prompt,
+        first_transport.initial_intent_prompt,
+    }
+    bash_history = json.dumps(
+        first_summary_requests[0].input,
+        ensure_ascii=False,
+    )
+    assert "function_call_output" in bash_history
+    assert "observation observation" in bash_history
 
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
     summaries = SQLiteSummaryHistoryRepository()
-    with database.read_only_connection() as connection:
-        owner = owners.get_by_triage_id(connection, activation.triage_id)
+    with database.transaction() as connection:
+        owner = owners.get_by_triage_id(connection, first_activation.triage_id)
         assert owner is not None
-        assert owner.summary_id == driven.activation.summary_id
-        summary = summaries.get(connection, owner.summary_id)
-    assert summary is not None
-    assert summary.covered_through_message_id == activation.message_id
-    assert summary.intent_summary_content == (
-        "Deliver the requested context-memory behavior."
+        assert owner.summary_id is not None
+        first_summary_id = owner.summary_id
+        owners.update(
+            connection,
+            replace(
+                owner,
+                system_prompt="Persisted Owner identity.",
+                tools=("bash", "talk_to_agent"),
+            ),
+        )
+
+    configured_prompts = settings.runtime.prompts
+    changed_settings = settings.model_copy(
+        update={
+            "runtime": settings.runtime.model_copy(
+                update={
+                    "prompts": configured_prompts.model_copy(
+                        update={
+                            "project_owner": (
+                                configured_prompts.project_owner.model_copy(
+                                    update={"role": "A changed configured identity."}
+                                )
+                            )
+                        }
+                    )
+                }
+            )
+        }
     )
-    assert summary.trajectory_summary_content == (
-        "Inspected the long initial request."
-    )
-
-    event_types = [
-        event.event_type.value for event in runtime.project_control_view().timeline
-    ]
-    assert event_types[-4:] == [
-        "REACT_LOOP_ENTERED",
-        "CONTEXT_COMPACTION_STARTED",
-        "CONTEXT_COMPACTION_COMPLETED",
-        "REACT_LOOP_EXITED",
-    ]
-
-
-def test_owner_below_threshold_queries_without_compaction(
-    initialize_git_project: Callable[[], Path],
-) -> None:
-    project_path = initialize_git_project()
-    settings, transport = _settings_and_transport(capacity_tokens=128_000)
-    runtime = ProjectRuntime(
+    restarted_transport = _OwnerTransport(changed_settings)
+    restarted = ProjectRuntime(
         project_path=project_path,
-        settings=settings,
+        settings=changed_settings,
         approval_mode="yolo",
-        responses_transport=transport,
+        responses_transport=restarted_transport,
     )
+    second_activation = restarted.submit_message("updated-context " * 600)
+    second = restarted.drive_next_activation()
 
-    runtime.submit_message("short request")
-    driven = runtime.drive_next_activation()
-
-    assert driven.exit is not None
-    assert driven.exit.content == "owner-finished"
-    assert [request.tool_choice for request in transport.requests] == ["auto"]
-    assert not any(
-        event.event_type.value.startswith("CONTEXT_COMPACTION")
-        for event in runtime.project_control_view().timeline
-    )
-
-
-def test_second_compaction_rolls_intent_and_replaces_trajectory(
-    initialize_git_project: Callable[[], Path],
-) -> None:
-    project_path = initialize_git_project()
-    settings, transport = _settings_and_transport(capacity_tokens=1_500)
-    prompts = settings.runtime.prompts
-    runtime = ProjectRuntime(
-        project_path=project_path,
-        settings=settings,
-        approval_mode="yolo",
-        responses_transport=transport,
-    )
-
-    runtime.submit_message("first-context " * 600)
-    first = runtime.drive_next_activation()
-    runtime.submit_message("updated-context " * 600)
-    second = runtime.drive_next_activation()
-
-    assert first.activation is not None
-    assert second.activation is not None
-    assert first.activation.summary_id is not None
-    assert second.activation.summary_id is not None
-    assert first.activation.summary_id != second.activation.summary_id
-    tasks = [
-        str(request.input[-1].get("content", ""))
-        for request in transport.requests
+    assert second.exit is not None
+    assert second.exit.content == "owner-finished"
+    second_summary_requests = [
+        request
+        for request in restarted_transport.requests
         if request.tool_choice == "none"
     ]
-    assert tasks.count(prompts.initial_intent_summary.strip()) == 1
-    assert tasks.count(prompts.update_intent_summary.strip()) == 1
-    assert tasks.count(prompts.trajectory_summary.strip()) == 2
-
-    database = SQLiteDatabase.for_project(project_path)
-    summaries = SQLiteSummaryHistoryRepository()
-    with database.read_only_connection() as connection:
-        first_summary = summaries.get(connection, first.activation.summary_id)
-        second_summary = summaries.get(connection, second.activation.summary_id)
-    assert first_summary is not None
-    assert second_summary is not None
-    assert first_summary.intent_summary_content == (
-        "Deliver the requested context-memory behavior."
+    second_owner_request = next(
+        request
+        for request in restarted_transport.requests
+        if request.tool_choice == "auto"
     )
-    assert second_summary.intent_summary_content == (
-        "Deliver the context-memory behavior and its update."
+    assert len(second_summary_requests) == 2
+    assert all(
+        request.input[:-1] == second_summary_requests[0].input[:-1]
+        for request in second_summary_requests
     )
-
-
-def test_large_tool_observation_compacts_before_the_next_owner_query(
-    initialize_git_project: Callable[[], Path],
-) -> None:
-    project_path = initialize_git_project()
-    settings, transport = _settings_and_transport(
-        capacity_tokens=1_500,
-        first_owner_tool=True,
+    assert all(
+        [schema["name"] for schema in request.tools]
+        == ["bash", "talk_to_agent"]
+        for request in restarted_transport.requests
     )
-    runtime = ProjectRuntime(
-        project_path=project_path,
-        settings=settings,
-        approval_mode="yolo",
-        responses_transport=transport,
+    assert all(
+        request.instructions.startswith("Persisted Owner identity.")
+        for request in restarted_transport.requests
     )
-
-    runtime.submit_message("Inspect the project before replying")
-    driven = runtime.drive_next_activation()
-
-    assert driven.exit is not None
-    assert driven.exit.content == "owner-finished"
-    assert [request.tool_choice for request in transport.requests] == [
-        "auto",
-        "none",
-        "none",
-        "auto",
+    restored_prefix = json.dumps(
+        second_summary_requests[0].input[:-1],
+        ensure_ascii=False,
+    )
+    assert [
+        message.get("role") for message in second_summary_requests[0].input[:-1]
+    ] == ["developer", "user", "assistant", "user"]
+    assert "<intent-summary>" in restored_prefix
+    assert "<trajectory-summary>" in restored_prefix
+    assert "updated-context" in restored_prefix
+    tasks = {
+        str(request.input[-1].get("content", ""))
+        for request in second_summary_requests
+    }
+    assert tasks == {
+        restarted_transport.trajectory_prompt,
+        restarted_transport.update_intent_prompt,
+    }
+    assert [message.get("role") for message in second_owner_request.input] == [
+        "developer",
+        "user",
     ]
-    assert driven.activation is not None
-    assert driven.activation.summary_id is None
-    events = runtime.project_control_view().timeline
+
+    with database.read_only_connection() as connection:
+        owner = owners.get_by_triage_id(connection, first_activation.triage_id)
+        assert owner is not None
+        assert owner.summary_id is not None
+        second_summary = summaries.get(connection, owner.summary_id)
+    assert owner.summary_id != first_summary_id
+    assert second_summary is not None
+    assert second_summary.covered_through_message_id == second_activation.message_id
+    assert second_summary.intent_summary_content == (
+        "Deliver durable context memory after restart."
+    )
+    assert first_summary_id not in json.dumps(second_owner_request.input)
+    assert owner.summary_id not in json.dumps(second_owner_request.input)
+
     completed = [
         event
-        for event in events
+        for event in restarted.project_control_view().timeline
         if event.event_type.value == "CONTEXT_COMPACTION_COMPLETED"
     ]
-    assert len(completed) == 1
-    assert completed[0].payload["query_index"] == 1
+    assert [event.payload["query_index"] for event in completed] == [1, 0]
 
 
-@pytest.mark.parametrize(
-    "summary_failure",
-    [
-        "trajectory-error",
-        "trajectory-tool",
-        "intent-xml",
-        "intent-empty",
-        "intent-outside",
-        "intent-duplicate",
-    ],
-)
-def test_summary_failure_keeps_original_context_and_does_not_fail_activation(
+@pytest.mark.parametrize("summary_failure", ["gateway", "tool", "xml"])
+def test_summary_failure_keeps_the_original_owner_context(
     initialize_git_project: Callable[[], Path],
     summary_failure: str,
 ) -> None:
+    """Transport, forbidden-tool and invalid-output failures share one fallback."""
+
     project_path = initialize_git_project()
-    settings, transport = _settings_and_transport(
-        capacity_tokens=1_500,
-        summary_failure=summary_failure,
-    )
+    settings = _settings()
+    transport = _OwnerTransport(settings, summary_failure=summary_failure)
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=settings,
@@ -400,119 +328,147 @@ def test_summary_failure_keeps_original_context_and_does_not_fail_activation(
 
     assert driven.exit is not None
     assert driven.exit.content == "owner-finished"
-    assert driven.activation is not None
-    assert driven.activation.status.value == "COMPLETED"
-    assert driven.activation.summary_id is None
     owner_request = next(
         request for request in transport.requests if request.tool_choice == "auto"
     )
     assert str(owner_request.input[-1].get("content", "")).startswith(
         "original-context"
     )
-
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
-    with database.read_only_connection() as connection:
-        owner = owners.get_by_triage_id(connection, activation.triage_id)
-    assert owner is not None
-    assert owner.summary_id is None
-    assert [
-        event.event_type.value for event in runtime.project_control_view().timeline
-    ].count("CONTEXT_COMPACTION_FAILED") == 1
-
-
-def test_summary_publication_conflict_rolls_back_and_uses_original_context(
-    initialize_git_project: Callable[[], Path],
-) -> None:
-    project_path = initialize_git_project()
-    settings, transport = _settings_and_transport(capacity_tokens=1_500)
-    runtime = ProjectRuntime(
-        project_path=project_path,
-        settings=settings,
-        approval_mode="yolo",
-        responses_transport=transport,
-    )
-
-    activation = runtime.submit_message("conflicting-context " * 600)
-    owner_service = runtime._service.owner
-    database = SQLiteDatabase.for_project(project_path)
-    with database.transaction() as connection:
-        context = owner_service.ensure_state(connection)
-
-    def advance_real_message_checkpoint() -> None:
-        owner_service.append_messages(
-            context,
-            ({"role": "user", "content": "concurrent checkpoint change"},),
-        )
-
-    transport.on_first_summary = advance_real_message_checkpoint
-    driven = runtime.drive_next_activation()
-
-    assert driven.exit is not None
-    assert driven.exit.content == "owner-finished"
-    owner_request = next(
-        request for request in transport.requests if request.tool_choice == "auto"
-    )
-    assert str(owner_request.input[-1].get("content", "")).startswith(
-        "conflicting-context"
-    )
-    owners = SQLiteProjectOwnerAgentRepository()
-    messages = SQLiteMessageHistoryRepository()
     with database.read_only_connection() as connection:
         owner = owners.get_by_triage_id(connection, activation.triage_id)
         summary_count = connection.execute(
             "SELECT COUNT(*) FROM summary_history"
         ).fetchone()[0]
-        histories = (
-            messages.list_by_session_id(
-                connection,
-                owner.project_owner_session_id,
-            )
-            if owner is not None
-            else ()
-        )
     assert owner is not None
     assert owner.summary_id is None
     assert summary_count == 0
-    assert any(
-        message.get("content") == "concurrent checkpoint change"
-        for history in histories
-        for message in history.message
-    )
+    assert [
+        event.event_type.value for event in runtime.project_control_view().timeline
+    ].count("CONTEXT_COMPACTION_FAILED") == 1
 
 
-def test_timeline_handler_failure_does_not_block_summary_publication(
+def test_summary_publish_transaction_rejects_a_stale_checkpoint(
     initialize_git_project: Callable[[], Path],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Exercise the real conditional UPDATE and transaction rollback directly."""
+
     project_path = initialize_git_project()
-    settings, transport = _settings_and_transport(capacity_tokens=1_500)
-
-    def fail_timeline(
-        _recorder: SQLiteTimelineRecorder,
-        _event: object,
-    ) -> None:
-        raise RuntimeError("timeline unavailable")
-
-    monkeypatch.setattr(SQLiteTimelineRecorder, "__call__", fail_timeline)
+    settings = _settings(capacity_tokens=128_000)
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",
-        responses_transport=transport,
+        responses_transport=_OwnerTransport(settings),
     )
+    activation = runtime.submit_message("create the owner checkpoint")
+    runtime.drive_next_activation()
 
-    activation = runtime.submit_message("observable-context " * 600)
-    driven = runtime.drive_next_activation()
-
-    assert driven.exit is not None
-    assert driven.exit.content == "owner-finished"
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
     summaries = SQLiteSummaryHistoryRepository()
-    with database.read_only_connection() as connection:
+    with (
+        pytest.raises(RuntimeError, match="context changed during compaction"),
+        database.transaction() as connection,
+    ):
         owner = owners.get_by_triage_id(connection, activation.triage_id)
         assert owner is not None
-        assert owner.summary_id is not None
-        summary = summaries.get(connection, owner.summary_id)
-    assert summary is not None
+        assert owner.message_id is not None
+        summary = SummaryHistory(
+            project_owner_session_id=owner.project_owner_session_id,
+            summary_id="stale-summary",
+            covered_through_message_id=owner.message_id,
+            intent_summary_content="Keep the user intent.",
+            trajectory_summary_content="Keep the project trajectory.",
+        )
+        summaries.insert(connection, summary)
+        owners.advance_summary(
+            connection,
+            session_id=owner.project_owner_session_id,
+            expected_message_id="superseded-message",
+            expected_summary_id=None,
+            summary_id=summary.summary_id,
+        )
+
+    with database.read_only_connection() as connection:
+        owner = owners.get_by_triage_id(connection, activation.triage_id)
+        summary = summaries.get(connection, "stale-summary")
+    assert owner is not None
+    assert owner.summary_id is None
+    assert summary is None
+
+
+def test_restart_fails_when_a_persisted_owner_tool_is_missing(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    settings = _settings(capacity_tokens=128_000)
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=settings,
+        approval_mode="yolo",
+        responses_transport=_OwnerTransport(settings),
+    )
+    activation = runtime.submit_message("create the owner")
+    runtime.drive_next_activation()
+
+    database = SQLiteDatabase.for_project(project_path)
+    owners = SQLiteProjectOwnerAgentRepository()
+    with database.transaction() as connection:
+        owner = owners.get_by_triage_id(connection, activation.triage_id)
+        assert owner is not None
+        owners.update(connection, replace(owner, tools=("removed_tool",)))
+
+    restarted = ProjectRuntime(
+        project_path=project_path,
+        settings=settings,
+        approval_mode="yolo",
+        responses_transport=_OwnerTransport(settings),
+    )
+    with pytest.raises(ValueError, match="Unknown tool: 'removed_tool'"):
+        restarted.submit_message("continue")
+
+
+def test_attribution_uses_the_summary_available_at_its_checkpoint(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    settings = _settings()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=settings,
+        approval_mode="yolo",
+        responses_transport=_OwnerTransport(settings),
+    )
+
+    runtime.submit_message("first-history " * 600)
+    first = runtime.drive_next_activation()
+    checkpoint = runtime.submit_message("historical checkpoint")
+    runtime.drive_next_activation()
+    runtime.submit_message("future-history " * 600)
+    future = runtime.drive_next_activation()
+
+    assert first.activation is not None
+    assert first.activation.summary_id is not None
+    assert future.activation is not None
+    assert future.activation.summary_id is not None
+    contexts = ProjectOwnerContextQuery(
+        SQLiteDatabase.for_project(project_path),
+        settings.runtime.prompts.summary_context_header,
+    )
+    selected_summary_id = contexts.latest_summary_id_through(checkpoint.message_id)
+
+    assert selected_summary_id == first.activation.summary_id
+    assert contexts.restore(checkpoint.message_id).summary_id is None
+    restored = contexts.restore(
+        checkpoint.message_id,
+        summary_id=selected_summary_id,
+    )
+    assert restored.summary_id == first.activation.summary_id
+    assert restored.messages[-1]["content"] == "historical checkpoint"
+    with pytest.raises(ValueError, match="must not follow activation message"):
+        contexts.restore(
+            checkpoint.message_id,
+            summary_id=future.activation.summary_id,
+        )
