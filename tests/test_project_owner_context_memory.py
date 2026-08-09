@@ -12,6 +12,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
 )
+from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.project_owner_agent.models.jbb import (
     ResponsesRequest,
     ResponsesTransport,
@@ -404,3 +405,89 @@ def test_summary_failure_keeps_original_context_and_does_not_fail_activation(
     assert [
         event.event_type.value for event in runtime.project_control_view().timeline
     ].count("CONTEXT_COMPACTION_FAILED") == 1
+
+
+def test_summary_publication_conflict_rolls_back_and_uses_original_context(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_path = initialize_git_project()
+    settings, transport = _settings_and_transport(capacity_tokens=1_500)
+
+    def reject_stale_checkpoint(
+        _repository: SQLiteProjectOwnerAgentRepository,
+        _connection: object,
+        **_values: object,
+    ) -> None:
+        raise RuntimeError("Project Owner context changed during compaction")
+
+    monkeypatch.setattr(
+        SQLiteProjectOwnerAgentRepository,
+        "advance_summary",
+        reject_stale_checkpoint,
+    )
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=settings,
+        approval_mode="yolo",
+        responses_transport=transport,
+    )
+
+    activation = runtime.submit_message("conflicting-context " * 600)
+    driven = runtime.drive_next_activation()
+
+    assert driven.exit is not None
+    assert driven.exit.content == "owner-finished"
+    owner_request = next(
+        request for request in transport.requests if request.tool_choice == "auto"
+    )
+    assert str(owner_request.input[-1].get("content", "")).startswith(
+        "conflicting-context"
+    )
+    database = SQLiteDatabase.for_project(project_path)
+    owners = SQLiteProjectOwnerAgentRepository()
+    with database.read_only_connection() as connection:
+        owner = owners.get_by_triage_id(connection, activation.triage_id)
+        summary_count = connection.execute(
+            "SELECT COUNT(*) FROM summary_history"
+        ).fetchone()[0]
+    assert owner is not None
+    assert owner.summary_id is None
+    assert summary_count == 0
+
+
+def test_timeline_handler_failure_does_not_block_summary_publication(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_path = initialize_git_project()
+    settings, transport = _settings_and_transport(capacity_tokens=1_500)
+
+    def fail_timeline(
+        _recorder: SQLiteTimelineRecorder,
+        _event: object,
+    ) -> None:
+        raise RuntimeError("timeline unavailable")
+
+    monkeypatch.setattr(SQLiteTimelineRecorder, "__call__", fail_timeline)
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=settings,
+        approval_mode="yolo",
+        responses_transport=transport,
+    )
+
+    activation = runtime.submit_message("observable-context " * 600)
+    driven = runtime.drive_next_activation()
+
+    assert driven.exit is not None
+    assert driven.exit.content == "owner-finished"
+    database = SQLiteDatabase.for_project(project_path)
+    owners = SQLiteProjectOwnerAgentRepository()
+    summaries = SQLiteSummaryHistoryRepository()
+    with database.read_only_connection() as connection:
+        owner = owners.get_by_triage_id(connection, activation.triage_id)
+        assert owner is not None
+        assert owner.summary_id is not None
+        summary = summaries.get(connection, owner.summary_id)
+    assert summary is not None

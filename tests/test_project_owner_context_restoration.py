@@ -95,7 +95,7 @@ def test_restart_preserves_the_persisted_owner_prompt_and_tool_contract(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    settings = _settings()
+    settings = _settings(capacity_tokens=1_500)
     first_transport = _transport(settings)
     runtime = ProjectRuntime(
         project_path=project_path,
@@ -143,7 +143,7 @@ def test_restart_preserves_the_persisted_owner_prompt_and_tool_contract(
         responses_transport=restarted_transport,
     )
 
-    restarted.submit_message("continue after restart")
+    restarted.submit_message("continue-after-restart " * 600)
     driven = restarted.drive_next_activation()
 
     assert driven.exit is not None
@@ -158,6 +158,17 @@ def test_restart_preserves_the_persisted_owner_prompt_and_tool_contract(
         "bash",
         "talk_to_agent",
     ]
+    summary_requests = [
+        request
+        for request in restarted_transport.requests
+        if request.tool_choice == "none"
+    ]
+    assert len(summary_requests) == 2
+    assert all(
+        [schema["name"] for schema in request.tools]
+        == ["bash", "talk_to_agent"]
+        for request in summary_requests
+    )
 
 
 def test_restart_fails_when_a_persisted_owner_tool_no_longer_exists(

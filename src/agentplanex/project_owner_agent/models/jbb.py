@@ -60,26 +60,21 @@ class OpenAIResponsesTransport:
                         raise JBBModelError(
                             f"Failed to initialize JBB gateway: {error}"
                         ) from error
+        options: dict[str, Any] = {
+            "model": request.model,
+            "instructions": request.instructions,
+            "input": cast(ResponseInputParam, list(request.input)),
+            "store": False,
+            "stream": False,
+            "service_tier": "priority",
+        }
         if request.tools:
-            return self.client.responses.create(
-                model=request.model,
-                instructions=request.instructions,
-                input=cast(ResponseInputParam, list(request.input)),
+            options.update(
                 tools=cast(list[FunctionToolParam], list(request.tools)),
-                store=False,
-                stream=False,
-                service_tier="priority",
                 tool_choice=request.tool_choice,
                 parallel_tool_calls=False,
             )
-        return self.client.responses.create(
-            model=request.model,
-            instructions=request.instructions,
-            input=cast(ResponseInputParam, list(request.input)),
-            store=False,
-            stream=False,
-            service_tier="priority",
-        )
+        return self.client.responses.create(**options)
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,6 +2,7 @@
 
 import os
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import uuid4
@@ -324,20 +325,26 @@ class ProjectOwnerService:
             step_limit=owner_settings.step_limit,
             max_consecutive_format_errors=owner_settings.max_consecutive_format_errors,
         )
+
+        def prepare_query(
+            context: ProjectRuntimeContext,
+            query_index: int,
+            current: Sequence[Message],
+        ) -> Sequence[Message]:
+            return self.context_memory.prepare_query(
+                context,
+                activation,
+                query_index,
+                current,
+            )
+
         return (
             DefaultAgent(
                 model,
                 self._execute_latest_context,
                 append_messages=self.append_messages,
                 initial_messages=messages,
-                prepare_query=lambda context, query_index, current: (
-                    self.context_memory.prepare_query(
-                        context,
-                        activation,
-                        query_index,
-                        current,
-                    )
-                ),
+                prepare_query=prepare_query,
                 config=config,
             )
             if self.approval_mode == "yolo"
@@ -346,14 +353,7 @@ class ProjectOwnerService:
                 self._execute_latest_context,
                 append_messages=self.append_messages,
                 initial_messages=list(messages),
-                prepare_query=lambda context, query_index, current: (
-                    self.context_memory.prepare_query(
-                        context,
-                        activation,
-                        query_index,
-                        current,
-                    )
-                ),
+                prepare_query=prepare_query,
                 approval=TerminalApproval(
                     require_tty=os.getenv(
                         "AGENTPLANEX_REQUIRE_INTERACTIVE_TERMINAL", "1"
