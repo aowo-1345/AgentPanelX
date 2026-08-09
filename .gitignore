@@ -1,4 +1,6 @@
 .venv/
+node_modules/
+*.tsbuildinfo
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/

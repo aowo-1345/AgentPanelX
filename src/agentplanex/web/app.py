@@ -6,8 +6,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, status
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from agentplanex.bootstrap import create_workspace
 from agentplanex.services.workspace import WorkspaceService
@@ -32,7 +33,7 @@ from agentplanex.web.schemas import (
 )
 
 
-def create_app(settings: Settings) -> FastAPI:
+def create_app(settings: Settings, *, frontend_dist: Path | None = None) -> FastAPI:
     workspace = create_workspace(settings)
     worker = WorkspaceWorker(workspace)
 
@@ -53,6 +54,8 @@ def create_app(settings: Settings) -> FastAPI:
     )
     install_error_handlers(app)
     _install_routes(app, workspace, worker)
+    if frontend_dist is not None:
+        _install_frontend(app, frontend_dist)
     return app
 
 
@@ -149,14 +152,43 @@ def _install_routes(
         return workspace_response(result)
 
 
+def _install_frontend(app: FastAPI, frontend_dist: Path) -> None:
+    """Serve one built SPA without changing or shadowing the API contract."""
+
+    root = frontend_dist.resolve()
+    index = root / "index.html"
+    if not index.is_file():
+        raise ValueError(f"Frontend build is missing index.html: {root}")
+
+    @app.get("/{frontend_path:path}", include_in_schema=False)
+    def frontend(frontend_path: str) -> FileResponse:
+        if frontend_path == "api" or frontend_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found")
+        candidate = (root / frontend_path).resolve()
+        if candidate.is_relative_to(root) and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(index)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agentplanex-web")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--host", choices=("127.0.0.1", "localhost"), default="127.0.0.1")
     parser.add_argument("--port", type=int, default=13475)
+    parser.add_argument(
+        "--frontend-dist",
+        type=Path,
+        help="serve a built Web Console directory (defaults to frontend/dist when present)",
+    )
     args = parser.parse_args(argv)
+    frontend_dist = args.frontend_dist
+    default_frontend_dist = Path.cwd() / "frontend" / "dist"
+    if frontend_dist is None and (default_frontend_dist / "index.html").is_file():
+        frontend_dist = default_frontend_dist
+    if frontend_dist is not None and not (frontend_dist / "index.html").is_file():
+        parser.error(f"frontend build is missing index.html: {frontend_dist}")
     uvicorn.run(
-        create_app(load_settings(args.config)),
+        create_app(load_settings(args.config), frontend_dist=frontend_dist),
         host=args.host,
         port=args.port,
     )
