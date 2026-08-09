@@ -1,4 +1,22 @@
-"""Drive Tool Actions and user interactions against a project Runtime."""
+"""Developer control surface for driving one real project Runtime.
+
+This script is deliberately broader than the packaged ``agentplanex-owner`` CLI.
+The packaged CLI submits a user message and immediately lets the Project Owner
+model process it. This debug CLI exposes those steps separately so a developer can
+inspect and drive the durable Runtime without relying on model decisions.
+
+The input can be either:
+
+* a raw Tool Action JSON object, executed directly outside an Owner activation; or
+* an interaction command such as ``message``, ``drive tool``, ``approve``,
+  ``start``, ``drive-delivery``, or ``view``.
+
+All commands use the real ``ProjectRuntime`` for ``--cwd`` and therefore exercise
+the real project SQLite database, Git repository, Tool implementations, and
+Delivery machinery. ``drive`` may invoke the Project Owner model and
+``drive-delivery`` may invoke the Stage Executor. ``start`` specifically means
+approving the first Delivery Run; it does not mean starting a TRIAGE conversation.
+"""
 
 import argparse
 import json
@@ -51,6 +69,8 @@ type InteractionAction = Literal[
 
 
 class RuntimeCommands(Protocol):
+    """The ProjectRuntime commands exposed by this developer control surface."""
+
     def submit_message(self, content: str) -> OwnerActivation: ...
 
     def approve_plan(self) -> PlanDecision: ...
@@ -76,12 +96,16 @@ class RuntimeCommands(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class _Interaction:
+    """One parsed control command that is not a raw Tool Action."""
+
     action: InteractionAction
     message: str = ""
     tool_action: Action | None = None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    """Create the real Runtime for ``--cwd`` and run one or many debug commands."""
+
     args = _parser().parse_args(argv)
     action_text = " ".join(args.action).strip()
     if args.print_mode and not action_text:
@@ -116,6 +140,8 @@ def _execute_once(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Execute one Tool Action directly, without claiming an Owner activation."""
+
     output = stdout if stdout is not None else sys.stdout
     try:
         result = execute_tool(action)
@@ -139,6 +165,8 @@ def _run_interactive(
     read_input: InputReader = input,
     stdout: TextIO | None = None,
 ) -> int:
+    """Read and dispatch commands until EOF or an explicit exit command."""
+
     action_text = initial_action
     while True:
         if not action_text:
@@ -166,6 +194,8 @@ def _dispatch(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Route one parsed command to the matching ProjectRuntime interface."""
+
     if not isinstance(command, _Interaction):
         return _execute_once(runtime.execute_action, command, stdout=stdout)
     if command.action == "message":
@@ -199,6 +229,13 @@ def _dispatch(
 
 
 def _parse_command(command_text: str) -> Action | _Interaction:
+    """Parse raw Tool JSON or one of the supported human-readable commands.
+
+    ``tool {...}`` and a bare ``{...}`` execute outside an activation. In contrast,
+    ``drive tool {...}`` claims the current Triage's unfinished activation and uses
+    the supplied Tool Action as the next Project Owner step.
+    """
+
     stripped = command_text.strip()
     if stripped.startswith("{"):
         return _parse_action(stripped)
@@ -256,6 +293,8 @@ def _parse_command(command_text: str) -> Action | _Interaction:
 
 
 def _parse_action(action_text: str) -> Action:
+    """Validate a concrete Tool Action and add a call ID when one is omitted."""
+
     try:
         parsed: object = json.loads(action_text)
     except json.JSONDecodeError as error:
@@ -286,6 +325,8 @@ def _submit_message(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Persist user input and enqueue an activation without driving it."""
+
     output = stdout if stdout is not None else sys.stdout
     try:
         activation = runtime.submit_message(message)
@@ -313,6 +354,8 @@ def _submit_plan_decision(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Apply a user Plan decision and enqueue its resulting Owner activation."""
+
     output = stdout if stdout is not None else sys.stdout
     try:
         decision = (
@@ -347,6 +390,8 @@ def _drive_once(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Let the configured Project Owner model consume one pending activation."""
+
     output = stdout if stdout is not None else sys.stdout
     try:
         driven = runtime.drive_next_activation()
@@ -384,6 +429,8 @@ def _drive_tool_once(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Use a developer-supplied Tool Action as the next Owner activation step."""
+
     output = stdout if stdout is not None else sys.stdout
     try:
         driven = runtime.drive_activation_tool(action)
@@ -428,6 +475,8 @@ def _drive_reply_once(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Finish the current Tool-driven activation with an Owner reply."""
+
     return _finish_tool_drive(
         "reply",
         lambda: runtime.reply_to_activation(content),
@@ -441,6 +490,8 @@ def _drive_fail_once(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Finish the current Tool-driven activation as a manual failure."""
+
     return _finish_tool_drive(
         "fail",
         lambda: runtime.fail_activation(reason),
@@ -454,6 +505,8 @@ def _finish_tool_drive(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Render the terminal result of a manually driven Owner activation."""
+
     output = stdout if stdout is not None else sys.stdout
     try:
         driven = finish()
@@ -490,6 +543,8 @@ def _start_first_run(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Apply the user's first-Run approval and queue its first Delivery Stage."""
+
     output = stdout if stdout is not None else sys.stdout
     try:
         queued = runtime.start_first_run()
@@ -523,6 +578,8 @@ def _drive_delivery_once(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Run at most one queued Delivery Stage through the real Delivery Driver."""
+
     output = stdout if stdout is not None else sys.stdout
     try:
         driven = runtime.drive_delivery()
@@ -562,6 +619,8 @@ def _show_view(
     *,
     stdout: TextIO | None = None,
 ) -> int:
+    """Render the Runtime, Git, activation, Delivery, and Timeline read model."""
+
     output = stdout if stdout is not None else sys.stdout
     try:
         view = runtime.project_control_view()
