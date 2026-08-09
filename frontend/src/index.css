@@ -110,4 +110,131 @@
   .status-badge-blocked {
     @apply border border-red-500/30 bg-red-500/10 text-red-400;
   }
+
+  .plan-document-dialog {
+    @apply m-auto h-[min(880px,90vh)] w-[min(1120px,94vw)] max-h-none max-w-none overflow-hidden rounded-xl border border-border bg-card p-0 shadow-2xl;
+  }
+
+  .plan-document-dialog::backdrop {
+    @apply bg-black/75 backdrop-blur-sm;
+  }
+
+  .markdown-document {
+    @apply text-sm leading-7 text-foreground/90;
+  }
+
+  .markdown-document > :first-child {
+    @apply mt-0;
+  }
+
+  .markdown-document > :last-child {
+    @apply mb-0;
+  }
+
+  .markdown-document h1 {
+    @apply mb-5 mt-9 border-b border-border pb-3 text-2xl font-semibold tracking-tight text-foreground;
+  }
+
+  .markdown-document h2 {
+    @apply mb-4 mt-8 border-b border-border/70 pb-2 text-xl font-semibold tracking-tight text-foreground;
+  }
+
+  .markdown-document h3 {
+    @apply mb-3 mt-7 text-base font-semibold text-foreground;
+  }
+
+  .markdown-document h4,
+  .markdown-document h5,
+  .markdown-document h6 {
+    @apply mb-2 mt-6 font-semibold text-foreground;
+  }
+
+  .markdown-document p {
+    @apply my-4;
+  }
+
+  .markdown-document a {
+    @apply text-primary underline decoration-primary/40 underline-offset-4 hover:decoration-primary;
+  }
+
+  .markdown-document strong {
+    @apply font-semibold text-foreground;
+  }
+
+  .markdown-document ul {
+    @apply my-4 list-disc space-y-1 pl-6;
+  }
+
+  .markdown-document ol {
+    @apply my-4 list-decimal space-y-1 pl-6;
+  }
+
+  .markdown-document li > ul,
+  .markdown-document li > ol {
+    @apply my-1;
+  }
+
+  .markdown-document blockquote {
+    @apply my-5 border-l-4 border-primary/40 bg-primary/5 px-4 py-1 italic text-muted-foreground;
+  }
+
+  .markdown-document hr {
+    @apply my-8 border-border;
+  }
+
+  .markdown-document table {
+    @apply my-5 block w-full overflow-x-auto border-collapse text-left text-xs;
+  }
+
+  .markdown-document th {
+    @apply border border-border bg-muted px-3 py-2 font-semibold text-foreground;
+  }
+
+  .markdown-document td {
+    @apply border border-border px-3 py-2 align-top;
+  }
+
+  .markdown-document code {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-blue-200;
+  }
+
+  .markdown-document pre {
+    @apply my-5 overflow-x-auto rounded-lg border border-border bg-background p-4 text-xs leading-6;
+  }
+
+  .markdown-document pre code {
+    @apply bg-transparent p-0 text-inherit;
+  }
+
+  .markdown-document img {
+    @apply my-5 max-w-full rounded-lg border border-border;
+  }
+
+  .markdown-document input[type='checkbox'] {
+    @apply mr-2 align-middle accent-primary;
+  }
+
+  .mermaid-diagram {
+    @apply my-6 overflow-x-auto rounded-lg border border-border bg-background/60 p-4 text-center;
+  }
+
+  .mermaid-diagram svg {
+    @apply mx-auto h-auto max-w-full;
+  }
+
+  .mermaid-loading {
+    @apply my-6 rounded-lg border border-border bg-background/60 p-8 text-center text-xs text-muted-foreground;
+  }
+
+  .mermaid-fallback {
+    @apply my-6 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200;
+  }
+
+  .mermaid-fallback p {
+    @apply m-0;
+  }
+
+  .mermaid-fallback pre {
+    @apply mb-0 mt-3 border-red-500/20 bg-background/70 text-foreground;
+  }
 }

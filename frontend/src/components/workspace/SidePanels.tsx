@@ -1,4 +1,4 @@
-import { Check, Copy, FileText, GitBranch, GitCommit } from 'lucide-react';
+import { Check, Copy, ExternalLink, FileText, GitBranch, GitCommit } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import type {
   GitData,
@@ -10,6 +10,7 @@ import type {
 } from '@/api/types';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { StatusBadge } from '@/components/common/StatusBadge';
+import { PlanDocumentDialog } from '@/components/workspace/PlanDocumentDialog';
 
 function PanelShell({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -71,29 +72,59 @@ function RuntimePanel({ panel }: { panel: Panel<RuntimeData> }) {
 }
 
 function PlanPanel({ panel }: { panel: Panel<PlanData> }) {
+  const [selectedDocumentName, setSelectedDocumentName] = useState<string | null>(null);
+
   return (
     <PanelState panel={panel}>
-      {(plan) => (
-        <div className="space-y-2.5">
-          {plan.documents.length === 0 ? (
-            <p className="text-xs italic text-muted-foreground/60">No plan documents yet</p>
-          ) : (
-            plan.documents.map((document) => (
-              <details key={document.name} className="rounded-md border border-border bg-background/40">
-                <summary className="flex cursor-pointer list-none items-center gap-2 p-2 text-xs">
-                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="truncate">{document.name}</span>
-                </summary>
-                <pre className="max-h-56 overflow-auto whitespace-pre-wrap border-t border-border p-2 text-[10px] leading-relaxed text-muted-foreground">
-                  {document.content || 'Document content unavailable'}
-                </pre>
-              </details>
-            ))
-          )}
-          <KeyValue label="Plan commit" value={plan.current_commit_sha} />
-          <KeyValue label="Pending digest" value={plan.pending_subject_digest} />
-        </div>
-      )}
+      {(plan) => {
+        const selectedDocument = plan.documents.find(
+          (document) => document.name === selectedDocumentName,
+        );
+
+        return (
+          <div className="space-y-2.5">
+            {plan.documents.length === 0 ? (
+              <p className="text-xs italic text-muted-foreground/60">No plan documents yet</p>
+            ) : (
+              <div className="space-y-1.5">
+                {plan.documents.map((document) => {
+                  const available = Boolean(document.content);
+                  return (
+                    <button
+                      key={document.name}
+                      type="button"
+                      className="group flex w-full items-center gap-2 rounded-md border border-border bg-background/40 p-2 text-left text-xs transition-colors enabled:hover:border-primary/30 enabled:hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={() => setSelectedDocumentName(document.name)}
+                      disabled={!available}
+                      aria-label={available ? `Open ${document.name}` : `${document.name} unavailable`}
+                    >
+                      <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground group-enabled:group-hover:text-primary" />
+                      <span className="min-w-0 flex-1 truncate">{document.name}</span>
+                      {available ? (
+                        <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground/60 group-hover:text-primary" />
+                      ) : (
+                        <span className="text-[9px] uppercase tracking-wide text-muted-foreground">
+                          Missing
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <KeyValue label="Plan commit" value={plan.current_commit_sha} />
+            <KeyValue label="Pending digest" value={plan.pending_subject_digest} />
+
+            {selectedDocument && (
+              <PlanDocumentDialog
+                document={selectedDocument}
+                commitSha={plan.current_commit_sha}
+                onClose={() => setSelectedDocumentName(null)}
+              />
+            )}
+          </div>
+        );
+      }}
     </PanelState>
   );
 }
