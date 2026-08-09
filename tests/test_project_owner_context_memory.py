@@ -9,6 +9,7 @@ import pytest
 
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteMessageHistoryRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
 )
@@ -39,6 +40,8 @@ class _ContextMemoryTransport(ResponsesTransport):
         self.first_owner_tool = first_owner_tool
         self.requests: list[ResponsesRequest] = []
         self.owner_request_count = 0
+        self.on_first_summary: Callable[[], None] | None = None
+        self._summary_callback_used = False
         self._lock = Lock()
 
     def create(self, request: ResponsesRequest) -> object:
@@ -46,6 +49,8 @@ class _ContextMemoryTransport(ResponsesTransport):
             self.requests.append(request)
         task = str(request.input[-1].get("content", ""))
         trajectory, initial_intent, update_intent = self.prompts
+        if task in self.prompts:
+            self._run_summary_callback()
         if task == trajectory:
             if self.summary_failure == "trajectory-error":
                 raise RuntimeError("trajectory unavailable")
@@ -91,6 +96,15 @@ class _ContextMemoryTransport(ResponsesTransport):
                 },
             )
         return _text_response("owner-finished")
+
+    def _run_summary_callback(self) -> None:
+        callback: Callable[[], None] | None = None
+        with self._lock:
+            if not self._summary_callback_used:
+                self._summary_callback_used = True
+                callback = self.on_first_summary
+        if callback is not None:
+            callback()
 
 
 def _text_response(text: str) -> object:
@@ -409,23 +423,9 @@ def test_summary_failure_keeps_original_context_and_does_not_fail_activation(
 
 def test_summary_publication_conflict_rolls_back_and_uses_original_context(
     initialize_git_project: Callable[[], Path],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_path = initialize_git_project()
     settings, transport = _settings_and_transport(capacity_tokens=1_500)
-
-    def reject_stale_checkpoint(
-        _repository: SQLiteProjectOwnerAgentRepository,
-        _connection: object,
-        **_values: object,
-    ) -> None:
-        raise RuntimeError("Project Owner context changed during compaction")
-
-    monkeypatch.setattr(
-        SQLiteProjectOwnerAgentRepository,
-        "advance_summary",
-        reject_stale_checkpoint,
-    )
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=settings,
@@ -434,6 +434,18 @@ def test_summary_publication_conflict_rolls_back_and_uses_original_context(
     )
 
     activation = runtime.submit_message("conflicting-context " * 600)
+    owner_service = runtime._service.owner
+    database = SQLiteDatabase.for_project(project_path)
+    with database.transaction() as connection:
+        context = owner_service.ensure_state(connection)
+
+    def advance_real_message_checkpoint() -> None:
+        owner_service.append_messages(
+            context,
+            ({"role": "user", "content": "concurrent checkpoint change"},),
+        )
+
+    transport.on_first_summary = advance_real_message_checkpoint
     driven = runtime.drive_next_activation()
 
     assert driven.exit is not None
@@ -444,16 +456,29 @@ def test_summary_publication_conflict_rolls_back_and_uses_original_context(
     assert str(owner_request.input[-1].get("content", "")).startswith(
         "conflicting-context"
     )
-    database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
+    messages = SQLiteMessageHistoryRepository()
     with database.read_only_connection() as connection:
         owner = owners.get_by_triage_id(connection, activation.triage_id)
         summary_count = connection.execute(
             "SELECT COUNT(*) FROM summary_history"
         ).fetchone()[0]
+        histories = (
+            messages.list_by_session_id(
+                connection,
+                owner.project_owner_session_id,
+            )
+            if owner is not None
+            else ()
+        )
     assert owner is not None
     assert owner.summary_id is None
     assert summary_count == 0
+    assert any(
+        message.get("content") == "concurrent checkpoint change"
+        for history in histories
+        for message in history.message
+    )
 
 
 def test_timeline_handler_failure_does_not_block_summary_publication(
