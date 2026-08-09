@@ -51,43 +51,6 @@ class WorkspaceGit:
             f"refs/heads/{branch_name}^{{commit}}",
         )
 
-    def refresh_branch(self, repository_path: Path, branch: str) -> str:
-        """Fetch a branch's configured remote without changing the working tree."""
-        branch_name = branch.strip()
-        local_commit = self.local_branch_commit(repository_path, branch_name)
-        remote = self._run(
-            repository_path,
-            "for-each-ref",
-            "--format=%(upstream:remotename)",
-            f"refs/heads/{branch_name}",
-        )
-        if not remote:
-            return local_commit
-        self._run(repository_path, "fetch", "--prune", remote)
-        return self.latest_branch_commit(repository_path, branch_name)
-
-    def latest_branch_commit(self, repository_path: Path, branch: str) -> str:
-        """Return the newest fast-forward commit across a local branch and upstream."""
-        branch_name = branch.strip()
-        local_commit = self.local_branch_commit(repository_path, branch_name)
-        upstream = self._run(
-            repository_path,
-            "for-each-ref",
-            "--format=%(upstream)",
-            f"refs/heads/{branch_name}",
-        )
-        if not upstream:
-            return local_commit
-        upstream_commit = self._run(
-            repository_path,
-            "rev-parse",
-            "--verify",
-            f"{upstream}^{{commit}}",
-        )
-        if self._is_ancestor(repository_path, local_commit, upstream_commit):
-            return upstream_commit
-        return local_commit
-
     def create_feature_worktree(
         self,
         repository_path: Path,
@@ -177,26 +140,3 @@ class WorkspaceGit:
                 f"git {' '.join(arguments)} failed for {repository_path}: {detail}"
             )
         return result.stdout.strip()
-
-    @staticmethod
-    def _is_ancestor(repository_path: Path, ancestor: str, descendant: str) -> bool:
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repository_path),
-                "merge-base",
-                "--is-ancestor",
-                ancestor,
-                descendant,
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode in (0, 1):
-            return result.returncode == 0
-        detail = result.stderr.strip() or result.stdout.strip()
-        raise WorkspaceGitError(
-            f"git merge-base --is-ancestor failed for {repository_path}: {detail}"
-        )
