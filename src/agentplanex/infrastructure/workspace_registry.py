@@ -96,6 +96,20 @@ class WorkspaceRegistry:
             ).fetchall()
         return tuple(_project_from_row(row) for row in rows)
 
+    def update_project_main_branch(
+        self,
+        project_id: str,
+        main_branch: str,
+    ) -> ManagedProject:
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE managed_project SET main_branch = ? WHERE project_id = ?",
+                (main_branch, project_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"Managed Project not found: {project_id}")
+        return self.get_project(project_id)
+
     def insert_feature(self, feature: FeatureBinding) -> None:
         try:
             with self.database.transaction() as connection:
