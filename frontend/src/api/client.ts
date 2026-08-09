@@ -81,7 +81,7 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
-  listFeatures: () => request<BoardFeature[]>('/api/features'),
+  listFeatures: (signal?: AbortSignal) => request<BoardFeature[]>('/api/features', { signal }),
 
   createFeature: (projectId: string, name: string) =>
     request<CreatedFeature>(featurePath(projectId), {
@@ -89,8 +89,8 @@ export const api = {
       body: JSON.stringify({ name }),
     }),
 
-  getWorkspace: (projectId: string, triageId: string) =>
-    request<Workspace>(`${featurePath(projectId, triageId)}/workspace`),
+  getWorkspace: (projectId: string, triageId: string, signal?: AbortSignal) =>
+    request<Workspace>(`${featurePath(projectId, triageId)}/workspace`, { signal }),
 
   sendMessage: (projectId: string, triageId: string, content: string) =>
     request<ActivationReceipt>(`${featurePath(projectId, triageId)}/messages`, {

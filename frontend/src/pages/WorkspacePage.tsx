@@ -7,13 +7,37 @@ import { SkeletonWorkspace } from '@/components/common/Skeletons';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { ChatArea, type CommandNotice } from '@/components/workspace/ChatArea';
 import { SidePanels } from '@/components/workspace/SidePanels';
+import { useSilentPolling } from '@/hooks/useSilentPolling';
 
 type LoadState = 'loading' | 'loaded' | 'refreshing' | 'error';
+
+const ACTIVE_WORKSPACE_POLL_MS = 500;
+const IDLE_WORKSPACE_POLL_MS = 5_000;
+
+function preserveEqual<T>(current: T, next: T): T {
+  return JSON.stringify(current) === JSON.stringify(next) ? current : next;
+}
+
+function mergeWorkspace(current: Workspace | null, next: Workspace): Workspace {
+  if (current === null || JSON.stringify(current) === JSON.stringify(next)) return current ?? next;
+  return {
+    ...next,
+    project: preserveEqual(current.project, next.project),
+    feature: preserveEqual(current.feature, next.feature),
+    available_actions: preserveEqual(current.available_actions, next.available_actions),
+    runtime: preserveEqual(current.runtime, next.runtime),
+    conversation: preserveEqual(current.conversation, next.conversation),
+    plan: preserveEqual(current.plan, next.plan),
+    milestones: preserveEqual(current.milestones, next.milestones),
+    timeline: preserveEqual(current.timeline, next.timeline),
+    git: preserveEqual(current.git, next.git),
+  };
+}
 
 function receiptNotice(receipt: ActivationReceipt): CommandNotice {
   return {
     kind: 'success',
-    text: `Message accepted by the backend (${receipt.status}). Refresh the workspace to retrieve later Project Owner updates. Activation ${receipt.activation_id}.`,
+    text: `Message accepted by the backend (${receipt.status}). Waiting for Project Owner. Activation ${receipt.activation_id}.`,
   };
 }
 
@@ -27,6 +51,12 @@ export function WorkspacePage() {
   const [pendingAction, setPendingAction] = useState<FeatureAction | null>(null);
   const [notice, setNotice] = useState<CommandNotice | null>(null);
 
+  const applyWorkspace = useCallback((next: Workspace) => {
+    setWorkspace((current) => mergeWorkspace(current, next));
+    setLoadState((current) => (current === 'error' ? 'loaded' : current));
+    setLoadError('');
+  }, []);
+
   const load = useCallback(
     async (refresh = false) => {
       if (!projectId || !triageId) {
@@ -37,14 +67,14 @@ export function WorkspacePage() {
       setLoadState(refresh ? 'refreshing' : 'loading');
       setLoadError('');
       try {
-        setWorkspace(await api.getWorkspace(projectId, triageId));
+        applyWorkspace(await api.getWorkspace(projectId, triageId));
         setLoadState('loaded');
       } catch (caught) {
         setLoadError(readableError(caught));
         setLoadState('error');
       }
     },
-    [projectId, triageId],
+    [applyWorkspace, projectId, triageId],
   );
 
   useEffect(() => {
@@ -52,6 +82,32 @@ export function WorkspacePage() {
     setNotice(null);
     void load();
   }, [load]);
+
+  const pollWorkspace = useCallback(
+    (signal: AbortSignal) => {
+      if (!projectId || !triageId) {
+        return Promise.reject(new Error('Workspace identity is missing'));
+      }
+      return api.getWorkspace(projectId, triageId, signal);
+    },
+    [projectId, triageId],
+  );
+  const activationStatus = workspace?.runtime.data?.activation_status ?? null;
+  const workspaceBusy =
+    activationStatus === 'PENDING' ||
+    activationStatus === 'RUNNING' ||
+    workspace?.feature.status === 'IN_PROGRESS' ||
+    sending ||
+    pendingAction !== null;
+
+  useSilentPolling({
+    enabled:
+      workspace !== null &&
+      (loadState === 'loaded' || loadState === 'error'),
+    intervalMs: workspaceBusy ? ACTIVE_WORKSPACE_POLL_MS : IDLE_WORKSPACE_POLL_MS,
+    query: pollWorkspace,
+    onData: applyWorkspace,
+  });
 
   async function sendMessage(content: string) {
     if (!projectId || !triageId || sending) return false;
@@ -61,7 +117,7 @@ export function WorkspacePage() {
       const receipt = await api.sendMessage(projectId, triageId, content);
       setNotice(receiptNotice(receipt));
       try {
-        setWorkspace(await api.getWorkspace(projectId, triageId));
+        applyWorkspace(await api.getWorkspace(projectId, triageId));
       } catch (caught) {
         setNotice({
           kind: 'warning',
@@ -82,7 +138,7 @@ export function WorkspacePage() {
     setPendingAction(action);
     setNotice(null);
     try {
-      setWorkspace(await api.performAction(projectId, triageId, action, feedback));
+      applyWorkspace(await api.performAction(projectId, triageId, action, feedback));
       setNotice({ kind: 'success', text: `Action “${action}” was accepted by the backend.` });
     } catch (caught) {
       setNotice({ kind: 'error', text: readableError(caught) });
@@ -152,7 +208,7 @@ export function WorkspacePage() {
               <ChatArea
                 conversation={workspace.conversation}
                 actions={workspace.available_actions}
-                activationStatus={workspace.runtime.data?.activation_status ?? null}
+                activationStatus={activationStatus}
                 pendingAction={pendingAction}
                 sending={sending}
                 notice={notice}

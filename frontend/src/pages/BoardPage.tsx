@@ -11,8 +11,16 @@ import {
 } from '@/api/types';
 import { KanbanColumn } from '@/components/board/KanbanColumn';
 import { NewFeaturePanel } from '@/components/board/NewFeaturePanel';
+import { useSilentPolling } from '@/hooks/useSilentPolling';
 
 type LoadState = 'loading' | 'loaded' | 'refreshing' | 'error';
+
+const ACTIVE_BOARD_POLL_MS = 1_000;
+const IDLE_BOARD_POLL_MS = 5_000;
+
+function sameFeatures(current: BoardFeature[], next: BoardFeature[]): boolean {
+  return JSON.stringify(current) === JSON.stringify(next);
+}
 
 export function BoardPage() {
   const navigate = useNavigate();
@@ -24,6 +32,12 @@ export function BoardPage() {
   const [projectFilter, setProjectFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<FeatureStatus | 'all'>('all');
 
+  const applyFeatures = useCallback((next: BoardFeature[]) => {
+    setFeatures((current) => (sameFeatures(current, next) ? current : next));
+    setLoadState((current) => (current === 'error' ? 'loaded' : current));
+    setError('');
+  }, []);
+
   const load = useCallback(async (refresh = false) => {
     setLoadState(refresh ? 'refreshing' : 'loading');
     setError('');
@@ -33,17 +47,27 @@ export function BoardPage() {
         api.listFeatures(),
       ]);
       setProjects(nextProjects);
-      setFeatures(nextFeatures);
+      applyFeatures(nextFeatures);
       setLoadState('loaded');
     } catch (caught) {
       setError(readableError(caught));
       setLoadState('error');
     }
-  }, []);
+  }, [applyFeatures]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const boardBusy = features.some((feature) => feature.status === 'IN_PROGRESS');
+  const pollFeatures = useCallback((signal: AbortSignal) => api.listFeatures(signal), []);
+
+  useSilentPolling({
+    enabled: loadState === 'loaded' || loadState === 'error',
+    intervalMs: boardBusy ? ACTIVE_BOARD_POLL_MS : IDLE_BOARD_POLL_MS,
+    query: pollFeatures,
+    onData: applyFeatures,
+  });
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
