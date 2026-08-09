@@ -27,9 +27,11 @@ from scripts import debug_owner_fork_cli, debug_tool_cli
 
 class _WitnessModel:
     queries: ClassVar[list[list[Message]]] = []
+    constructions: ClassVar[list[dict[str, object]]] = []
 
     def __init__(self, **kwargs: object) -> None:
         assert kwargs["tools"] is None
+        type(self).constructions.append(kwargs)
 
     def query(self, messages: list[Message]) -> Message:
         type(self).queries.append([dict(message) for message in messages])
@@ -158,6 +160,7 @@ def test_owner_fork_cli_keeps_two_interrogation_turns_in_memory_only(
     project_path, through_message_id, summary = historical_project
     before = _database_snapshot(project_path)
     _WitnessModel.queries = []
+    _WitnessModel.constructions = []
     monkeypatch.setattr(debug_owner_fork_cli, "JBBModel", _WitnessModel)
     questions = iter(
         (
@@ -196,6 +199,14 @@ def test_owner_fork_cli_keeps_two_interrogation_turns_in_memory_only(
         "historical-witness: Which fact would have changed your decision?",
     ]
     assert len(_WitnessModel.queries) == 2
+    assert len(_WitnessModel.constructions) == 1
+    configured_model = load_settings(DEFAULT_SETTINGS_PATH).project_owner_agent
+    construction = _WitnessModel.constructions[0]
+    assert construction["model"] == configured_model.selected_model.name
+    transport = construction["transport"]
+    assert isinstance(transport, jbb_model_module.OpenAIResponsesTransport)
+    assert transport.base_url == configured_model.selected_model.base_url
+    assert transport.api_key_env == configured_model.selected_model.api_key_env
     assert "Historical Project Owner Fork" in str(
         _WitnessModel.queries[0][0]["content"]
     )

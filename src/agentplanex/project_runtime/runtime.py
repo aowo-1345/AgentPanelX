@@ -71,7 +71,7 @@ class ProjectRuntime:
         database = SQLiteDatabase.for_project(project_path)
         initialize_schema(database)
         event_bus = EventBus((SQLiteTimelineRecorder(database),))
-        model_settings = settings.project_owner_agent.model
+        model_settings = settings.project_owner_agent.selected_model
         transport = (
             responses_transport
             if responses_transport is not None

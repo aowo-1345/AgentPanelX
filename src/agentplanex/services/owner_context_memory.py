@@ -66,7 +66,7 @@ class ProjectOwnerContextMemory:
         fixed_tools = self.tools.select(owner.tools)
         memory = self.settings.project_owner_agent.context_memory
         estimate = _count_tokens(
-            self.settings.project_owner_agent.model.name,
+            self.settings.project_owner_agent.selected_model.name,
             frozen,
             fixed_tools,
         )

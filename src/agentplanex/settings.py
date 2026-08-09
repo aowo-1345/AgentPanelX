@@ -5,7 +5,14 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.yaml")
 DEFAULT_JBB_BASE_URL = "https://api.openai.com/v1"
@@ -51,12 +58,43 @@ class ContextMemorySettings(_SettingsModel):
 class ProjectOwnerAgentSettings(_SettingsModel):
     """Long-lived Project Owner control-loop settings."""
 
-    model: ModelSettings
+    active_model: str = Field(min_length=1)
+    models: dict[str, ModelSettings] = Field(min_length=1)
     step_limit: int = Field(default=20, gt=0)
     max_consecutive_format_errors: int = Field(default=3, gt=0)
     context_memory: ContextMemorySettings = Field(
         default_factory=ContextMemorySettings
     )
+
+    @field_validator("active_model")
+    @classmethod
+    def _active_model_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Active model name must not be blank")
+        return value
+
+    @field_validator("models")
+    @classmethod
+    def _model_aliases_not_blank(
+        cls, value: dict[str, ModelSettings]
+    ) -> dict[str, ModelSettings]:
+        if any(not alias.strip() for alias in value):
+            raise ValueError("Model aliases must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _active_model_exists(self) -> "ProjectOwnerAgentSettings":
+        if self.active_model not in self.models:
+            raise ValueError(
+                f"Active model {self.active_model!r} is not declared in models"
+            )
+        return self
+
+    @property
+    def selected_model(self) -> ModelSettings:
+        """Return the explicitly selected Project Owner model provider."""
+
+        return self.models[self.active_model]
 
 
 class BashSettings(_SettingsModel):

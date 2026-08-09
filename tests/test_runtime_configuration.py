@@ -164,7 +164,8 @@ def _settings(
     return configured.model_copy(
         update={
             "project_owner_agent": ProjectOwnerAgentSettings(
-                model=ModelSettings(name="test-model"),
+                active_model="test",
+                models={"test": ModelSettings(name="test-model")},
             ),
             "runtime": configured.runtime.model_copy(
                 update={
@@ -182,14 +183,17 @@ def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> Non
     settings_path = tmp_path / "settings.yaml"
     raw = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
     raw["project_owner_agent"] = {
-        "model": {
-            "name": "configured-model",
-            "base_url": "https://example.test/v1",
-            "api_key_env": "EXAMPLE_API_KEY",
-            "http_headers": {"x-example": "configured"},
-            "reasoning_effort": "high",
-            "service_tier": None,
-            "timeout_seconds": 12.5,
+        "active_model": "configured",
+        "models": {
+            "configured": {
+                "name": "configured-model",
+                "base_url": "https://example.test/v1",
+                "api_key_env": "EXAMPLE_API_KEY",
+                "http_headers": {"x-example": "configured"},
+                "reasoning_effort": "high",
+                "service_tier": None,
+                "timeout_seconds": 12.5,
+            }
         },
         "step_limit": 7,
         "max_consecutive_format_errors": 2,
@@ -199,15 +203,17 @@ def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> Non
 
     settings = load_settings(settings_path)
 
-    assert settings.project_owner_agent.model.name == "configured-model"
-    assert settings.project_owner_agent.model.base_url == "https://example.test/v1"
-    assert settings.project_owner_agent.model.api_key_env == "EXAMPLE_API_KEY"
-    assert settings.project_owner_agent.model.http_headers == {
+    model = settings.project_owner_agent.selected_model
+    assert settings.project_owner_agent.active_model == "configured"
+    assert model.name == "configured-model"
+    assert model.base_url == "https://example.test/v1"
+    assert model.api_key_env == "EXAMPLE_API_KEY"
+    assert model.http_headers == {
         "x-example": "configured"
     }
-    assert settings.project_owner_agent.model.reasoning_effort == "high"
-    assert settings.project_owner_agent.model.service_tier is None
-    assert settings.project_owner_agent.model.timeout_seconds == 12.5
+    assert model.reasoning_effort == "high"
+    assert model.service_tier is None
+    assert model.timeout_seconds == 12.5
     assert settings.project_owner_agent.step_limit == 7
     assert settings.project_owner_agent.max_consecutive_format_errors == 2
     assert settings.runtime.bash.timeout_seconds == 3.5
@@ -277,6 +283,60 @@ def test_repository_settings_select_the_local_agentplanex_data_home() -> None:
     assert settings.workspace.data_home == Path(
         ".agentplanex"
     )
+
+
+def test_repository_settings_select_qwen_model_studio_without_embedded_credentials(
+) -> None:
+    owner = load_settings(DEFAULT_SETTINGS_PATH).project_owner_agent
+    model = owner.selected_model
+
+    assert owner.active_model == "qwen"
+    assert model.name == "your-model-name"
+    assert model.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert model.api_key_env == "OPENAI_API_KEY"
+    assert model.http_headers == {}
+    assert model.service_tier is None
+
+    toolcode = owner.models["toolcode"]
+    assert toolcode.name == "gpt-5.6-sol"
+    assert toolcode.base_url == "https://gateway.example/v1"
+    assert toolcode.api_key_env == "OPENAI_API_KEY"
+
+
+def test_settings_can_select_the_existing_toolcode_gateway(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.yaml"
+    raw = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
+    raw["project_owner_agent"]["active_model"] = "toolcode"
+    settings_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    owner = load_settings(settings_path).project_owner_agent
+
+    assert owner.active_model == "toolcode"
+    assert owner.selected_model is owner.models["toolcode"]
+    assert owner.selected_model.name == "gpt-5.6-sol"
+
+
+def test_unknown_active_model_is_rejected(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.yaml"
+    raw = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
+    raw["project_owner_agent"]["active_model"] = "missing"
+    settings_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Failed to load AgentPlaneX settings"):
+        load_settings(settings_path)
+
+
+def test_legacy_single_model_configuration_is_rejected(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.yaml"
+    raw = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
+    owner = raw["project_owner_agent"]
+    owner["model"] = owner["models"][owner["active_model"]]
+    del owner["active_model"]
+    del owner["models"]
+    settings_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Failed to load AgentPlaneX settings"):
+        load_settings(settings_path)
 
 
 def test_unknown_settings_are_rejected(tmp_path: Path) -> None:
@@ -423,7 +483,11 @@ def test_cli_reports_missing_model_credentials(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    api_key_env = (
+        load_settings(DEFAULT_SETTINGS_PATH)
+        .project_owner_agent.selected_model.api_key_env
+    )
+    monkeypatch.delenv(api_key_env, raising=False)
     monkeypatch.delenv("OPENAI_ADMIN_KEY", raising=False)
 
     result = cli.main(

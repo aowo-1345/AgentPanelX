@@ -83,7 +83,8 @@ def _settings(*, owner_prompt: str | None = None) -> Settings:
     return configured.model_copy(
         update={
             "project_owner_agent": ProjectOwnerAgentSettings(
-                model=ModelSettings(name="test-model")
+                active_model="test",
+                models={"test": ModelSettings(name="test-model")},
             ),
             "runtime": configured.runtime.model_copy(update={"prompts": prompts}),
         }

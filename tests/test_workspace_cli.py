@@ -49,8 +49,10 @@ def _initialize_repository(path: Path) -> None:
 def _write_settings(path: Path, data_home: Path, model_base_url: str) -> None:
     raw = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
     raw["workspace"] = {"data_home": str(data_home)}
-    raw["project_owner_agent"]["model"]["base_url"] = model_base_url
-    raw["project_owner_agent"]["model"]["timeout_seconds"] = 0.1
+    active_model = raw["project_owner_agent"]["active_model"]
+    model = raw["project_owner_agent"]["models"][active_model]
+    model["base_url"] = model_base_url
+    model["timeout_seconds"] = 0.1
     path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
 

@@ -1,6 +1,7 @@
 """One user-visible acceptance path through the installed Web backend."""
 
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -55,7 +56,10 @@ def _prepare_case(model_base_url: str) -> tuple[Path, Path]:
 
     settings = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
     settings["workspace"] = {"data_home": str(case_path / "data-home")}
-    settings["project_owner_agent"]["model"]["base_url"] = model_base_url
+    active_model = settings["project_owner_agent"]["active_model"]
+    model = settings["project_owner_agent"]["models"][active_model]
+    model["base_url"] = model_base_url
+    model["api_key_env"] = "AGENTPLANEX_TEST_API_KEY"
     config_path = case_path / "settings.yaml"
     config_path.write_text(yaml.safe_dump(settings), encoding="utf-8")
     return repository_path, config_path
@@ -191,6 +195,7 @@ def _web_server(config_path: Path, port: int) -> Iterator[str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env={**os.environ, "AGENTPLANEX_TEST_API_KEY": "test-secret"},
     )
     base_url = f"http://127.0.0.1:{port}"
     try:

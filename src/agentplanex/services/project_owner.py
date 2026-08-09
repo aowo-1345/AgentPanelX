@@ -319,7 +319,7 @@ class ProjectOwnerService:
         activation: OwnerActivation,
     ) -> DefaultAgent:
         owner_settings = self.settings.project_owner_agent
-        model_settings = owner_settings.model
+        model_settings = owner_settings.selected_model
         fixed_tools = self.tools.select(owner.tools)
         model = JBBModel(
             model=model_settings.name,
