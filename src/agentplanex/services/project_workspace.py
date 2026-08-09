@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 from agentplanex.domains import (
@@ -225,11 +226,7 @@ def _read_plan_documents(
             tuple(
                 PlanDocument(
                     name=name,
-                    content=(
-                        (git.project_path / name).read_text(encoding="utf-8")
-                        if (git.project_path / name).exists()
-                        else None
-                    ),
+                    content=_read_optional_document(git.project_path / name),
                 )
                 for name in SPEC_DOCUMENT_NAMES
             ),
@@ -237,6 +234,13 @@ def _read_plan_documents(
         )
     except OSError as error:
         return (), str(error)
+
+
+def _read_optional_document(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
 
 
 def _visible_messages(

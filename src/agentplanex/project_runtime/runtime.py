@@ -229,10 +229,9 @@ class ProjectRuntime:
         """Return the stable read model used by control clients and debug tooling."""
         return self._service.project_control_view()
 
-    def project_workspace_view(self) -> ProjectWorkspaceView:
+    def project_workspace_view(self, triage_id: str) -> ProjectWorkspaceView:
         """Return independently degradable panels for one Web workspace."""
-        context = self._service.initialize()
-        return self._workspace_query.get(context.triage_id)
+        return self._workspace_query.get(triage_id)
 
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit tool action without entering the Agent loop."""

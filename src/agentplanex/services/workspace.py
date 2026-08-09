@@ -54,7 +54,7 @@ class FeatureRuntime(Protocol):
 
     def project_control_view(self) -> ProjectControlView: ...
 
-    def project_workspace_view(self) -> ProjectWorkspaceView: ...
+    def project_workspace_view(self, triage_id: str) -> ProjectWorkspaceView: ...
 
 
 type RuntimeFactory = Callable[[Path], FeatureRuntime]
@@ -186,7 +186,10 @@ class WorkspaceService:
     ) -> FeatureWorkspace:
         binding = self._require_feature_binding(project_id, triage_id)
         project = self.registry.get_project(binding.project_id)
-        control = self.runtime_factory(binding.worktree_path).project_workspace_view()
+        self.runtime_contexts.get(binding)
+        control = self.runtime_factory(binding.worktree_path).project_workspace_view(
+            binding.triage_id
+        )
         return FeatureWorkspace(project=project, binding=binding, control=control)
 
     def perform_feature_action(
