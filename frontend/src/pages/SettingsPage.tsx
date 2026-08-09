@@ -24,7 +24,7 @@ export function SettingsPage() {
     setError('');
     try {
       setProjects(await (refresh ? api.refreshProjects() : api.listProjects()));
-      if (refresh) setSuccess('Project branches refreshed from their local working copies.');
+      if (refresh) setSuccess('Configured project branches refreshed from local repositories.');
     } catch (caught) {
       setError(readableError(caught));
     } finally {
