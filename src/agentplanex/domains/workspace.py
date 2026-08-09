@@ -55,6 +55,9 @@ class BoardFeature:
     status: str
     branch: str
     worktree_path: Path
+    pending_action: str | None
+    current_milestone_key: str | None
+    current_stage_key: str | None
 
 
 @dataclass(frozen=True, slots=True)

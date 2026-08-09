@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import uuid4
 
 from agentplanex.domains import (
@@ -19,6 +19,7 @@ from agentplanex.domains import (
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.services.feature_runtime_context import FeatureRuntimeContextQuery
+from agentplanex.services.project_control import ProjectControlView
 from agentplanex.services.workspace_board import WorkspaceBoardQuery
 
 _UNSAFE_SLUG = re.compile(r"[^a-z0-9]+")
@@ -33,8 +34,34 @@ class FeatureRuntime(Protocol):
 
     def submit_message(self, content: str) -> OwnerActivation: ...
 
+    def approve_plan(self) -> object: ...
+
+    def reject_plan(self, feedback: str = "") -> object: ...
+
+    def start_first_run(self) -> object: ...
+
+    def drive_next_activation(self) -> object: ...
+
+    def drive_delivery(self) -> object: ...
+
+    def fail_interrupted_model_activation(self) -> OwnerActivation | None: ...
+
+    def project_control_view(self) -> ProjectControlView: ...
+
 
 type RuntimeFactory = Callable[[Path], FeatureRuntime]
+type FeatureAction = Literal[
+    "begin", "approve-plan", "reject-plan", "start-delivery"
+]
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureWorkspace:
+    """One bound Feature and its composed Project Runtime read model."""
+
+    project: ManagedProject
+    binding: FeatureBinding
+    control: ProjectControlView
 
 
 @dataclass(slots=True)
@@ -141,6 +168,77 @@ class WorkspaceService:
 
     def project_board(self, project_id: str) -> ProjectBoard:
         return self.board_query.get(_required_text("Project ID", project_id))
+
+    def all_project_boards(self) -> tuple[ProjectBoard, ...]:
+        return tuple(
+            self.board_query.get(project.project_id)
+            for project in self.registry.list_projects()
+        )
+
+    def feature_workspace(
+        self,
+        *,
+        project_id: str,
+        triage_id: str,
+    ) -> FeatureWorkspace:
+        binding = self._require_feature_binding(project_id, triage_id)
+        project = self.registry.get_project(binding.project_id)
+        control = self.runtime_factory(binding.worktree_path).project_control_view()
+        return FeatureWorkspace(project=project, binding=binding, control=control)
+
+    def perform_feature_action(
+        self,
+        *,
+        project_id: str,
+        triage_id: str,
+        action: FeatureAction,
+        feedback: str = "",
+    ) -> FeatureWorkspace:
+        binding = self._require_feature_binding(project_id, triage_id)
+        runtime = self.runtime_factory(binding.worktree_path)
+        if action == "begin":
+            runtime.begin_feature(binding.triage_id)
+        elif action == "approve-plan":
+            runtime.approve_plan()
+        elif action == "reject-plan":
+            if not feedback.strip():
+                raise ValueError("Plan rejection feedback must not be empty")
+            runtime.reject_plan(feedback)
+        elif action == "start-delivery":
+            runtime.start_first_run()
+        else:
+            raise ValueError(f"Unsupported Feature action: {action}")
+        return self.feature_workspace(
+            project_id=binding.project_id,
+            triage_id=binding.triage_id,
+        )
+
+    def recover_interrupted_activations(self) -> int:
+        recovered = 0
+        for project in self.registry.list_projects():
+            for binding in self.registry.list_features(project.project_id):
+                if (
+                    self.runtime_factory(
+                        binding.worktree_path
+                    ).fail_interrupted_model_activation()
+                    is not None
+                ):
+                    recovered += 1
+        return recovered
+
+    def drive_next_automatic_step(self) -> bool:
+        """Drive at most one machine-owned step across the whole Workspace."""
+        for project in self.registry.list_projects():
+            for binding in self.registry.list_features(project.project_id):
+                runtime = self.runtime_factory(binding.worktree_path)
+                actions = runtime.project_control_view().allowed_actions
+                if actions == ("drive",):
+                    runtime.drive_next_activation()
+                    return True
+                if actions == ("drive-delivery",):
+                    runtime.drive_delivery()
+                    return True
+        return False
 
     def _require_feature_binding(
         self,

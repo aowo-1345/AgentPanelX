@@ -193,6 +193,10 @@ class ProjectRuntime:
         """Claim and process one pending Owner activation."""
         return self._service.drive_next_activation()
 
+    def fail_interrupted_model_activation(self) -> OwnerActivation | None:
+        """Fail a model activation that remained RUNNING across process restart."""
+        return self._service.fail_interrupted_model_activation()
+
     def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult:
         """Drive one Owner activation step with a supplied Tool Action."""
 

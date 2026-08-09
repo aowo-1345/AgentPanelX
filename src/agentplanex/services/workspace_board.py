@@ -41,4 +41,7 @@ class WorkspaceBoardQuery:
             status=context.status,
             branch=self.git.current_branch(binding.worktree_path),
             worktree_path=binding.worktree_path,
+            pending_action=context.pending_action,
+            current_milestone_key=context.current_milestone_key,
+            current_stage_key=context.current_stage_key,
         )

@@ -3,6 +3,7 @@
 import json
 import sqlite3
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -13,6 +14,8 @@ from agentplanex.domains import (
     ExecutionEvent,
     ExecutionEventType,
     OwnerActivation,
+    OwnerActivationMode,
+    OwnerActivationStatus,
     ProjectOwnerTask,
     ProjectOwnerTaskType,
     ProjectRuntimeContext,
@@ -121,6 +124,41 @@ class ProjectRuntimeService:
         with self.database.transaction() as connection:
             context = self.owner.ensure_state(connection)
         return self.driver.drive_next(context.triage_id)
+
+    def fail_interrupted_model_activation(self) -> OwnerActivation | None:
+        """Fail a model-owned activation left RUNNING across process restart."""
+        with self.database.transaction() as connection:
+            context = self.owner.ensure_state(connection)
+            activation = self.activations.get_unfinished(
+                connection, context.triage_id
+            )
+            if (
+                activation is None
+                or activation.status is not OwnerActivationStatus.RUNNING
+                or activation.driver_mode is not OwnerActivationMode.MODEL
+            ):
+                return None
+            failed = self.activations.mark_failed(
+                connection,
+                activation.activation_id,
+                datetime.now(UTC),
+                "AgentPlaneX Web stopped while this activation was running.",
+            )
+        if failed.driver_mode is None:
+            raise RuntimeError("Recovered activation has no driver mode")
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=failed.triage_id,
+                event_type=ExecutionEventType.REACT_LOOP_EXITED,
+                react_loop_id=failed.activation_id,
+                payload={
+                    "agent_exit_status": AgentExitStatus.UNHANDLED_EXCEPTION.value,
+                    "driver_mode": failed.driver_mode.value,
+                    "recovered_after_restart": True,
+                },
+            )
+        )
+        return failed
 
     def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult:
         """Drive one activation step with a supplied Tool Action, without a model."""
