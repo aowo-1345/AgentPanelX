@@ -38,6 +38,7 @@ function receiptNotice(receipt: ActivationReceipt): CommandNotice {
   return {
     kind: 'success',
     text: `Message accepted by the backend (${receipt.status}). Waiting for Project Owner. Activation ${receipt.activation_id}.`,
+    activationId: receipt.activation_id,
   };
 }
 
@@ -93,6 +94,12 @@ export function WorkspacePage() {
     [projectId, triageId],
   );
   const activationStatus = workspace?.runtime.data?.activation_status ?? null;
+
+  useEffect(() => {
+    if (sending || activationStatus !== null) return;
+    setNotice((current) => (current?.activationId ? null : current));
+  }, [activationStatus, sending]);
+
   const workspaceBusy =
     activationStatus === 'PENDING' ||
     activationStatus === 'RUNNING' ||
@@ -121,7 +128,7 @@ export function WorkspacePage() {
       } catch (caught) {
         setNotice({
           kind: 'warning',
-          text: `${receiptNotice(receipt).text} The immediate workspace refresh failed: ${readableError(caught)}`,
+          text: `Message accepted by the backend (${receipt.status}), but the immediate workspace refresh failed: ${readableError(caught)} Automatic refresh will retry. Activation ${receipt.activation_id}.`,
         });
       }
       return true;

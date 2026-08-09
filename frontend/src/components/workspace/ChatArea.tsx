@@ -10,6 +10,7 @@ import { ActionCard } from './ActionCard';
 interface CommandNotice {
   kind: 'success' | 'warning' | 'error';
   text: string;
+  activationId?: string;
 }
 
 interface ChatAreaProps {
