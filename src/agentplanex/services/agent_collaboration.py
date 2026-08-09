@@ -170,6 +170,7 @@ class AgentCollaborationService:
                 model=codex.model,
                 timeout_seconds=codex.timeout_seconds,
                 response_limit=codex.response_limit,
+                network_access=codex.network_access,
             ),
             observation_skill=(
                 observation_skill or resolve_observation_skill()

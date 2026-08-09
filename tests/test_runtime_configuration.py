@@ -212,6 +212,7 @@ def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> Non
     assert settings.project_owner_agent.max_consecutive_format_errors == 2
     assert settings.runtime.bash.timeout_seconds == 3.5
     assert settings.runtime.bash.output_limit == 4096
+    assert settings.runtime.codex.network_access is True
 
 
 def test_responses_transport_applies_selected_gateway_configuration(

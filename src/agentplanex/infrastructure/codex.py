@@ -60,6 +60,7 @@ class CodexTurnTransport:
     model: str | None
     timeout_seconds: float
     response_limit: int
+    network_access: bool = True
 
     def run(self, request: CodexTurnRequest) -> CodexTurnResult:
         """Run one turn in a writable Agent workspace and always close the SDK client."""
@@ -70,6 +71,10 @@ class CodexTurnTransport:
                     codex_bin=self.executable,
                     client_name="agentplanex",
                     client_title="AgentPlaneX",
+                    config_overrides=(
+                        "sandbox_workspace_write.network_access="
+                        f"{str(self.network_access).lower()}",
+                    ),
                 )
             )
             if request.thread_id is None:
@@ -104,7 +109,6 @@ class CodexTurnTransport:
                 cwd=str(request.workspace),
                 model=self.model,
                 output_schema=request.output_schema,
-                sandbox=Sandbox.workspace_write,
             )
             result = self._run_with_timeout(turn)
             status = getattr(result.status, "value", None)

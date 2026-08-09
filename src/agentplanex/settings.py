@@ -71,6 +71,7 @@ class CodexSettings(_SettingsModel):
 
     executable: str | None = None
     model: str | None = None
+    network_access: bool = True
     timeout_seconds: float = Field(default=600.0, gt=0)
     response_limit: int = Field(default=65_536, gt=0)
     artifact_limit: int = Field(default=262_144, gt=0)
