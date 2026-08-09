@@ -44,6 +44,10 @@ from agentplanex.services.owner_context import ProjectOwnerContextQuery
 from agentplanex.services.owner_context_memory import ProjectOwnerContextMemory
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning import PlanDecision
+from agentplanex.services.project_workspace import (
+    ProjectWorkspaceQuery,
+    ProjectWorkspaceView,
+)
 from agentplanex.services.stage_executor import CodexStageExecutor
 from agentplanex.settings import Settings
 
@@ -120,6 +124,7 @@ class ProjectRuntime:
             database=database,
             git=git,
         )
+        self._workspace_query = ProjectWorkspaceQuery(database=database, git=git)
         executions = create_project_executions(
             project_path,
             settings.runtime,
@@ -193,9 +198,9 @@ class ProjectRuntime:
         """Claim and process one pending Owner activation."""
         return self._service.drive_next_activation()
 
-    def fail_interrupted_model_activation(self) -> OwnerActivation | None:
-        """Fail a model activation that remained RUNNING across process restart."""
-        return self._service.fail_interrupted_model_activation()
+    def fail_interrupted_activation(self) -> OwnerActivation | None:
+        """Fail an activation that remained RUNNING across process restart."""
+        return self._service.fail_interrupted_activation()
 
     def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult:
         """Drive one Owner activation step with a supplied Tool Action."""
@@ -223,6 +228,11 @@ class ProjectRuntime:
     def project_control_view(self) -> ProjectControlView:
         """Return the stable read model used by control clients and debug tooling."""
         return self._service.project_control_view()
+
+    def project_workspace_view(self) -> ProjectWorkspaceView:
+        """Return independently degradable panels for one Web workspace."""
+        context = self._service.initialize()
+        return self._workspace_query.get(context.triage_id)
 
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit tool action without entering the Agent loop."""

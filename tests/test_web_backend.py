@@ -7,10 +7,11 @@ import subprocess
 import sys
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Thread
+from threading import Event, Lock, Thread
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -60,10 +61,29 @@ def _prepare_case(model_base_url: str) -> tuple[Path, Path]:
     return repository_path, config_path
 
 
+@dataclass(slots=True)
+class _ModelEndpoint:
+    base_url: str
+    second_request_started: Event
+    release_second_request: Event
+
+
 @contextmanager
-def _model_endpoint() -> Iterator[str]:
+def _model_endpoint() -> Iterator[_ModelEndpoint]:
+    second_request_started = Event()
+    release_second_request = Event()
+    request_lock = Lock()
+    request_count = 0
+
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
+            nonlocal request_count
+            with request_lock:
+                request_count += 1
+                request_number = request_count
+            if request_number == 2:
+                second_request_started.set()
+                release_second_request.wait(timeout=20)
             body = json.dumps(
                 {
                     "id": "resp_web_e2e",
@@ -108,7 +128,8 @@ def _model_endpoint() -> Iterator[str]:
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            with suppress(BrokenPipeError, ConnectionResetError):
+                self.wfile.write(body)
 
         def log_message(self, format: str, *args: object) -> None:
             pass
@@ -117,8 +138,13 @@ def _model_endpoint() -> Iterator[str]:
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield f"http://127.0.0.1:{server.server_port}/v1"
+        yield _ModelEndpoint(
+            base_url=f"http://127.0.0.1:{server.server_port}/v1",
+            second_request_started=second_request_started,
+            release_second_request=release_second_request,
+        )
     finally:
+        release_second_request.set()
         server.shutdown()
         server.server_close()
         thread.join()
@@ -193,8 +219,8 @@ def _web_server(config_path: Path, port: int) -> Iterator[str]:
 
 @pytest.mark.e2e
 def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
-    with _model_endpoint() as model_base_url:
-        repository_path, config_path = _prepare_case(model_base_url)
+    with _model_endpoint() as model_endpoint:
+        repository_path, config_path = _prepare_case(model_endpoint.base_url)
         port = _free_port()
 
         with _web_server(config_path, port) as base_url:
@@ -306,10 +332,88 @@ def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
                 {"action": "reject-plan", "feedback": "  "},
             )[0] == 422
 
+            assert _request(
+                base_url,
+                "POST",
+                f"/api/projects/{project_id}/features/{triage_id}/messages",
+                {"content": "This activation will be interrupted."},
+            )[0] == 202
+            assert model_endpoint.second_request_started.wait(timeout=5)
+            status, interrupted_workspace = _request(
+                base_url,
+                "GET",
+                workspace_path,
+            )
+            assert status == 200
+            assert isinstance(interrupted_workspace, dict)
+            assert interrupted_workspace["runtime"]["data"]["activation_status"] == (
+                "RUNNING"
+            )
+
+            status, pending_feature = _request(
+                base_url,
+                "POST",
+                f"/api/projects/{project_id}/features",
+                {"name": "Pending Feature"},
+            )
+            assert status == 201
+            assert isinstance(pending_feature, dict)
+            pending_triage_id = pending_feature["triage_id"]
+            pending_workspace_path = (
+                f"/api/projects/{project_id}/features/"
+                f"{pending_triage_id}/workspace"
+            )
+            assert _request(
+                base_url,
+                "POST",
+                f"/api/projects/{project_id}/features/{pending_triage_id}/actions",
+                {"action": "begin"},
+            )[0] == 200
+            assert _request(
+                base_url,
+                "POST",
+                f"/api/projects/{project_id}/features/{pending_triage_id}/messages",
+                {"content": "Resume this after restart."},
+            )[0] == 202
+            status, pending_workspace = _request(
+                base_url,
+                "GET",
+                pending_workspace_path,
+            )
+            assert status == 200
+            assert isinstance(pending_workspace, dict)
+            assert pending_workspace["runtime"]["data"]["activation_status"] == "PENDING"
+
+        model_endpoint.release_second_request.set()
         with _web_server(config_path, port) as base_url:
             assert _request(base_url, "GET", "/api/projects")[1] == [project]
             status, restored = _request(base_url, "GET", workspace_path)
             assert status == 200
             assert isinstance(restored, dict)
             assert restored["feature"]["triage_id"] == triage_id
-            assert restored["conversation"]["data"] == messages
+            assert restored["conversation"]["data"][:2] == messages
+            assert any(
+                entry["role"] == "status"
+                and "stopped while this activation was running" in entry["content"]
+                for entry in restored["conversation"]["data"]
+            )
+
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                status, pending_workspace = _request(
+                    base_url,
+                    "GET",
+                    pending_workspace_path,
+                )
+                assert status == 200
+                assert isinstance(pending_workspace, dict)
+                pending_messages = pending_workspace["conversation"]["data"]
+                if any(
+                    entry["role"] == "assistant"
+                    and entry["content"] == "The Project Owner is ready."
+                    for entry in pending_messages
+                ):
+                    break
+                time.sleep(0.05)
+            else:
+                pytest.fail("Restarted Worker did not resume the pending activation")

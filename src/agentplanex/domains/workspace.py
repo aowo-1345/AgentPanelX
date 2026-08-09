@@ -1,7 +1,17 @@
 """User-managed Git Projects and their Feature Runtime bindings."""
 
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
+
+
+class FeatureAction(StrEnum):
+    """Human commands exposed for one managed Feature."""
+
+    BEGIN = "begin"
+    APPROVE_PLAN = "approve-plan"
+    REJECT_PLAN = "reject-plan"
+    START_DELIVERY = "start-delivery"
 
 
 @dataclass(frozen=True, slots=True)

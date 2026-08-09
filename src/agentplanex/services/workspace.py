@@ -4,10 +4,11 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 from uuid import uuid4
 
 from agentplanex.domains import (
+    FeatureAction,
     FeatureBinding,
     FeatureState,
     FeatureView,
@@ -18,8 +19,13 @@ from agentplanex.domains import (
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
+from agentplanex.services.delivery import MilestoneRunQueued
+from agentplanex.services.delivery_runner import DeliveryDriveResult
 from agentplanex.services.feature_runtime_context import FeatureRuntimeContextQuery
+from agentplanex.services.owner_activation import ActivationDriveResult
+from agentplanex.services.planning import PlanDecision
 from agentplanex.services.project_control import ProjectControlView
+from agentplanex.services.project_workspace import ProjectWorkspaceView
 from agentplanex.services.workspace_board import WorkspaceBoardQuery
 
 _UNSAFE_SLUG = re.compile(r"[^a-z0-9]+")
@@ -34,34 +40,31 @@ class FeatureRuntime(Protocol):
 
     def submit_message(self, content: str) -> OwnerActivation: ...
 
-    def approve_plan(self) -> object: ...
+    def approve_plan(self) -> PlanDecision: ...
 
-    def reject_plan(self, feedback: str = "") -> object: ...
+    def reject_plan(self, feedback: str = "") -> PlanDecision: ...
 
-    def start_first_run(self) -> object: ...
+    def start_first_run(self) -> MilestoneRunQueued: ...
 
-    def drive_next_activation(self) -> object: ...
+    def drive_next_activation(self) -> ActivationDriveResult: ...
 
-    def drive_delivery(self) -> object: ...
+    def drive_delivery(self) -> DeliveryDriveResult: ...
 
-    def fail_interrupted_model_activation(self) -> OwnerActivation | None: ...
+    def fail_interrupted_activation(self) -> OwnerActivation | None: ...
 
     def project_control_view(self) -> ProjectControlView: ...
 
+    def project_workspace_view(self) -> ProjectWorkspaceView: ...
+
 
 type RuntimeFactory = Callable[[Path], FeatureRuntime]
-type FeatureAction = Literal[
-    "begin", "approve-plan", "reject-plan", "start-delivery"
-]
-
-
 @dataclass(frozen=True, slots=True)
 class FeatureWorkspace:
     """One bound Feature and its composed Project Runtime read model."""
 
     project: ManagedProject
     binding: FeatureBinding
-    control: ProjectControlView
+    control: ProjectWorkspaceView
 
 
 @dataclass(slots=True)
@@ -183,7 +186,7 @@ class WorkspaceService:
     ) -> FeatureWorkspace:
         binding = self._require_feature_binding(project_id, triage_id)
         project = self.registry.get_project(binding.project_id)
-        control = self.runtime_factory(binding.worktree_path).project_control_view()
+        control = self.runtime_factory(binding.worktree_path).project_workspace_view()
         return FeatureWorkspace(project=project, binding=binding, control=control)
 
     def perform_feature_action(
@@ -196,15 +199,15 @@ class WorkspaceService:
     ) -> FeatureWorkspace:
         binding = self._require_feature_binding(project_id, triage_id)
         runtime = self.runtime_factory(binding.worktree_path)
-        if action == "begin":
+        if action is FeatureAction.BEGIN:
             runtime.begin_feature(binding.triage_id)
-        elif action == "approve-plan":
+        elif action is FeatureAction.APPROVE_PLAN:
             runtime.approve_plan()
-        elif action == "reject-plan":
+        elif action is FeatureAction.REJECT_PLAN:
             if not feedback.strip():
                 raise ValueError("Plan rejection feedback must not be empty")
             runtime.reject_plan(feedback)
-        elif action == "start-delivery":
+        elif action is FeatureAction.START_DELIVERY:
             runtime.start_first_run()
         else:
             raise ValueError(f"Unsupported Feature action: {action}")
@@ -220,7 +223,7 @@ class WorkspaceService:
                 if (
                     self.runtime_factory(
                         binding.worktree_path
-                    ).fail_interrupted_model_activation()
+                    ).fail_interrupted_activation()
                     is not None
                 ):
                     recovered += 1
@@ -231,11 +234,18 @@ class WorkspaceService:
         for project in self.registry.list_projects():
             for binding in self.registry.list_features(project.project_id):
                 runtime = self.runtime_factory(binding.worktree_path)
-                actions = runtime.project_control_view().allowed_actions
-                if actions == ("drive",):
-                    runtime.drive_next_activation()
+                control = runtime.project_control_view()
+                activation = control.owner_activation
+                if (
+                    control.allowed_actions == ("drive",)
+                    and activation is not None
+                    and activation.driver_mode is None
+                ):
+                    result = runtime.drive_next_activation()
+                    if result.activation is None:
+                        continue
                     return True
-                if actions == ("drive-delivery",):
+                if control.allowed_actions == ("drive-delivery",):
                     runtime.drive_delivery()
                     return True
         return False

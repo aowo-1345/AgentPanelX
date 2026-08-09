@@ -58,6 +58,7 @@ from agentplanex.domains.tools import (
 )
 from agentplanex.domains.workspace import (
     BoardFeature,
+    FeatureAction,
     FeatureBinding,
     FeatureState,
     FeatureView,
@@ -81,6 +82,7 @@ __all__ = [
     "ConversationReference",
     "ExecutionEvent",
     "ExecutionEventType",
+    "FeatureAction",
     "FeatureBinding",
     "FeatureState",
     "FeatureView",

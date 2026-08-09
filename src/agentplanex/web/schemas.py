@@ -5,7 +5,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agentplanex.domains import BoardFeature, FeatureView, ManagedProject, OwnerActivation
+from agentplanex.domains import (
+    BoardFeature,
+    FeatureAction,
+    FeatureView,
+    ManagedProject,
+    OwnerActivation,
+)
 from agentplanex.services.workspace import FeatureWorkspace
 
 
@@ -65,18 +71,15 @@ class ActivationResponse(Schema):
     created_at: datetime
 
 
-type HumanAction = Literal[
-    "begin", "approve-plan", "reject-plan", "start-delivery"
-]
-
-
 class ActionRequest(Schema):
-    action: HumanAction
+    action: FeatureAction
     feedback: str | None = None
 
     @model_validator(mode="after")
     def require_rejection_feedback(self) -> "ActionRequest":
-        if self.action == "reject-plan" and not (self.feedback or "").strip():
+        if self.action is FeatureAction.REJECT_PLAN and not (
+            self.feedback or ""
+        ).strip():
             raise ValueError("reject-plan requires non-empty feedback")
         return self
 
@@ -138,7 +141,7 @@ class GitData(Schema):
 class WorkspaceResponse(Schema):
     project: ProjectResponse
     feature: BoardFeatureResponse
-    available_actions: list[HumanAction]
+    available_actions: list[FeatureAction]
     runtime: Panel[RuntimeData]
     conversation: Panel[list[ConversationMessage]]
     plan: Panel[PlanData]
@@ -206,39 +209,42 @@ def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
         current_stage_key=context.current_stage_key,
     )
     snapshot = control.snapshot
-    human_actions: list[HumanAction] = []
-    if context.status == "TRIAGE" and control.owner_activation is None:
-        human_actions.append("begin")
-    if context.pending_action == "PLAN_APPROVAL":
-        human_actions.extend(("approve-plan", "reject-plan"))
-    elif context.pending_action == "FIRST_RUN_APPROVAL":
-        human_actions.append("start-delivery")
     return WorkspaceResponse(
         project=project_response(workspace.project),
         feature=feature,
-        available_actions=human_actions,
+        available_actions=list(control.available_actions),
         runtime=Panel(
-            data=RuntimeData(
-                status=context.status,
-                pending_action=context.pending_action,
-                activation_status=(
-                    control.owner_activation.status.value
-                    if control.owner_activation is not None
-                    else None
-                ),
-                current_milestone_key=context.current_milestone_key,
-                current_stage_key=context.current_stage_key,
-            )
+            data=(
+                RuntimeData(
+                    status=context.status,
+                    pending_action=context.pending_action,
+                    activation_status=(
+                        control.owner_activation.status.value
+                        if control.owner_activation is not None
+                        else None
+                    ),
+                    current_milestone_key=context.current_milestone_key,
+                    current_stage_key=context.current_stage_key,
+                )
+                if control.runtime_error is None
+                else None
+            ),
+            error=control.runtime_error,
         ),
         conversation=Panel(
-            data=[
-                ConversationMessage(
-                    message_id=message.message_id,
-                    role=message.role,
-                    content=message.content,
-                )
-                for message in control.conversation
-            ]
+            data=(
+                [
+                    ConversationMessage(
+                        message_id=message.message_id,
+                        role=message.role,
+                        content=message.content,
+                    )
+                    for message in control.conversation
+                ]
+                if control.conversation_error is None
+                else None
+            ),
+            error=control.conversation_error,
         ),
         plan=Panel(
             data=(
@@ -256,36 +262,46 @@ def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
             error=control.plan_error,
         ),
         milestones=Panel(
-            data=MilestonesData(
-                snapshot_id=snapshot.snapshot_id if snapshot is not None else None,
-                milestones=(
-                    [
-                        MilestoneData(
-                            key=milestone.key,
-                            objective=milestone.objective,
-                            state=milestone.state.value,
-                            stages=[
-                                StageData(key=stage.key, objective=stage.objective)
-                                for stage in milestone.stages
-                            ],
-                        )
-                        for milestone in snapshot.milestones
-                    ]
-                    if snapshot is not None
-                    else []
-                ),
-            )
+            data=(
+                MilestonesData(
+                    snapshot_id=snapshot.snapshot_id if snapshot is not None else None,
+                    milestones=(
+                        [
+                            MilestoneData(
+                                key=milestone.key,
+                                objective=milestone.objective,
+                                state=milestone.state.value,
+                                stages=[
+                                    StageData(key=stage.key, objective=stage.objective)
+                                    for stage in milestone.stages
+                                ],
+                            )
+                            for milestone in snapshot.milestones
+                        ]
+                        if snapshot is not None
+                        else []
+                    ),
+                )
+                if control.milestones_error is None
+                else None
+            ),
+            error=control.milestones_error,
         ),
         timeline=Panel(
-            data=[
-                TimelineEventData(
-                    event_id=event.event_id,
-                    event_type=event.event_type.value,
-                    created_at=event.created_at,
-                    payload=event.payload,
-                )
-                for event in control.timeline
-            ]
+            data=(
+                [
+                    TimelineEventData(
+                        event_id=event.event_id,
+                        event_type=event.event_type.value,
+                        created_at=event.created_at,
+                        payload=event.payload,
+                    )
+                    for event in control.timeline
+                ]
+                if control.timeline_error is None
+                else None
+            ),
+            error=control.timeline_error,
         ),
         git=Panel(
             data=(

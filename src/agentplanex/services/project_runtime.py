@@ -14,7 +14,6 @@ from agentplanex.domains import (
     ExecutionEvent,
     ExecutionEventType,
     OwnerActivation,
-    OwnerActivationMode,
     OwnerActivationStatus,
     ProjectOwnerTask,
     ProjectOwnerTaskType,
@@ -125,8 +124,8 @@ class ProjectRuntimeService:
             context = self.owner.ensure_state(connection)
         return self.driver.drive_next(context.triage_id)
 
-    def fail_interrupted_model_activation(self) -> OwnerActivation | None:
-        """Fail a model-owned activation left RUNNING across process restart."""
+    def fail_interrupted_activation(self) -> OwnerActivation | None:
+        """Fail an activation left RUNNING across process restart."""
         with self.database.transaction() as connection:
             context = self.owner.ensure_state(connection)
             activation = self.activations.get_unfinished(
@@ -135,7 +134,6 @@ class ProjectRuntimeService:
             if (
                 activation is None
                 or activation.status is not OwnerActivationStatus.RUNNING
-                or activation.driver_mode is not OwnerActivationMode.MODEL
             ):
                 return None
             failed = self.activations.mark_failed(

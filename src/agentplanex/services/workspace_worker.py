@@ -1,12 +1,9 @@
 """One serial background driver for Web-managed Feature Runtimes."""
 
-import logging
 from dataclasses import dataclass, field
 from threading import Event, Thread
 
 from agentplanex.services.workspace import WorkspaceService
-
-_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -38,9 +35,5 @@ class WorkspaceWorker:
             self._wake.wait()
             self._wake.clear()
             while not self._stop.is_set():
-                try:
-                    if not self.workspace.drive_next_automatic_step():
-                        break
-                except Exception:
-                    _LOGGER.exception("AgentPlaneX Workspace worker step failed")
+                if not self.workspace.drive_next_automatic_step():
                     break
