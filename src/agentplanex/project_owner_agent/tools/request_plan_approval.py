@@ -17,6 +17,7 @@ REQUEST_PLAN_APPROVAL_TOOL_SCHEMA: ToolSchema = {
     "parameters": {
         "type": "object",
         "properties": {},
+        "required": [],
         "additionalProperties": False,
     },
     "strict": True,

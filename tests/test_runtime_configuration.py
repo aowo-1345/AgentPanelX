@@ -8,6 +8,7 @@ from typing import ClassVar
 
 import pytest
 import yaml
+from openai import omit
 
 from agentplanex import cli
 from agentplanex.domains import (
@@ -26,6 +27,11 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteSummaryHistoryRepository,
 )
 from agentplanex.project_owner_agent.exception import ReplyToHuman
+from agentplanex.project_owner_agent.models import jbb as jbb_model_module
+from agentplanex.project_owner_agent.models.jbb import (
+    OpenAIResponsesTransport,
+    ResponsesRequest,
+)
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import project_owner as project_owner_service
@@ -132,6 +138,10 @@ def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> Non
         "model": {
             "name": "configured-model",
             "base_url": "https://example.test/v1",
+            "api_key_env": "EXAMPLE_API_KEY",
+            "http_headers": {"x-example": "configured"},
+            "reasoning_effort": "high",
+            "service_tier": None,
             "timeout_seconds": 12.5,
         },
         "step_limit": 7,
@@ -144,11 +154,72 @@ def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> Non
 
     assert settings.project_owner_agent.model.name == "configured-model"
     assert settings.project_owner_agent.model.base_url == "https://example.test/v1"
+    assert settings.project_owner_agent.model.api_key_env == "EXAMPLE_API_KEY"
+    assert settings.project_owner_agent.model.http_headers == {
+        "x-example": "configured"
+    }
+    assert settings.project_owner_agent.model.reasoning_effort == "high"
+    assert settings.project_owner_agent.model.service_tier is None
     assert settings.project_owner_agent.model.timeout_seconds == 12.5
     assert settings.project_owner_agent.step_limit == 7
     assert settings.project_owner_agent.max_consecutive_format_errors == 2
     assert settings.runtime.bash.timeout_seconds == 3.5
     assert settings.runtime.bash.output_limit == 4096
+
+
+def test_responses_transport_applies_selected_gateway_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    response = object()
+
+    class _Responses:
+        def create(self, **kwargs: object) -> object:
+            captured["request"] = kwargs
+            return response
+
+    class _Client:
+        responses = _Responses()
+
+    def create_client(**kwargs: object) -> _Client:
+        captured["client"] = kwargs
+        return _Client()
+
+    monkeypatch.setenv("TOOLCODE_API_KEY", "test-secret")
+    monkeypatch.setattr(jbb_model_module, "OpenAI", create_client)
+    transport = OpenAIResponsesTransport(
+        base_url="https://toolcode.example",
+        timeout_seconds=240.0,
+        api_key_env="TOOLCODE_API_KEY",
+        http_headers={"x-openai-actor-authorization": "local-image-extension"},
+        reasoning_effort="high",
+        service_tier=None,
+    )
+
+    result = transport.create(
+        ResponsesRequest(
+            model="gpt-5.6-sol",
+            instructions="Only reply with ok.",
+            input=({"role": "user", "content": "hello"},),
+            tools=(),
+            tool_choice="none",
+        )
+    )
+
+    assert result is response
+    assert captured["client"] == {
+        "api_key": "test-secret",
+        "base_url": "https://toolcode.example",
+        "timeout": 240.0,
+        "default_headers": {
+            "x-openai-actor-authorization": "local-image-extension"
+        },
+    }
+    request = captured["request"]
+    assert isinstance(request, dict)
+    assert request["model"] == "gpt-5.6-sol"
+    assert request["reasoning"] == {"effort": "high"}
+    assert request["service_tier"] is omit
 
 
 def test_repository_settings_select_the_local_agentplanex_data_home() -> None:
@@ -252,6 +323,13 @@ def test_talk_tool_renders_configured_agent_cards_with_stable_schema(
     agent_id_schema = talk_tool.schema["parameters"]["properties"]["agent_id"]
     assert isinstance(agent_id_schema, dict)
     assert "enum" not in agent_id_schema
+    for tool in executions.tools.tools:
+        parameters = tool.schema["parameters"]
+        assert set(parameters["required"]) == set(parameters["properties"])
+    conversation_schema = talk_tool.schema["parameters"]["properties"][
+        "conversation_id"
+    ]
+    assert conversation_schema["type"] == ["string", "null"]
 
 
 def test_cli_only_passes_explicit_runtime_inputs(

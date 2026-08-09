@@ -78,6 +78,10 @@ class ProjectRuntime:
             else OpenAIResponsesTransport(
                 base_url=model_settings.base_url,
                 timeout_seconds=model_settings.timeout_seconds,
+                api_key_env=model_settings.api_key_env,
+                http_headers=model_settings.http_headers,
+                reasoning_effort=model_settings.reasoning_effort,
+                service_tier=model_settings.service_tier,
             )
         )
         responses = JBBResponses(model=model_settings.name, transport=transport)

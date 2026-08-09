@@ -23,7 +23,22 @@ class ModelSettings(_SettingsModel):
 
     name: str = Field(min_length=1)
     base_url: str = Field(default=DEFAULT_JBB_BASE_URL, min_length=1)
+    api_key_env: str = Field(default="OPENAI_API_KEY", min_length=1)
+    http_headers: dict[str, str] = Field(default_factory=dict)
+    reasoning_effort: Literal[
+        "none", "minimal", "low", "medium", "high", "xhigh", "max"
+    ] | None = None
+    service_tier: Literal[
+        "auto", "default", "flex", "scale", "priority"
+    ] | None = "priority"
     timeout_seconds: float = Field(default=60.0, gt=0)
+
+    @field_validator("name", "base_url", "api_key_env")
+    @classmethod
+    def _model_text_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Model configuration text must not be blank")
+        return value
 
 
 class ContextMemorySettings(_SettingsModel):

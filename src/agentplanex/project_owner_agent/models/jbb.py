@@ -1,13 +1,15 @@
-"""OpenAI Responses adapter for the JBB gateway."""
+"""OpenAI-compatible Responses adapter for Project Owner models."""
 
 import json
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Literal, NoReturn, Protocol, cast
 
-from openai import OpenAI
+from openai import Omit, OpenAI, omit
 from openai.types.responses import FunctionToolParam, ResponseInputParam
+from openai.types.shared_params import Reasoning
 
 from agentplanex.domains import Action, ActionOutput, ToolSchema
 from agentplanex.project_owner_agent.exception import (
@@ -21,6 +23,10 @@ from agentplanex.project_owner_agent.tools.base import ToolCatalog
 DEFAULT_JBB_BASE_URL = "https://api.openai.com/v1"
 
 type ToolChoice = Literal["auto", "none"]
+type ReasoningEffort = Literal[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max"
+]
+type ServiceTier = Literal["auto", "default", "flex", "scale", "priority"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,9 +47,22 @@ class ResponsesTransport(Protocol):
 class OpenAIResponsesTransport:
     """Send shared Owner and Summary requests through the configured gateway."""
 
-    def __init__(self, *, base_url: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        timeout_seconds: float,
+        api_key_env: str = "OPENAI_API_KEY",
+        http_headers: Mapping[str, str] | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
+        service_tier: ServiceTier | None = "priority",
+    ) -> None:
         self.base_url = base_url
         self.timeout_seconds = timeout_seconds
+        self.api_key_env = api_key_env
+        self.http_headers = dict(http_headers or {})
+        self.reasoning_effort = reasoning_effort
+        self.service_tier = service_tier
         self.client: OpenAI | None = None
         self._lock = Lock()
 
@@ -52,14 +71,30 @@ class OpenAIResponsesTransport:
             with self._lock:
                 if self.client is None:
                     try:
+                        api_key = os.getenv(self.api_key_env)
+                        if api_key is None or not api_key.strip():
+                            raise JBBModelError(
+                                "Missing credentials: environment variable "
+                                f"{self.api_key_env} is not set"
+                            )
                         self.client = OpenAI(
+                            api_key=api_key,
                             base_url=self.base_url,
                             timeout=self.timeout_seconds,
+                            default_headers=self.http_headers,
                         )
                     except Exception as error:
+                        if isinstance(error, JBBModelError):
+                            raise
                         raise JBBModelError(
-                            f"Failed to initialize JBB gateway: {error}"
+                            f"Failed to initialize Responses gateway: {error}"
                         ) from error
+        reasoning: Reasoning | Omit = (
+            {"effort": self.reasoning_effort}
+            if self.reasoning_effort is not None
+            else omit
+        )
+        service_tier = self.service_tier if self.service_tier is not None else omit
         if request.tools:
             return self.client.responses.create(
                 model=request.model,
@@ -68,7 +103,8 @@ class OpenAIResponsesTransport:
                 tools=cast(list[FunctionToolParam], list(request.tools)),
                 store=False,
                 stream=False,
-                service_tier="priority",
+                reasoning=reasoning,
+                service_tier=service_tier,
                 tool_choice=request.tool_choice,
                 parallel_tool_calls=False,
             )
@@ -78,7 +114,8 @@ class OpenAIResponsesTransport:
             input=cast(ResponseInputParam, list(request.input)),
             store=False,
             stream=False,
-            service_tier="priority",
+            reasoning=reasoning,
+            service_tier=service_tier,
         )
 
 
@@ -109,7 +146,7 @@ class JBBResponses:
         except Exception as error:
             if isinstance(error, JBBModelError):
                 raise
-            raise JBBModelError(f"JBB gateway request failed: {error}") from error
+            raise JBBModelError(f"Responses gateway request failed: {error}") from error
         message = _serialize(response)
         return message, _as_list(_get(response, "output"))
 
@@ -349,7 +386,9 @@ def _serialize(value: object) -> Message:
     try:
         return dict(cast(Mapping[str, Any], value))
     except Exception as error:
-        raise JBBModelError(f"JBB returned an unserializable response: {value!r}") from error
+        raise JBBModelError(
+            f"Responses gateway returned an unserializable response: {value!r}"
+        ) from error
 
 
 def _get(value: object, key: str) -> Any:

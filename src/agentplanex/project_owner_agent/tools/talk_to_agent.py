@@ -41,10 +41,10 @@ def create_talk_to_agent_tool(agent_cards: str) -> ToolDefinition:
                     "description": "The message or task instructions for the target Agent.",
                 },
                 "conversation_id": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": (
-                        "Opaque ID returned by an earlier call. Omit it to start a new "
-                        "Agent conversation and workspace."
+                        "Opaque ID returned by an earlier call. Pass null to start a "
+                        "new Agent conversation and workspace."
                     ),
                 },
                 "artifacts": {
@@ -60,7 +60,13 @@ def create_talk_to_agent_tool(agent_cards: str) -> ToolDefinition:
                     },
                 },
             },
-            "required": ["agent_id", "kind", "message", "artifacts"],
+            "required": [
+                "agent_id",
+                "kind",
+                "message",
+                "conversation_id",
+                "artifacts",
+            ],
             "additionalProperties": False,
         },
         "strict": True,
