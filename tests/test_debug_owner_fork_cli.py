@@ -230,6 +230,7 @@ def test_debug_clis_do_not_import_each_other() -> None:
 def test_jbb_model_omits_tool_surface_for_historical_fork(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
     requests: list[dict[str, object]] = []
 
     class _Responses:
