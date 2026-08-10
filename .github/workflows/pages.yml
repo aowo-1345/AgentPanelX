@@ -27,7 +27,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -43,7 +43,7 @@ jobs:
           cp dist/index.html dist/console/index.html
           cp dist/index.html dist/404.html
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: frontend/dist
 
