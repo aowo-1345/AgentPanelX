@@ -7,6 +7,11 @@
 <h3 align="center">Autonomous Harness Orchestrator</h3>
 
 <p align="center">
+  Coding Agent 已经擅长完成单次实现任务。长周期项目仍然需要有人持续维护目标、审查规划、隔离并发工作、恢复中断现场，并决定下一步如何推进。<br />
+  AgentPanelX 将这部分协调工作建模为持久化的 Project Runtime。
+</p>
+
+<p align="center">
   面向长周期 Coding Projects 的本地优先控制平面。<br />
   Project Owner 代理用户维护目标、滚动规划并协调 Coding Agent，将交付历史沉淀为 Harness Evolution 的证据。
 </p>
@@ -45,9 +50,7 @@ Project Owner、Project Runtime、Git worktree，以及 Observe / Control / Attr
 
 ## AgentPanelX 做什么
 
-Coding Agent 已经擅长完成单次实现任务。长周期项目仍然需要有人持续维护目标、审查规划、隔离并发工作、恢复中断现场，并决定下一步如何推进。
-
-AgentPanelX 将这部分协调工作建模为持久化的 Project Runtime：
+这套 Runtime 提供四项相互连接的核心能力：
 
 | 核心能力 | 作用 |
 | --- | --- |
@@ -56,23 +59,49 @@ AgentPanelX 将这部分协调工作建模为持久化的 Project Runtime：
 | **可观测 Runtime** | 在同一 Web Console 展示对话、推理、Tool 输入输出、审批、Git、Plan 与 Timeline。 |
 | **恢复与 Harness Evolution** | 保留 BLOCKED 证据，恢复失败上下文，并将反复出现的交付缺口沉淀为结构化 Proposal。 |
 
-## 滚动交付循环
+## Project Owner–driven 滚动交付
 
 ```mermaid
-flowchart LR
-    Intent[用户意图] --> Owner[Project Owner]
-    Owner --> Plan[滚动规划]
-    Plan --> Review[Plan / Milestone 审查]
-    Review --> Stage[Stage Delivery]
-    Stage --> Agent[Worktree 中的 Coding Agent]
-    Agent --> Evidence[Git + Runtime 证据]
-    Evidence -->|继续交付| Owner
-    Evidence -->|进入阻塞| Recovery[Observe / Attribution]
-    Recovery --> Evolution[Harness Evolution Proposal]
-    Recovery --> Owner
+flowchart TB
+    subgraph Cycle["Project Owner–driven 滚动交付"]
+        direction LR
+        Intent["长期用户意图<br/>目标 · 约束 · 决策"]
+        Planning["1 · 滚动规划<br/>Project Owner + Rolling Summary<br/>Requirements → Architecture → Roadmap<br/>Planner / Reviewer Hard Gate"]
+        Delivery["2 · Durable 隔离交付<br/>已审查 Milestone → 已 Claim Stage<br/>Worktree + CLI Coding Agent<br/>测试 Commit + Candidate Ref"]
+        Decision{"3 · 基于证据决策<br/>接受 · 下一 Stage · 重新规划"}
+        Result(["集成交付结果<br/>或进入下一轮滚动交付"])
+        Intent --> Planning --> Delivery --> Decision --> Result
+    end
+
+    Delivery -->|执行失败| Blocked["BLOCKED Checkpoint<br/>Activation · Context · Git · Timeline"]
+    subgraph Recovery["3 · 恢复与 Harness Evolution"]
+        direction LR
+        Blocked --> Observe["Observe<br/>恢复权威证据"]
+        Observe --> Control["Control<br/>恢复有界 Runtime Step"]
+        Observe --> Attribution["Attribution<br/>Fork Historical Project Owner"]
+        Attribution --> Proposal["Harness Evolution Proposal<br/>Prompt · Contract · Runtime · Engineering"]
+    end
+
+    Evidence["权威 Project Runtime 证据主干<br/>Messages + Activations · SQLite Context + Stage Runs · Git Commits + Refs · EventBus + Timeline"]
+    Planning -.-> Evidence
+    Delivery -.-> Evidence
+    Blocked -.-> Evidence
+
+    classDef owner fill:#172554,stroke:#60a5fa,color:#eff6ff,stroke-width:2px;
+    classDef gate fill:#3f2a0c,stroke:#fbbf24,color:#fffbeb;
+    classDef delivery fill:#052e2b,stroke:#34d399,color:#ecfdf5;
+    classDef evidence fill:#18181b,stroke:#71717a,color:#f4f4f5;
+    classDef recovery fill:#2e1065,stroke:#c084fc,color:#faf5ff;
+    style Cycle fill:#0d1117,stroke:#30363d,color:#8b949e;
+    style Recovery fill:#0d1117,stroke:#30363d,color:#8b949e;
+    class Planning owner;
+    class Decision gate;
+    class Delivery,Result delivery;
+    class Evidence evidence;
+    class Blocked,Observe,Control,Attribution,Proposal recovery;
 ```
 
-Project Owner 将已批准的路线图与当前交付证据保留在同一上下文中，把人工参与集中到真正需要判断的高杠杆节点。
+这不是一条 Prompt Chain。每轮推进都绑定可恢复的权威身份：已批准的 Plan Commit、通过审查的 Milestone Snapshot、已 Claim 的 Stage Run、输出 Commit、Candidate Ref 与 Owner Activation。Project Owner 在同一个 Runtime 中持续维护这些事实与长期意图，把人工参与集中到判断杠杆最高的节点。
 
 ## Agent-native 操作面
 

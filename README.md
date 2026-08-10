@@ -7,6 +7,11 @@
 <h3 align="center">Autonomous Harness Orchestrator</h3>
 
 <p align="center">
+  Coding agents are already effective at individual implementation tasks. Long-running projects still need someone to preserve intent, review plans, isolate concurrent work, recover interrupted execution, and decide what happens next.<br />
+  AgentPanelX turns that coordination work into a persistent Project Runtime.
+</p>
+
+<p align="center">
   A local-first control plane for long-running coding projects.<br />
   Project Owner agents maintain intent, roll plans forward, coordinate coding agents, and turn delivery history into evidence for Harness Evolution.
 </p>
@@ -45,9 +50,7 @@ Open this repository in your coding agent, send the request above, and keep the 
 
 ## What AgentPanelX does
 
-Coding agents are effective at individual implementation tasks. Long-running projects still require someone to preserve intent, review plans, isolate concurrent work, recover interrupted execution, and decide what happens next.
-
-AgentPanelX turns that coordination work into a persistent Project Runtime:
+That Runtime provides four connected capabilities:
 
 | Capability | What it provides |
 | --- | --- |
@@ -56,23 +59,49 @@ AgentPanelX turns that coordination work into a persistent Project Runtime:
 | **Observable runtime** | Projects conversations, reasoning, tool input/output, approvals, Git state, Plan, and Timeline into one Web Console. |
 | **Recovery and Harness Evolution** | Preserves BLOCKED evidence, reconstructs the failure context, and turns recurring delivery gaps into structured proposals. |
 
-## Delivery loop
+## Project Owner-driven rolling delivery
 
 ```mermaid
-flowchart LR
-    Intent[User intent] --> Owner[Project Owner]
-    Owner --> Plan[Rolling Plan]
-    Plan --> Review[Plan / Milestone gates]
-    Review --> Stage[Stage delivery]
-    Stage --> Agent[Coding agent in worktree]
-    Agent --> Evidence[Git + Runtime evidence]
-    Evidence -->|continue| Owner
-    Evidence -->|blocked| Recovery[Observe / Attribution]
-    Recovery --> Evolution[Harness Evolution proposal]
-    Recovery --> Owner
+flowchart TB
+    subgraph Cycle["Project Owner-driven rolling delivery"]
+        direction LR
+        Intent["Long-term user intent<br/>Goals · Constraints · Decisions"]
+        Planning["1 · Rolling planning<br/>Project Owner + Rolling Summary<br/>Requirements → Architecture → Roadmap<br/>Planner / Reviewer hard gates"]
+        Delivery["2 · Durable isolated delivery<br/>Reviewed Milestone → Claimed Stage<br/>Worktree + CLI Coding Agent<br/>Tested commit + Candidate ref"]
+        Decision{"3 · Evidence-based decision<br/>Accept · Next Stage · Replan"}
+        Result(["Integrated delivery<br/>or next rolling cycle"])
+        Intent --> Planning --> Delivery --> Decision --> Result
+    end
+
+    Delivery -->|failure| Blocked["BLOCKED checkpoint<br/>Activation · Context · Git · Timeline"]
+    subgraph Recovery["3 · Recovery and Harness Evolution"]
+        direction LR
+        Blocked --> Observe["Observe<br/>Recover authoritative evidence"]
+        Observe --> Control["Control<br/>Resume the bounded Runtime step"]
+        Observe --> Attribution["Attribution<br/>Fork Historical Project Owner"]
+        Attribution --> Proposal["Harness Evolution Proposal<br/>Prompt · Contract · Runtime · Engineering"]
+    end
+
+    Evidence["Authoritative Project Runtime evidence<br/>Messages + Activations · SQLite Context + Stage Runs · Git Commits + Refs · EventBus + Timeline"]
+    Planning -.-> Evidence
+    Delivery -.-> Evidence
+    Blocked -.-> Evidence
+
+    classDef owner fill:#172554,stroke:#60a5fa,color:#eff6ff,stroke-width:2px;
+    classDef gate fill:#3f2a0c,stroke:#fbbf24,color:#fffbeb;
+    classDef delivery fill:#052e2b,stroke:#34d399,color:#ecfdf5;
+    classDef evidence fill:#18181b,stroke:#71717a,color:#f4f4f5;
+    classDef recovery fill:#2e1065,stroke:#c084fc,color:#faf5ff;
+    style Cycle fill:#0d1117,stroke:#30363d,color:#8b949e;
+    style Recovery fill:#0d1117,stroke:#30363d,color:#8b949e;
+    class Planning owner;
+    class Decision gate;
+    class Delivery,Result delivery;
+    class Evidence evidence;
+    class Blocked,Observe,Control,Attribution,Proposal recovery;
 ```
 
-The Project Owner keeps the approved roadmap and current delivery evidence in one context. Human involvement is concentrated at high-leverage decisions instead of routine progress chasing.
+This is not a prompt chain. Every cycle is bound to durable identities: an approved Plan commit, a reviewed Milestone snapshot, a claimed Stage Run, an output commit, a candidate ref, and a recoverable Owner Activation. Project Owner keeps those facts and the long-term intent in one Runtime, concentrating human involvement at the decisions where judgment has the highest leverage.
 
 ## Agent-native operations
 
