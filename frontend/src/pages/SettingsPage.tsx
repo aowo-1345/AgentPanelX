@@ -10,11 +10,15 @@ const EMPTY_FORM: CreateProjectInput = {
   main_branch: 'main',
 };
 
-export function SettingsPage() {
+interface SettingsPageProps {
+  snapshot?: Project[];
+}
+
+export function SettingsPage({ snapshot }: SettingsPageProps = {}) {
   const navigate = useNavigate();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[]>(snapshot ?? []);
   const [form, setForm] = useState<CreateProjectInput>(EMPTY_FORM);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!snapshot);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -22,6 +26,11 @@ export function SettingsPage() {
   const loadProjects = useCallback(async (refresh = false) => {
     setLoading(true);
     setError('');
+    if (snapshot) {
+      setProjects(snapshot);
+      setLoading(false);
+      return;
+    }
     try {
       setProjects(await (refresh ? api.refreshProjects() : api.listProjects()));
       if (refresh) setSuccess('Configured project branches refreshed from local repositories.');
@@ -30,7 +39,7 @@ export function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [snapshot]);
 
   useEffect(() => {
     void loadProjects();
@@ -38,6 +47,7 @@ export function SettingsPage() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (snapshot) return;
     if (submitting) return;
     setSubmitting(true);
     setError('');
@@ -59,7 +69,7 @@ export function SettingsPage() {
   }
 
   const canSubmit = Boolean(
-    form.name.trim() && form.repository_path.trim() && form.main_branch.trim() && !submitting,
+    !snapshot && form.name.trim() && form.repository_path.trim() && form.main_branch.trim() && !submitting,
   );
 
   return (
@@ -155,6 +165,7 @@ export function SettingsPage() {
                   onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
                   placeholder="AgentPanelX"
                   required
+                  disabled={Boolean(snapshot)}
                 />
               </label>
               <label className="block space-y-1.5">
@@ -167,6 +178,7 @@ export function SettingsPage() {
                   }
                   placeholder="/absolute/path/to/repository"
                   required
+                  disabled={Boolean(snapshot)}
                 />
               </label>
               <label className="block space-y-1.5">
@@ -178,6 +190,7 @@ export function SettingsPage() {
                     setForm((current) => ({ ...current, main_branch: event.target.value }))
                   }
                   required
+                  disabled={Boolean(snapshot)}
                 />
               </label>
 

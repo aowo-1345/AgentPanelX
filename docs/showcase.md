@@ -1,83 +1,53 @@
-# Web Showcase
+# Public Console
 
-AgentPanelX 的公开演示采用确定性、脱敏的静态数据，目的是让访问者无需模型凭据、后端数据库或等待长时间 Stage，也能完整体验真实 Web Console 的信息结构。
+AgentPanelX 的 Public Console 将本地 Project Runtime 导出的项目快照发布到 GitHub Pages。它复用生产 Board、Workspace、Conversation、Tool activity 与 Side Panels 组件，让访问者可以直接浏览一次完整的项目交付现场。
 
-## 入口
+## 访问入口
 
-构建并启动项目后访问：
+- 官网：<https://aowo-1345.github.io/AgentPanelX/>
+- Console：<https://aowo-1345.github.io/AgentPanelX/console>
+- Showcase：<https://aowo-1345.github.io/AgentPanelX/showcase>
+
+本地启动后也可以访问：
 
 ```text
-http://127.0.0.1:13475/showcase
+http://127.0.0.1:13475/console
 ```
 
-Showcase 不发起 `/api` 请求，不写入目标项目的 `.agentplanex`，也不伪造外部模型调用、Git commit 或测试结果。
+## 两种浏览方式
 
-## 两层体验
+### Console
 
-### 1. 静态 Board
+Board 保留 Runtime 中的真实 Project、Feature 与状态分布。点击任意 Feature 后进入同一条记录的 Workspace，可继续展开：
 
-默认页面同时展示六个 Kanban 状态与多个 Project / Feature：
+- Project Owner 对话与 Activation 状态；
+- Bash、Agent collaboration 等 Tool activity 的输入和输出；
+- Plan 文档、Milestone 与 Stage 进度；
+- Feature branch、worktree 与 Git 信息；
+- Runtime Timeline 与失败现场。
 
-- Triage：刚进入 Project Owner 的意图；
-- Todo：等待 Owner 继续规划；
-- Ready：`WAITING_APPROVAL`；
-- In Progress：正在投影 Tool activity；
-- Blocked：`BROKEN_STAGE` 或 Assistance 调查中；
-- Done：Harness Evolution Proposal 与公开证据索引。
+Public Console 是只读入口，交互结构与本地 Console 保持一致；提交消息、Plan 决策和 Delivery 控制仍在连接本地 Project Runtime 的 Console 中执行。
 
-搜索与 Project / Status filter 均在浏览器本地工作。点击任意卡片会进入与该状态最接近的重点案例章节。
+### Showcase
 
-![Static Showcase Board](assets/showcase/board.png)
+Showcase 按章节串联一次自举交付：从用户目标、Plan approval 和 Stage delivery，推进到 BLOCKED、Observe、Attribution、Control 与 Harness Evolution Proposal。Console 右上角的 `Showcase` 可以随时进入该流程；Showcase 右上角的 `Console` 返回真实项目 Board。
 
-### 2. Self-hosting Workspace
+## 更新公开快照
 
-重点案例讲述 “AgentPanelX 使用自身 Runtime 管理 Ultra Mode 展示级垂直切片”：
+先启动本地 AgentPanelX，使 `/api/projects`、`/api/features` 与 Workspace API 可访问，然后运行：
 
-1. **Intent**：用户交付目标进入 Project Owner；
-2. **Plan**：Planner 返回可观察 Contract，并形成 Plan approval；
-3. **Delivery**：Stage 执行与 Tool activity 同时可见；
-4. **Blocked**：Stage 失败形成固定 Block Incident；
-5. **Ultra**：Observe 恢复权威证据，Attribution 开始调查；
-6. **Evolution**：失败被归类为 Harness context handoff，并生成 Proposal；
-7. **Done**：Control / Reviewer 结果与 evidence index 汇合。
+```bash
+uv run python scripts/export_console_snapshot.py \
+  --base-url http://127.0.0.1:13475
+```
 
-每个章节复用生产 `ChatArea`、`SidePanels`、Tool activity 和 Plan document 组件；只有数据源切换为 `frontend/src/showcase/data.ts` 中的 fixture。
+导出器会读取 Board 及每个 Feature 的 Workspace projection，替换本机绝对路径并过滤凭据格式，写入：
 
-## 事实边界
+```text
+frontend/src/showcase/consoleSnapshot.json
+```
 
-Showcase 可以证明：
-
-- 当前 Web Console 能稳定呈现完整的目标、计划、工具、交付、失败、归因与 Proposal 故事；
-- Board 和 Workspace 组件可以在无需 API 的静态托管环境运行；
-- 三个 Skill 的输入、状态和输出能够映射到同一个项目视图；
-- Ultra Mode 与 Harness Evolution 的交互形态和 Artifact Contract 已经明确。
-
-Showcase 不能替代：
-
-- 真实模型网关成功记录；
-- 不存在的 commit SHA 或测试结果；
-- 自动 Assistance Worker 已经完成生产调度的证明；
-- Proposal 已被自动应用并经过完整重放的证明。
-
-## Canonical 素材
-
-公开 README 与后续官网共用 `docs/assets/showcase/`：
-
-| 文件 | 证明内容 |
-| --- | --- |
-| `board.png` | 多项目与全状态 Board，包括 waiting / blocked / done |
-| `intent.png` | 用户意图进入 Project Owner |
-| `plan.png` | Plan Tool 与审批证据 |
-| `delivery.png` | Stage 执行与 Tool activity |
-| `blocked.png` | 失败被投影为固定 BLOCKED 状态 |
-| `ultra.png` | Observe / Attribution 调查 |
-| `evolution.png` | 结构化 Harness Evolution Proposal |
-| `done.png` | 最终 Review 与交付证据汇总 |
-| `demo.webm` | 官网 → Board → BLOCKED Tool → Evolution → Done 的 53 秒录像 |
-
-Canonical 截图为 1440×900，内容不包含真实用户路径、凭据、模型 request id 或私人仓库名。
-
-## 验证
+随后执行前端验证与构建：
 
 ```bash
 cd frontend
@@ -86,12 +56,15 @@ npm run lint
 npm run build
 ```
 
-浏览器验收至少覆盖：
+## 发布
 
-- `/showcase` 默认进入 Board；
-- 1440×900 可以同时看见六列；
-- `WAITING_APPROVAL` 与 `BROKEN_STAGE` 可见；
-- 点击 Ultra Mode 卡片进入 `chapter=blocked`；
-- Workspace 中 Tool Step 可展开；
-- 点击 `Board` 返回静态 Board；
-- 页面控制台没有请求 `/api` 的错误。
+GitHub Actions 构建前端并发布 GitHub Pages。`/console` 与携带 `project`、`feature` 查询参数的 Workspace 链接都由同一个 SPA 入口处理。
+
+发布前检查：
+
+- Board 中的 Project、Feature、状态与本地 Runtime 一致；
+- 每张卡片都能进入对应 Workspace；
+- Tool activity 可以展开并显示完整输入与输出；
+- Plan、Milestone、Git 与 Timeline 面板可浏览；
+- 页面中不包含本机绝对路径、凭据或私有 request id；
+- `/` 与 `/console` 在 GitHub Pages 上可直接访问。

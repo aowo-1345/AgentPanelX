@@ -7,11 +7,12 @@ import type { Project } from '@/api/types';
 interface NewFeaturePanelProps {
   projects: Project[];
   onCreated: () => Promise<void>;
+  readOnly?: boolean;
 }
 
 type SubmitState = 'idle' | 'submitting' | 'success' | 'error';
 
-export function NewFeaturePanel({ projects, onCreated }: NewFeaturePanelProps) {
+export function NewFeaturePanel({ projects, onCreated, readOnly = false }: NewFeaturePanelProps) {
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [projectId, setProjectId] = useState('');
@@ -24,7 +25,7 @@ export function NewFeaturePanel({ projects, onCreated }: NewFeaturePanelProps) {
     }
   }, [projectId, projects]);
 
-  const canSubmit = Boolean(name.trim() && projectId && submitState !== 'submitting');
+  const canSubmit = Boolean(!readOnly && name.trim() && projectId && submitState !== 'submitting');
 
   async function createFeature() {
     if (!canSubmit) return;

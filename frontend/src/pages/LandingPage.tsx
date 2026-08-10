@@ -29,9 +29,8 @@ import { BrandMark } from '@/components/common/BrandMark';
 const repositoryUrl =
   import.meta.env.VITE_PUBLIC_REPOSITORY_URL?.trim() ||
   'https://github.com/aowo-1345/AgentPanelX';
-const staticSite = import.meta.env.VITE_PUBLIC_STATIC_SITE === 'true';
 const consolePath = '/console';
-const demoPath = staticSite ? '/console' : '/showcase';
+const demoPath = '/showcase';
 
 const features = [
   {
@@ -119,7 +118,7 @@ const faqs = [
   {
     question: 'Try Console 需要模型或 API Key 吗？',
     answer:
-      '不需要。它预置了一条完整的自举交付记录，可以直接体验 Board、Workspace、工具活动与 Harness Evolution；本地安装后再连接真实仓库与 Coding Agent。',
+      '不需要。Public Console 直接呈现由本地 Project Runtime 导出的 Board、Workspace 与工具活动；Showcase 则可以逐步浏览自举与 Harness Evolution 的完整链路。',
   },
 ];
 
@@ -504,12 +503,12 @@ export function LandingPage() {
                   </span>
                   <span className="rounded-full border border-blue-300/15 bg-blue-400/[0.055] px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-blue-200/70">Recommended</span>
                 </div>
-                <h3 className="mt-6 text-lg font-semibold tracking-[-0.025em] text-white">Try the Console</h3>
+                <h3 className="mt-6 text-lg font-semibold tracking-[-0.025em] text-white">Explore the Showcase</h3>
                 <p className="mt-3 text-[13px] leading-6 text-white/43">
                   无需模型、API Key 或真实仓库。直接查看 Project Owner、Tool calls、BLOCKED、归因与 Harness Evolution。
                 </p>
                 <div className="mt-7 space-y-3 text-xs text-white/45">
-                  {['Interactive project runtime', 'No API credentials', 'Seven delivery states'].map((item) => (
+                  {['Guided self-hosting flow', 'No API credentials', 'Eight delivery chapters'].map((item) => (
                     <div key={item} className="flex items-center gap-2.5">
                       <Check className="h-3.5 w-3.5 text-emerald-300/80" />
                       {item}
@@ -520,7 +519,7 @@ export function LandingPage() {
                   className="mt-auto inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-white text-sm font-semibold text-[#07080a] transition hover:bg-white/90"
                   onClick={() => navigate(demoPath)}
                 >
-                  Open Console
+                  Open Showcase
                   <ArrowRight className="h-4 w-4" />
                 </button>
               </article>

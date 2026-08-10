@@ -317,7 +317,7 @@ const requirementsContent = `# Requirements
 1. Project Owner 维护 Ultra Mode Feature 的目标与滚动计划。
 2. BLOCKED 后优先恢复 Runtime、Git、Plan、Milestone 与 Stage evidence。
 3. Control 只能经过真实 Runtime 接口，不直接修改 SQLite。
-4. Attribution 只读分析并输出 Proposal，不伪造恢复结果。
+4. Attribution 只读分析历史执行链路并输出 Harness Evolution Proposal。
 `;
 
 const proposal: ShowcaseProposal = {

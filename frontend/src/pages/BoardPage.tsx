@@ -15,6 +15,16 @@ import { useSilentPolling } from '@/hooks/useSilentPolling';
 
 type LoadState = 'loading' | 'loaded' | 'refreshing' | 'error';
 
+export interface BoardSnapshot {
+  projects: Project[];
+  features: BoardFeature[];
+}
+
+interface BoardPageProps {
+  snapshot?: BoardSnapshot;
+  onOpenFeature?: (feature: BoardFeature) => void;
+}
+
 const ACTIVE_BOARD_POLL_MS = 1_000;
 const IDLE_BOARD_POLL_MS = 5_000;
 
@@ -22,11 +32,11 @@ function sameFeatures(current: BoardFeature[], next: BoardFeature[]): boolean {
   return JSON.stringify(current) === JSON.stringify(next);
 }
 
-export function BoardPage() {
+export function BoardPage({ snapshot, onOpenFeature }: BoardPageProps = {}) {
   const navigate = useNavigate();
-  const [features, setFeatures] = useState<BoardFeature[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [features, setFeatures] = useState<BoardFeature[]>(snapshot?.features ?? []);
+  const [projects, setProjects] = useState<Project[]>(snapshot?.projects ?? []);
+  const [loadState, setLoadState] = useState<LoadState>(snapshot ? 'loaded' : 'loading');
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [projectFilter, setProjectFilter] = useState('all');
@@ -41,6 +51,12 @@ export function BoardPage() {
   const load = useCallback(async (refresh = false) => {
     setLoadState(refresh ? 'refreshing' : 'loading');
     setError('');
+    if (snapshot) {
+      setProjects(snapshot.projects);
+      applyFeatures(snapshot.features);
+      setLoadState('loaded');
+      return;
+    }
     try {
       const [nextProjects, nextFeatures] = await Promise.all([
         api.listProjects(),
@@ -53,7 +69,7 @@ export function BoardPage() {
       setError(readableError(caught));
       setLoadState('error');
     }
-  }, [applyFeatures]);
+  }, [applyFeatures, snapshot]);
 
   useEffect(() => {
     void load();
@@ -63,7 +79,7 @@ export function BoardPage() {
   const pollFeatures = useCallback((signal: AbortSignal) => api.listFeatures(signal), []);
 
   useSilentPolling({
-    enabled: loadState === 'loaded' || loadState === 'error',
+    enabled: !snapshot && (loadState === 'loaded' || loadState === 'error'),
     intervalMs: boardBusy ? ACTIVE_BOARD_POLL_MS : IDLE_BOARD_POLL_MS,
     query: pollFeatures,
     onData: applyFeatures,
@@ -159,7 +175,7 @@ export function BoardPage() {
       </header>
 
       <div className="relative z-10 flex min-h-0 flex-1 overflow-hidden">
-        <NewFeaturePanel projects={projects} onCreated={() => load(true)} />
+        <NewFeaturePanel projects={projects} onCreated={() => load(true)} readOnly={Boolean(snapshot)} />
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {loadState === 'error' && features.length === 0 ? (
@@ -201,11 +217,15 @@ export function BoardPage() {
                       label={FEATURE_STATUS_LABELS[status]}
                       features={filtered.filter((feature) => feature.status === status)}
                       loading={isInitialLoading}
-                      onOpen={(feature) =>
+                      onOpen={(feature) => {
+                        if (onOpenFeature) {
+                          onOpenFeature(feature);
+                          return;
+                        }
                         navigate(
                           `/projects/${encodeURIComponent(feature.project_id)}/features/${encodeURIComponent(feature.triage_id)}`,
-                        )
-                      }
+                        );
+                      }}
                     />
                   ))}
                 </div>

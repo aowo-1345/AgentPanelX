@@ -42,11 +42,20 @@ function receiptNotice(receipt: ActivationReceipt): CommandNotice {
   };
 }
 
-export function WorkspacePage() {
+interface WorkspacePageProps {
+  snapshot?: Workspace;
+}
+
+const READ_ONLY_NOTICE: CommandNotice = {
+  kind: 'warning',
+  text: 'This public Console is a read-only snapshot of the local Project Runtime.',
+};
+
+export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
   const navigate = useNavigate();
   const { projectId, triageId } = useParams<{ projectId: string; triageId: string }>();
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [workspace, setWorkspace] = useState<Workspace | null>(snapshot ?? null);
+  const [loadState, setLoadState] = useState<LoadState>(snapshot ? 'loaded' : 'loading');
   const [loadError, setLoadError] = useState('');
   const [sending, setSending] = useState(false);
   const [pendingAction, setPendingAction] = useState<FeatureAction | null>(null);
@@ -63,6 +72,13 @@ export function WorkspacePage() {
 
   const load = useCallback(
     async (refresh = false) => {
+      if (snapshot) {
+        setLoadState(refresh ? 'refreshing' : 'loading');
+        setLoadError('');
+        applyWorkspace(snapshot);
+        setLoadState('loaded');
+        return;
+      }
       if (!projectId || !triageId) {
         setLoadError('The workspace URL is missing its project or feature identity.');
         setLoadState('error');
@@ -78,23 +94,26 @@ export function WorkspacePage() {
         setLoadState('error');
       }
     },
-    [applyWorkspace, projectId, triageId],
+    [applyWorkspace, projectId, snapshot, triageId],
   );
 
   useEffect(() => {
-    setWorkspace(null);
+    setWorkspace(snapshot ?? null);
     setNotice(null);
     void load();
-  }, [load]);
+  }, [load, snapshot]);
 
   const pollWorkspace = useCallback(
     (signal: AbortSignal) => {
+      if (snapshot) {
+        return Promise.resolve(snapshot);
+      }
       if (!projectId || !triageId) {
         return Promise.reject(new Error('Workspace identity is missing'));
       }
       return api.getWorkspace(projectId, triageId, signal);
     },
-    [projectId, triageId],
+    [projectId, snapshot, triageId],
   );
   const activationStatus = workspace?.runtime.data?.activation_status ?? null;
 
@@ -112,6 +131,7 @@ export function WorkspacePage() {
 
   useSilentPolling({
     enabled:
+      !snapshot &&
       workspace !== null &&
       (loadState === 'loaded' || loadState === 'error'),
     intervalMs: workspaceBusy ? ACTIVE_WORKSPACE_POLL_MS : IDLE_WORKSPACE_POLL_MS,
@@ -120,6 +140,10 @@ export function WorkspacePage() {
   });
 
   async function sendMessage(content: string) {
+    if (snapshot) {
+      setNotice(READ_ONLY_NOTICE);
+      return false;
+    }
     if (!projectId || !triageId || sending) return false;
     setSending(true);
     setNotice(null);
@@ -144,6 +168,10 @@ export function WorkspacePage() {
   }
 
   async function performAction(action: FeatureAction, feedback?: string) {
+    if (snapshot) {
+      setNotice(READ_ONLY_NOTICE);
+      return;
+    }
     if (!projectId || !triageId || pendingAction) return;
     setPendingAction(action);
     setNotice(null);
@@ -158,6 +186,10 @@ export function WorkspacePage() {
   }
 
   async function deleteFeature() {
+    if (snapshot) {
+      setDeleteError(READ_ONLY_NOTICE.text);
+      return;
+    }
     if (!projectId || !triageId || deleting) return;
     setDeleting(true);
     setDeleteError('');
