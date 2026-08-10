@@ -20,7 +20,8 @@ const staticSite = import.meta.env.VITE_PUBLIC_STATIC_SITE === 'true';
 function TopNav() {
   const location = useLocation();
   const navigate = useNavigate();
-  const demoConsole = location.pathname === '/showcase' || (staticSite && location.pathname === '/console');
+  const normalizedPath = location.pathname.replace(/\/+$/, '') || '/';
+  const demoConsole = normalizedPath === '/showcase' || (staticSite && normalizedPath === '/console');
 
   return (
     <nav className="relative z-30 flex h-14 shrink-0 items-center justify-between border-b border-white/[0.07] bg-[#07080b]/95 px-5 shadow-[0_1px_0_rgba(255,255,255,0.015)] backdrop-blur-xl">

@@ -117,9 +117,9 @@ const faqs = [
       'AgentPanelX 默认在本地运行。仓库、worktree、SQLite Runtime 和 Timeline 都留在本机；模型流量取决于你配置的 Coding Agent 或兼容网关。',
   },
   {
-    question: 'Showcase 里的流程是真实执行吗？',
+    question: 'Try Console 需要模型或 API Key 吗？',
     answer:
-      '交互 Showcase 使用确定性快照，方便无 API Key 演示完整状态。官网的 Board 与自举 Workspace 来自真实本地 Runtime，并与演示数据明确区分。',
+      '不需要。它预置了一条完整的自举交付记录，可以直接体验 Board、Workspace、工具活动与 Harness Evolution；本地安装后再连接真实仓库与 Coding Agent。',
   },
 ];
 

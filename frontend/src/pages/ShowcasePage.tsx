@@ -205,7 +205,7 @@ function ShowcaseBoard({
           <div>
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-primary">
               <Sparkles className="h-3.5 w-3.5" />
-              Static product tour
+              Interactive sample runtime
             </div>
             <h1 className="mt-1.5 text-xl font-semibold tracking-tight">One board, every delivery state</h1>
             <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
@@ -271,7 +271,7 @@ function ShowcaseBoard({
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <span className="hidden items-center gap-1.5 sm:flex">
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-300" />
-            Deterministic · no API calls
+            Sample runtime · no API credentials
           </span>
           <span className="tabular-nums">{filtered.length} features</span>
         </div>
