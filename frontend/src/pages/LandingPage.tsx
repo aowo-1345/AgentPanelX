@@ -229,7 +229,7 @@ export function LandingPage() {
 
           <nav className="hidden items-center gap-8 text-xs font-medium text-white/46 md:flex" aria-label="Primary navigation">
             <a className="transition-colors hover:text-white" href="#features">Features</a>
-            <a className="transition-colors hover:text-white" href="#self-hosting-demo">How it works</a>
+            <a className="transition-colors hover:text-white" href="#features">What it does</a>
             <a className="transition-colors hover:text-white" href="#skills">Skills</a>
             <a className="transition-colors hover:text-white" href="#install">Install</a>
             <a className="transition-colors hover:text-white" href="#faq">FAQ</a>
@@ -269,10 +269,10 @@ export function LandingPage() {
               <GithubLink />
               <a
                 className="inline-flex h-12 items-center justify-center gap-2 px-3 text-sm font-bold text-white/68 transition hover:text-white"
-                href="#self-hosting-demo"
+                href="#features"
               >
                 <ArrowDown className="h-4 w-4" />
-                How it works
+                What it does
               </a>
             </div>
 
