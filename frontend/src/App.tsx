@@ -20,6 +20,7 @@ const staticSite = import.meta.env.VITE_PUBLIC_STATIC_SITE === 'true';
 function TopNav() {
   const location = useLocation();
   const navigate = useNavigate();
+  const demoConsole = location.pathname === '/showcase' || (staticSite && location.pathname === '/console');
 
   return (
     <nav className="relative z-30 flex h-14 shrink-0 items-center justify-between border-b border-white/[0.07] bg-[#07080b]/95 px-5 shadow-[0_1px_0_rgba(255,255,255,0.015)] backdrop-blur-xl">
@@ -33,11 +34,11 @@ function TopNav() {
         </button>
         <div className="flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.025] px-2.5 py-1 text-[10px] text-white/38">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/70 shadow-[0_0_8px_rgba(52,211,153,0.35)]" />
-          <span>Codex · local runtime</span>
+          <span>{staticSite ? 'Codex · sample runtime' : 'Codex · local runtime'}</span>
         </div>
       </div>
       <div className="flex items-center gap-1">
-        {location.pathname === '/showcase' ? (
+        {demoConsole ? (
           <>
             <button className="btn btn-ghost h-8" onClick={() => navigate('/')}>
               Homepage
@@ -55,7 +56,7 @@ function TopNav() {
             Showcase
           </button>
         )}
-        {location.pathname !== '/settings' && location.pathname !== '/showcase' && (
+        {location.pathname !== '/settings' && !demoConsole && (
           <button
             className="btn btn-ghost h-8 w-8 p-0"
             onClick={() => navigate('/settings')}
@@ -86,13 +87,16 @@ function AppShell() {
         <ErrorBoundary>
           <Routes>
             <Route path="/" element={<LandingPage />} />
-            <Route path="/console" element={<BoardPage />} />
+            <Route path="/console" element={staticSite ? <ShowcasePage /> : <BoardPage />} />
             <Route
               path="/projects/:projectId/features/:triageId"
               element={<WorkspacePage />}
             />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/showcase" element={<ShowcasePage />} />
+            <Route
+              path="/showcase"
+              element={staticSite ? <Navigate to="/console" replace /> : <ShowcasePage />}
+            />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </ErrorBoundary>

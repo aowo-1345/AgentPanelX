@@ -29,7 +29,9 @@ import { BrandMark } from '@/components/common/BrandMark';
 const repositoryUrl =
   import.meta.env.VITE_PUBLIC_REPOSITORY_URL?.trim() ||
   'https://github.com/aowo-1345/AgentPanelX';
-const consolePath = import.meta.env.VITE_PUBLIC_STATIC_SITE === 'true' ? '/showcase' : '/console';
+const staticSite = import.meta.env.VITE_PUBLIC_STATIC_SITE === 'true';
+const consolePath = '/console';
+const demoPath = staticSite ? '/console' : '/showcase';
 
 const features = [
   {
@@ -420,7 +422,7 @@ export function LandingPage() {
                 <div className="relative mt-1 flex justify-center">
                   <button
                     className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/[0.09] bg-white/[0.025] px-4 text-xs font-bold text-white/65 transition hover:border-white/20 hover:bg-white/[0.05] hover:text-white"
-                    onClick={() => navigate('/showcase?chapter=intent')}
+                    onClick={() => navigate(`${demoPath}?chapter=intent`)}
                   >
                     Explore the self-hosting flow
                     <ChevronRight className="h-3.5 w-3.5" />
@@ -502,12 +504,12 @@ export function LandingPage() {
                   </span>
                   <span className="rounded-full border border-blue-300/15 bg-blue-400/[0.055] px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.12em] text-blue-200/70">Recommended</span>
                 </div>
-                <h3 className="mt-6 text-lg font-semibold tracking-[-0.025em] text-white">Open the Showcase</h3>
+                <h3 className="mt-6 text-lg font-semibold tracking-[-0.025em] text-white">Try the Console</h3>
                 <p className="mt-3 text-[13px] leading-6 text-white/43">
                   无需模型、API Key 或真实仓库。直接查看 Project Owner、Tool calls、BLOCKED、归因与 Harness Evolution。
                 </p>
                 <div className="mt-7 space-y-3 text-xs text-white/45">
-                  {['Deterministic runtime', 'No API calls', 'Seven delivery states'].map((item) => (
+                  {['Interactive project runtime', 'No API credentials', 'Seven delivery states'].map((item) => (
                     <div key={item} className="flex items-center gap-2.5">
                       <Check className="h-3.5 w-3.5 text-emerald-300/80" />
                       {item}
@@ -516,9 +518,9 @@ export function LandingPage() {
                 </div>
                 <button
                   className="mt-auto inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-white text-sm font-semibold text-[#07080a] transition hover:bg-white/90"
-                  onClick={() => navigate('/showcase')}
+                  onClick={() => navigate(demoPath)}
                 >
-                  Open Showcase
+                  Open Console
                   <ArrowRight className="h-4 w-4" />
                 </button>
               </article>

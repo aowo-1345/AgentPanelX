@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://aowo-1345.github.io/AgentPanelX/"><strong>官方网站</strong></a>
   ·
-  <a href="https://aowo-1345.github.io/AgentPanelX/showcase"><strong>体验 Console</strong></a>
+  <a href="https://aowo-1345.github.io/AgentPanelX/console"><strong>体验 Console</strong></a>
   ·
   <a href="docs/architecture.md">系统架构</a>
   ·

@@ -119,7 +119,7 @@ function EvidenceRail({ frame }: { frame: ShowcaseFrame }) {
         )}
         <div className="mt-2.5 flex items-center gap-2 rounded-md bg-background/50 px-2.5 py-2 text-[10px] text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-300" />
-          Deterministic showcase · no API calls
+          Sample project runtime · no API credentials
         </div>
       </section>
 

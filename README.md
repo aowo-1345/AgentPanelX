@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://aowo-1345.github.io/AgentPanelX/"><strong>Website</strong></a>
   ·
-  <a href="https://aowo-1345.github.io/AgentPanelX/showcase"><strong>Try the Console</strong></a>
+  <a href="https://aowo-1345.github.io/AgentPanelX/console"><strong>Try the Console</strong></a>
   ·
   <a href="docs/architecture.md">Architecture</a>
   ·
