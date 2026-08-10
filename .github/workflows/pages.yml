@@ -39,6 +39,8 @@ jobs:
           VITE_PUBLIC_STATIC_SITE: "true"
         run: |
           npm run build
+          mkdir -p dist/console
+          cp dist/index.html dist/console/index.html
           cp dist/index.html dist/404.html
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
