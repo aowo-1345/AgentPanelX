@@ -14,7 +14,7 @@ AgentPanelX 是一个面向长周期 Coding Tasks 的本地优先交付运行时
 ## 2. 系统上下文
 
 ```mermaid
-flowchart LR
+flowchart TB
     Human[Human]
     Browser[Web Console]
     External[External Codex / Claude Code]
