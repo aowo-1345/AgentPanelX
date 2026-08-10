@@ -8,7 +8,7 @@
 
 <p align="center">
   AgentPanelX 是面向长周期 Coding Projects 的本地优先控制平面。<br />
-  Project Owner 将单次实现之外的目标维护、滚动规划、并发隔离、中断恢复与下一步决策建模为持久化 Project Runtime，并把交付历史沉淀为 Harness Evolution 证据。
+  Project Owner 维护目标、滚动规划、恢复中断交付，并将执行历史沉淀为 Harness Evolution 证据。
 </p>
 
 <p align="center">

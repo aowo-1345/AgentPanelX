@@ -8,7 +8,7 @@
 
 <p align="center">
   AgentPanelX is a local-first control plane for long-running coding projects.<br />
-  A Project Owner agent turns the coordination beyond a single implementation—maintaining intent, rolling plans forward, isolating concurrent work, recovering interruptions, and deciding what happens next—into a persistent Project Runtime and evidence for Harness Evolution.
+  A Project Owner agent maintains intent, rolls plans forward, recovers interrupted delivery, and turns execution history into evidence for Harness Evolution.
 </p>
 
 <p align="center">
