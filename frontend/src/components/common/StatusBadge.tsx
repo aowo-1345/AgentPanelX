@@ -11,7 +11,7 @@ const CLASSES: Record<FeatureStatus, string> = {
 
 export function StatusBadge({ status }: { status: FeatureStatus }) {
   return (
-    <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-medium ${CLASSES[status]}`}>
+    <span className={`inline-flex rounded-md px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.08em] ${CLASSES[status]}`}>
       {FEATURE_STATUS_LABELS[status]}
     </span>
   );

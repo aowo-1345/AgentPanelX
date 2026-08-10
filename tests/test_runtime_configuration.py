@@ -276,44 +276,44 @@ def test_responses_transport_applies_selected_gateway_configuration(
     assert request["service_tier"] is omit
 
 
-def test_repository_settings_select_the_local_agentplanex_data_home() -> None:
+def test_repository_settings_select_a_portable_agentplanex_data_home() -> None:
     settings = load_settings(DEFAULT_SETTINGS_PATH)
 
     assert settings.workspace.data_home == DEFAULT_WORKSPACE_DATA_HOME
-    assert settings.workspace.data_home == Path(
-        ".agentplanex"
-    )
+    assert settings.workspace.data_home == Path(".agentplanex")
 
 
-def test_repository_settings_select_qwen_model_studio_without_embedded_credentials(
+def test_repository_settings_select_a_declared_model_without_embedded_credentials(
 ) -> None:
     owner = load_settings(DEFAULT_SETTINGS_PATH).project_owner_agent
     model = owner.selected_model
 
-    assert owner.active_model == "qwen"
-    assert model.name == "your-model-name"
-    assert model.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert model.api_key_env == "OPENAI_API_KEY"
-    assert model.http_headers == {}
-    assert model.service_tier is None
-
-    toolcode = owner.models["toolcode"]
-    assert toolcode.name == "gpt-5.6-sol"
-    assert toolcode.base_url == "https://gateway.example/v1"
-    assert toolcode.api_key_env == "OPENAI_API_KEY"
+    assert owner.active_model in owner.models
+    assert model.name.strip()
+    assert model.base_url.startswith("https://")
+    assert model.api_key_env.endswith("_API_KEY")
+    assert "api_key" not in model.model_dump()
 
 
-def test_settings_can_select_the_existing_toolcode_gateway(tmp_path: Path) -> None:
+def test_settings_can_select_an_alternate_declared_gateway(tmp_path: Path) -> None:
     settings_path = tmp_path / "settings.yaml"
     raw = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
-    raw["project_owner_agent"]["active_model"] = "toolcode"
+    owner_raw = raw["project_owner_agent"]
+    alternates = [
+        alias
+        for alias in owner_raw["models"]
+        if alias != owner_raw["active_model"]
+    ]
+    if not alternates:
+        pytest.skip("Repository configuration declares one model gateway")
+    alternate = alternates[0]
+    owner_raw["active_model"] = alternate
     settings_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
     owner = load_settings(settings_path).project_owner_agent
 
-    assert owner.active_model == "toolcode"
-    assert owner.selected_model is owner.models["toolcode"]
-    assert owner.selected_model.name == "gpt-5.6-sol"
+    assert owner.active_model == alternate
+    assert owner.selected_model is owner.models[alternate]
 
 
 def test_unknown_active_model_is_rejected(tmp_path: Path) -> None:

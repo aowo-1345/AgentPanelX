@@ -163,7 +163,7 @@ export function WorkspacePage() {
     setDeleteError('');
     try {
       await api.deleteFeature(projectId, triageId);
-      navigate('/', { replace: true });
+      navigate('/console', { replace: true });
     } catch (caught) {
       setDeleteError(readableError(caught));
     } finally {
@@ -178,7 +178,7 @@ export function WorkspacePage() {
     <div className="flex h-full flex-col overflow-hidden">
       <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
         <div className="flex min-w-0 items-center gap-3">
-          <button className="btn btn-ghost h-8 shrink-0" onClick={() => navigate('/')}>
+          <button className="btn btn-ghost h-8 shrink-0" onClick={() => navigate('/console')}>
             <ArrowLeft className="h-3.5 w-3.5" />
             Board
           </button>
@@ -283,7 +283,7 @@ export function WorkspacePage() {
                   Delete “{workspace.feature.name}”?
                 </h2>
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  AgentPlaneX will remove this Feature from the Board and delete its managed
+                  AgentPanelX will remove this Feature from the Board and delete its managed
                   worktree and local Runtime history. Its Git branch and commits will be preserved.
                   Dirty or active worktrees are refused.
                 </p>

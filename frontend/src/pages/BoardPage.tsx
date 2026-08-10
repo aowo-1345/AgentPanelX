@@ -95,22 +95,23 @@ export function BoardPage() {
   const isRefreshing = loadState === 'refreshing';
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
-      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-2.5">
+    <div className="relative flex h-full flex-col overflow-hidden bg-[#07080b]">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-64 bg-[radial-gradient(ellipse_at_50%_0%,rgba(59,130,246,0.055),transparent_64%)]" />
+      <header className="relative z-20 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] bg-[#090b0f]/88 px-5 py-3 backdrop-blur-xl">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          <label className="relative min-w-[220px] flex-1 sm:max-w-80">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <label className="relative min-w-[240px] flex-1 sm:max-w-[360px]">
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/28" />
             <input
-              className="field h-8 pl-8 text-xs"
+              className="field h-9 rounded-lg border-white/[0.075] bg-white/[0.035] pl-9 text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]"
               placeholder="Search feature, project, branch…"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
           </label>
           <label className="relative">
-            <Filter className="pointer-events-none absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+            <Filter className="pointer-events-none absolute left-3 top-1/2 h-3 w-3 -translate-y-1/2 text-white/30" />
             <select
-              className="field h-8 w-40 pl-7 text-xs"
+              className="field h-9 w-44 rounded-lg border-white/[0.075] bg-white/[0.035] pl-8 text-xs"
               value={projectFilter}
               onChange={(event) => setProjectFilter(event.target.value)}
               aria-label="Filter by project"
@@ -124,7 +125,7 @@ export function BoardPage() {
             </select>
           </label>
           <select
-            className="field h-8 w-36 text-xs"
+            className="field h-9 w-40 rounded-lg border-white/[0.075] bg-white/[0.035] text-xs"
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value as FeatureStatus | 'all')}
             aria-label="Filter by status"
@@ -138,12 +139,12 @@ export function BoardPage() {
           </select>
         </div>
 
-        <div className="flex items-center gap-3">
-          <span className="text-xs tabular-nums text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <span className="rounded-full border border-white/[0.065] bg-white/[0.025] px-3 py-1.5 text-[10px] tabular-nums text-white/38">
             {features.length} feature{features.length === 1 ? '' : 's'}
           </span>
           <button
-            className="btn btn-ghost h-8 w-8 p-0"
+            className="btn btn-ghost h-9 w-9 rounded-lg border border-white/[0.055] bg-white/[0.018] p-0 hover:border-white/[0.1]"
             onClick={() => void load(true)}
             disabled={isInitialLoading || isRefreshing}
             aria-label="Refresh board"
@@ -157,7 +158,7 @@ export function BoardPage() {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="relative z-10 flex min-h-0 flex-1 overflow-hidden">
         <NewFeaturePanel projects={projects} onCreated={() => load(true)} />
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -192,7 +193,7 @@ export function BoardPage() {
                 </div>
               )}
               <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
-                <div className="flex h-full min-w-max gap-3 p-4">
+                <div className="flex h-full min-w-max gap-3.5 p-4 2xl:min-w-full">
                   {FEATURE_STATUSES.map((status) => (
                     <KanbanColumn
                       key={status}

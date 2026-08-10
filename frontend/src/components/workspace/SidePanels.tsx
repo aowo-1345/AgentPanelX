@@ -47,26 +47,53 @@ function KeyValue({ label, value }: { label: string; value: string | null }) {
 function RuntimePanel({ panel }: { panel: Panel<RuntimeData> }) {
   return (
     <PanelState panel={panel}>
-      {(runtime) => (
-        <div className="space-y-2">
-          <StatusBadge status={runtime.status} />
-          <KeyValue label="Activation" value={runtime.activation_status} />
-          <KeyValue label="Pending" value={runtime.pending_action} />
-          <KeyValue label="Milestone" value={runtime.current_milestone_key} />
-          <KeyValue label="Stage" value={runtime.current_stage_key} />
-          {runtime.blocked_reason && (
-            <div className="rounded-md border border-red-500/30 bg-red-500/10 p-2.5 text-xs">
-              <div className="font-medium text-red-300">User action required</div>
-              {runtime.blocked_capability && (
-                <div className="mt-1 font-mono text-[10px] text-red-200/70">
-                  {runtime.blocked_capability}
+      {(runtime) => {
+        const assistanceInProgress = runtime.blocked_capability?.startsWith('ASSISTANCE_');
+        return (
+          <div className="space-y-2">
+            <StatusBadge status={runtime.status} />
+            <KeyValue label="Activation" value={runtime.activation_status} />
+            <KeyValue label="Pending" value={runtime.pending_action} />
+            <KeyValue label="Milestone" value={runtime.current_milestone_key} />
+            <KeyValue label="Stage" value={runtime.current_stage_key} />
+            {runtime.blocked_reason && (
+              <div
+                className={`rounded-md border p-2.5 text-xs ${
+                  assistanceInProgress
+                    ? 'border-violet-400/30 bg-violet-400/10'
+                    : 'border-red-500/30 bg-red-500/10'
+                }`}
+              >
+                <div
+                  className={
+                    assistanceInProgress
+                      ? 'font-medium text-violet-300'
+                      : 'font-medium text-red-300'
+                  }
+                >
+                  {assistanceInProgress ? 'Ultra Mode investigating' : 'User action required'}
                 </div>
-              )}
-              <p className="mt-1.5 leading-relaxed text-red-100/80">{runtime.blocked_reason}</p>
-            </div>
-          )}
-        </div>
-      )}
+                {runtime.blocked_capability && (
+                  <div
+                    className={`mt-1 font-mono text-[10px] ${
+                      assistanceInProgress ? 'text-violet-200/70' : 'text-red-200/70'
+                    }`}
+                  >
+                    {runtime.blocked_capability}
+                  </div>
+                )}
+                <p
+                  className={`mt-1.5 leading-relaxed ${
+                    assistanceInProgress ? 'text-violet-100/80' : 'text-red-100/80'
+                  }`}
+                >
+                  {runtime.blocked_reason}
+                </p>
+              </div>
+            )}
+          </div>
+        );
+      }}
     </PanelState>
   );
 }

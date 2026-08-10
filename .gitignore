@@ -24,8 +24,12 @@ coverage.xml
 htmlcov/
 
 .logs/
+.agentplanex/
+.playwright-cli/
+output/
 
 .references/
+.scratch/
 
 .omo/
 

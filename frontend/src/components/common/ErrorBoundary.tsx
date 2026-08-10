@@ -18,7 +18,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[AgentPlaneX UI]', error, info);
+    console.error('[AgentPanelX UI]', error, info);
   }
 
   private reset = () => this.setState({ error: null });

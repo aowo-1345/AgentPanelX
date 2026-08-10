@@ -42,15 +42,20 @@ export function NewFeaturePanel({ projects, onCreated }: NewFeaturePanelProps) {
   }
 
   return (
-    <aside className="flex h-full w-[240px] shrink-0 flex-col border-r border-border bg-card/25">
-      <div className="border-b border-border px-4 py-4">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <PlusCircle className="h-4 w-4 text-primary" />
-          New feature
+    <aside className="flex h-full w-[264px] shrink-0 flex-col border-r border-white/[0.075] bg-[#090b0f]/92 shadow-[18px_0_60px_rgba(0,0,0,0.16)]">
+      <div className="border-b border-white/[0.07] px-5 py-5">
+        <div className="flex items-center gap-3">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-300/15 bg-blue-400/[0.07] text-blue-200">
+            <PlusCircle className="h-4 w-4" />
+          </span>
+          <div>
+            <p className="font-mono text-[8px] uppercase tracking-[0.18em] text-white/28">New delivery</p>
+            <h2 className="mt-0.5 text-sm font-semibold text-white/90">Create feature</h2>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+      <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
         {projects.length === 0 ? (
           <div className="space-y-3 rounded-lg border border-dashed border-border p-3">
             <p className="text-xs leading-relaxed text-muted-foreground">
@@ -63,10 +68,10 @@ export function NewFeaturePanel({ projects, onCreated }: NewFeaturePanelProps) {
           </div>
         ) : (
           <>
-            <label className="block space-y-1.5">
-              <span className="text-xs text-muted-foreground">Feature name</span>
+            <label className="block space-y-2">
+              <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-white/34">Feature name</span>
               <input
-                className="field h-9 text-xs"
+                className="field h-10 rounded-lg border-white/[0.075] bg-white/[0.035] text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]"
                 value={name}
                 onChange={(event) => {
                   setName(event.target.value);
@@ -80,10 +85,10 @@ export function NewFeaturePanel({ projects, onCreated }: NewFeaturePanelProps) {
               />
             </label>
 
-            <label className="block space-y-1.5">
-              <span className="text-xs text-muted-foreground">Project</span>
+            <label className="block space-y-2">
+              <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-white/34">Project</span>
               <select
-                className="field h-9 text-xs"
+                className="field h-10 rounded-lg border-white/[0.075] bg-white/[0.035] text-xs"
                 value={projectId}
                 onChange={(event) => setProjectId(event.target.value)}
                 disabled={submitState === 'submitting'}
@@ -96,9 +101,12 @@ export function NewFeaturePanel({ projects, onCreated }: NewFeaturePanelProps) {
               </select>
             </label>
 
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              Creates an isolated worktree. Codex will not run until you begin the feature.
-            </p>
+            <div className="rounded-xl border border-white/[0.06] bg-white/[0.018] p-3.5">
+              <p className="text-[10px] font-medium uppercase tracking-[0.12em] text-white/28">Isolated by default</p>
+              <p className="mt-2 text-[11px] leading-5 text-white/38">
+                Creates a dedicated Git worktree. Codex starts only when you begin the feature.
+              </p>
+            </div>
 
             {submitState === 'error' && (
               <div className="flex items-start gap-1.5 text-[11px] text-red-400">
@@ -117,8 +125,8 @@ export function NewFeaturePanel({ projects, onCreated }: NewFeaturePanelProps) {
       </div>
 
       {projects.length > 0 && (
-        <div className="p-4">
-          <button className="btn btn-primary h-9 w-full" disabled={!canSubmit} onClick={createFeature}>
+        <div className="border-t border-white/[0.06] p-5">
+          <button className="btn h-10 w-full rounded-lg bg-white text-[#08090c] shadow-[0_10px_30px_rgba(255,255,255,0.08)] hover:bg-white/90" disabled={!canSubmit} onClick={createFeature}>
             {submitState === 'submitting' && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {submitState === 'submitting' ? 'Creating…' : 'Create feature'}
           </button>

@@ -16,9 +16,7 @@ from pydantic import (
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.yaml")
 DEFAULT_JBB_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_WORKSPACE_DATA_HOME = Path(
-    ".agentplanex"
-)
+DEFAULT_WORKSPACE_DATA_HOME = Path(".agentplanex")
 
 
 class _SettingsModel(BaseModel):

@@ -65,7 +65,7 @@ export function SettingsPage() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border px-4">
-        <button className="btn btn-ghost h-8" onClick={() => navigate('/')}>
+        <button className="btn btn-ghost h-8" onClick={() => navigate('/console')}>
           <ArrowLeft className="h-3.5 w-3.5" />
           Board
         </button>
@@ -80,7 +80,7 @@ export function SettingsPage() {
               <div>
                 <h1 className="text-sm font-semibold">Registered projects</h1>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Local Git repositories managed by this AgentPlaneX workspace.
+                  Local Git repositories managed by this AgentPanelX workspace.
                 </p>
               </div>
               <button
@@ -153,7 +153,7 @@ export function SettingsPage() {
                   className="field h-9"
                   value={form.name}
                   onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                  placeholder="AgentPlaneX"
+                  placeholder="AgentPanelX"
                   required
                 />
               </label>

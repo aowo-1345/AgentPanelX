@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleX,
+  LockKeyhole,
   Loader2,
   Send,
   TerminalSquare,
@@ -33,6 +34,8 @@ interface ChatAreaProps {
   notice: CommandNotice | null;
   onSend: (content: string) => Promise<boolean>;
   onAction: (action: FeatureAction, feedback?: string) => Promise<void>;
+  readOnly?: boolean;
+  readOnlyLabel?: string;
 }
 
 function MessageBubble({ message }: { message: ConversationMessage }) {
@@ -153,6 +156,8 @@ export function ChatArea({
   notice,
   onSend,
   onAction,
+  readOnly = false,
+  readOnlyLabel = 'This workspace snapshot is read-only.',
 }: ChatAreaProps) {
   const [text, setText] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -161,8 +166,9 @@ export function ChatArea({
   );
 
   useEffect(() => {
+    if (readOnly) return;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [activationStatus, conversation.data, notice]);
+  }, [activationStatus, conversation.data, notice, readOnly]);
 
   async function send() {
     const content = text.trim();
@@ -241,31 +247,40 @@ export function ChatArea({
       </div>
 
       <div className="shrink-0 border-t border-border p-4">
-        <div className="flex items-end gap-2">
-          <textarea
-            className="field min-h-[68px] max-h-36 flex-1 resize-y py-2"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            onKeyDown={keyDown}
-            placeholder="Message Project Owner…"
-            disabled={sending || pendingAction !== null}
-          />
-          <button
-            className="btn btn-primary h-9 w-9 p-0"
-            onClick={() => void send()}
-            disabled={!text.trim() || sending || pendingAction !== null}
-            aria-label="Send message"
-          >
-            {sending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </button>
-        </div>
-        <p className="mt-1.5 text-[10px] text-muted-foreground/50">
-          Enter to send · Shift+Enter for a new line. Refresh to retrieve later Owner updates.
-        </p>
+        {readOnly ? (
+          <div className="flex items-center gap-2 rounded-lg border border-primary/15 bg-primary/5 px-3 py-2.5 text-[11px] text-muted-foreground">
+            <LockKeyhole className="h-3.5 w-3.5 shrink-0 text-primary" />
+            <span>{readOnlyLabel}</span>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-end gap-2">
+              <textarea
+                className="field min-h-[68px] max-h-36 flex-1 resize-y py-2"
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                onKeyDown={keyDown}
+                placeholder="Message Project Owner…"
+                disabled={sending || pendingAction !== null}
+              />
+              <button
+                className="btn btn-primary h-9 w-9 p-0"
+                onClick={() => void send()}
+                disabled={!text.trim() || sending || pendingAction !== null}
+                aria-label="Send message"
+              >
+                {sending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </button>
+            </div>
+            <p className="mt-1.5 text-[10px] text-muted-foreground/50">
+              Enter to send · Shift+Enter for a new line. Refresh to retrieve later Owner updates.
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

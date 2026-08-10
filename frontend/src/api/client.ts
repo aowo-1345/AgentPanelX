@@ -54,7 +54,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     });
   } catch (error) {
     throw new ApiError(
-      error instanceof Error ? `Cannot reach AgentPlaneX: ${error.message}` : 'Cannot reach AgentPlaneX',
+      error instanceof Error ? `Cannot reach AgentPanelX: ${error.message}` : 'Cannot reach AgentPanelX',
       0,
     );
   }

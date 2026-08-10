@@ -41,6 +41,15 @@
     font: inherit;
   }
 
+  select {
+    color-scheme: dark;
+  }
+
+  select option {
+    background: #111318;
+    color: #e6e9ef;
+  }
+
   code,
   pre,
   .font-mono {

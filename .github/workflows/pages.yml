@@ -1,0 +1,57 @@
+name: Deploy website to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build static website
+        working-directory: frontend
+        env:
+          VITE_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_PUBLIC_REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+          VITE_PUBLIC_STATIC_SITE: "true"
+        run: |
+          npm run build
+          cp dist/index.html dist/404.html
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

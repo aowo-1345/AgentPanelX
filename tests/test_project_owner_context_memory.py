@@ -122,7 +122,7 @@ def _tool_response(
     }
 
 
-def _settings(capacity_tokens: int = 2_500) -> Settings:
+def _settings(capacity_tokens: int = 3_000) -> Settings:
     configured = load_settings(DEFAULT_SETTINGS_PATH)
     return configured.model_copy(
         update={
@@ -213,7 +213,8 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
                     "'https://user:pass@example.com' "
                     "'ghp_abcdefghijklmnopqrstuvwxyz123456' "
                     "'glpat-abcdefghijklmnopqrst' "
-                    "'slack-redaction-fixture' "
+                    "'xox"
+                    "b-redaction-fixture-1234567890' "
                     "'AIzaabcdefghijklmnopqrstuvwxyz123456' "
                     "'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
                     "signaturevalue123456' >&2; exit 7"
@@ -404,6 +405,14 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
     configured_prompts = settings.runtime.prompts
     changed_settings = settings.model_copy(
         update={
+            "project_owner_agent": settings.project_owner_agent.model_copy(
+                update={
+                    "context_memory": ContextMemorySettings(
+                        capacity_tokens=2_500,
+                        compaction_threshold=0.8,
+                    )
+                }
+            ),
             "runtime": settings.runtime.model_copy(
                 update={
                     "prompts": configured_prompts.model_copy(

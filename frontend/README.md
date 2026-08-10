@@ -1,4 +1,4 @@
-# AgentPlaneX Web Console
+# AgentPanelX Web Console
 
 This directory contains the local React console. It talks to the FastAPI host through
 same-origin `/api` paths; during development Vite proxies those requests to
