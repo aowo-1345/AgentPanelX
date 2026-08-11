@@ -60,8 +60,7 @@ class _OwnerTransport(ResponsesTransport):
             if self.summary_failure == "tool":
                 return _tool_response("bash", "summary-tool", {"command": "pwd"})
             return _text_response(
-                "<trajectory-summary>Continue from the recorded project work."
-                "</trajectory-summary>"
+                "<trajectory-summary>Continue from the recorded project work.</trajectory-summary>"
             )
         if task == self.initial_intent_prompt:
             if self.summary_failure == "xml":
@@ -71,8 +70,7 @@ class _OwnerTransport(ResponsesTransport):
             )
         if task == self.update_intent_prompt:
             return _text_response(
-                "<intent-summary>Deliver durable context memory after restart."
-                "</intent-summary>"
+                "<intent-summary>Deliver durable context memory after restart.</intent-summary>"
             )
 
         with self._lock:
@@ -82,11 +80,7 @@ class _OwnerTransport(ResponsesTransport):
             return _tool_response(
                 "bash",
                 "large-observation",
-                {
-                    "command": (
-                        "for i in $(seq 1 500); do printf 'observation '; done"
-                    )
-                },
+                {"command": ("for i in $(seq 1 500); do printf 'observation '; done")},
             )
         return _text_response("owner-finished")
 
@@ -169,9 +163,7 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
         try:
             deadline = time.monotonic() + 5
             while True:
-                conversation = runtime.project_workspace_view(
-                    activation.triage_id
-                ).conversation
+                conversation = runtime.project_workspace_view(activation.triage_id).conversation
                 running = next(
                     (message for message in conversation if message.role == "tool"),
                     None,
@@ -258,10 +250,7 @@ def test_workspace_conversation_marks_an_interrupted_tool_as_failed(
                 "tool": "bash",
                 "call_id": "interrupted-tool",
                 "arguments": {
-                    "command": (
-                        "while [ ! -f release-interrupted-tool ]; "
-                        "do sleep 0.02; done"
-                    )
+                    "command": ("while [ ! -f release-interrupted-tool ]; do sleep 0.02; done")
                 },
             },
         )
@@ -290,9 +279,7 @@ def test_workspace_conversation_marks_an_interrupted_tool_as_failed(
             assert interrupted.status.value == "FAILED"
             activity = next(
                 message.tool_activity
-                for message in runtime.project_workspace_view(
-                    activation.triage_id
-                ).conversation
+                for message in runtime.project_workspace_view(activation.triage_id).conversation
                 if message.role == "tool"
             )
             assert activity is not None
@@ -358,23 +345,15 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
         "auto",
     ]
     first_summary_requests = [
-        request
-        for request in first_transport.requests
-        if request.tool_choice == "none"
+        request for request in first_transport.requests if request.tool_choice == "none"
     ]
     first_owner_request = first_transport.requests[0]
     assert all(
         request.input[:-1] == first_summary_requests[0].input[:-1]
         for request in first_summary_requests
     )
-    assert all(
-        request.tools == first_owner_request.tools
-        for request in first_summary_requests
-    )
-    assert {
-        str(request.input[-1].get("content", ""))
-        for request in first_summary_requests
-    } == {
+    assert all(request.tools == first_owner_request.tools for request in first_summary_requests)
+    assert {str(request.input[-1].get("content", "")) for request in first_summary_requests} == {
         first_transport.trajectory_prompt,
         first_transport.initial_intent_prompt,
     }
@@ -425,7 +404,7 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
                         }
                     )
                 }
-            )
+            ),
         }
     )
     restarted_transport = _OwnerTransport(changed_settings)
@@ -441,14 +420,10 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
     assert second.exit is not None
     assert second.exit.content == "owner-finished"
     second_summary_requests = [
-        request
-        for request in restarted_transport.requests
-        if request.tool_choice == "none"
+        request for request in restarted_transport.requests if request.tool_choice == "none"
     ]
     second_owner_request = next(
-        request
-        for request in restarted_transport.requests
-        if request.tool_choice == "auto"
+        request for request in restarted_transport.requests if request.tool_choice == "auto"
     )
     assert len(second_summary_requests) == 2
     assert all(
@@ -456,8 +431,7 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
         for request in second_summary_requests
     )
     assert all(
-        [schema["name"] for schema in request.tools]
-        == ["bash", "talk_to_agent"]
+        [schema["name"] for schema in request.tools] == ["bash", "talk_to_agent"]
         for request in restarted_transport.requests
     )
     assert all(
@@ -468,16 +442,16 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
         second_summary_requests[0].input[:-1],
         ensure_ascii=False,
     )
-    assert [
-        message.get("role") for message in second_summary_requests[0].input[:-1]
-    ] == ["developer", "user", "assistant", "user"]
+    assert [message.get("role") for message in second_summary_requests[0].input[:-1]] == [
+        "developer",
+        "user",
+        "assistant",
+        "user",
+    ]
     assert "<intent-summary>" in restored_prefix
     assert "<trajectory-summary>" in restored_prefix
     assert "updated-context" in restored_prefix
-    tasks = {
-        str(request.input[-1].get("content", ""))
-        for request in second_summary_requests
-    }
+    tasks = {str(request.input[-1].get("content", "")) for request in second_summary_requests}
     assert tasks == {
         restarted_transport.trajectory_prompt,
         restarted_transport.update_intent_prompt,
@@ -531,25 +505,19 @@ def test_summary_failure_keeps_the_original_owner_context(
 
     assert driven.exit is not None
     assert driven.exit.content == "owner-finished"
-    owner_request = next(
-        request for request in transport.requests if request.tool_choice == "auto"
-    )
-    assert str(owner_request.input[-1].get("content", "")).startswith(
-        "original-context"
-    )
+    owner_request = next(request for request in transport.requests if request.tool_choice == "auto")
+    assert str(owner_request.input[-1].get("content", "")).startswith("original-context")
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
     with database.read_only_connection() as connection:
         owner = owners.get_by_triage_id(connection, activation.triage_id)
-        summary_count = connection.execute(
-            "SELECT COUNT(*) FROM summary_history"
-        ).fetchone()[0]
+        summary_count = connection.execute("SELECT COUNT(*) FROM summary_history").fetchone()[0]
     assert owner is not None
     assert owner.summary_id is None
     assert summary_count == 0
-    assert [
-        event.event_type.value for event in runtime.project_control_view().timeline
-    ].count("CONTEXT_COMPACTION_FAILED") == 1
+    assert [event.event_type.value for event in runtime.project_control_view().timeline].count(
+        "CONTEXT_COMPACTION_FAILED"
+    ) == 1
 
 
 def test_summary_publish_transaction_rejects_a_stale_checkpoint(

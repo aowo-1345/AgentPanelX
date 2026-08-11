@@ -91,21 +91,15 @@ class ProjectWorkspaceQuery:
     snapshots: SQLiteMilestoneSnapshotRepository = field(
         default_factory=SQLiteMilestoneSnapshotRepository
     )
-    stage_runs: SQLiteStageRunRepository = field(
-        default_factory=SQLiteStageRunRepository
-    )
+    stage_runs: SQLiteStageRunRepository = field(default_factory=SQLiteStageRunRepository)
     activations: SQLiteOwnerActivationRepository = field(
         default_factory=SQLiteOwnerActivationRepository
     )
     owners: SQLiteProjectOwnerAgentRepository = field(
         default_factory=SQLiteProjectOwnerAgentRepository
     )
-    messages: SQLiteMessageHistoryRepository = field(
-        default_factory=SQLiteMessageHistoryRepository
-    )
-    events: SQLiteExecutionEventRepository = field(
-        default_factory=SQLiteExecutionEventRepository
-    )
+    messages: SQLiteMessageHistoryRepository = field(default_factory=SQLiteMessageHistoryRepository)
+    events: SQLiteExecutionEventRepository = field(default_factory=SQLiteExecutionEventRepository)
     history_limit: int = 50
 
     def get(self, triage_id: str) -> ProjectWorkspaceView:
@@ -174,9 +168,7 @@ class ProjectWorkspaceQuery:
             with self.database.connection() as connection:
                 snapshot = self.snapshots.get(connection, context.current_snapshot_id)
             if snapshot is None:
-                raise LookupError(
-                    f"Milestone Snapshot not found: {context.current_snapshot_id}"
-                )
+                raise LookupError(f"Milestone Snapshot not found: {context.current_snapshot_id}")
             return snapshot, None
         except (sqlite3.Error, ValueError, LookupError) as error:
             return None, str(error)
@@ -205,9 +197,7 @@ class ProjectWorkspaceQuery:
                 histories = self.messages.list_by_session_id(
                     connection, owner.project_owner_session_id
                 )
-                activations = self.activations.list_by_triage_id(
-                    connection, triage_id
-                )
+                activations = self.activations.list_by_triage_id(connection, triage_id)
             return (
                 _visible_messages(histories, activations),
                 None,
@@ -292,8 +282,7 @@ def _visible_messages(
                             status=(
                                 "running"
                                 if current_activation is not None
-                                and current_activation.status
-                                is OwnerActivationStatus.RUNNING
+                                and current_activation.status is OwnerActivationStatus.RUNNING
                                 else "failed"
                             ),
                             input_preview=_tool_preview(arguments),
@@ -303,9 +292,7 @@ def _visible_messages(
             response_text = _assistant_response_text(message)
             if response_text:
                 visible.append(
-                    VisibleMessage(
-                        f"{history.message_id}:{index}", "assistant", response_text
-                    )
+                    VisibleMessage(f"{history.message_id}:{index}", "assistant", response_text)
                 )
                 continue
             if tool_calls:
@@ -362,9 +349,7 @@ def _visible_messages(
                 )
             elif role == "user" and activation is not None:
                 if activation.task_type is ProjectOwnerTaskType.USER_INPUT:
-                    visible.append(
-                        VisibleMessage(f"{history.message_id}:{index}", "user", content)
-                    )
+                    visible.append(VisibleMessage(f"{history.message_id}:{index}", "user", content))
                 elif activation.task_type is ProjectOwnerTaskType.PLAN_DECISION:
                     visible.append(
                         VisibleMessage(
@@ -388,9 +373,7 @@ def _tool_calls(message: Message) -> tuple[tuple[str, str, object], ...]:
     candidates: list[object]
     if message.get("type") == "function_call":
         candidates = [message]
-    elif message.get("object") == "response" and isinstance(
-        message.get("output"), list
-    ):
+    elif message.get("object") == "response" and isinstance(message.get("output"), list):
         candidates = message["output"]
     else:
         return ()
@@ -406,9 +389,7 @@ def _tool_calls(message: Message) -> tuple[tuple[str, str, object], ...]:
             and isinstance(tool_name, str)
             and tool_name.strip()
         ):
-            calls.append(
-                (call_id, tool_name, _decoded_tool_arguments(item.get("arguments")))
-            )
+            calls.append((call_id, tool_name, _decoded_tool_arguments(item.get("arguments"))))
     return tuple(calls)
 
 
@@ -490,9 +471,7 @@ def _sanitize_tool_value(value: object) -> object:
     if isinstance(value, dict):
         return {
             str(key): (
-                "[redacted]"
-                if _SENSITIVE_KEY.search(str(key))
-                else _sanitize_tool_value(item)
+                "[redacted]" if _SENSITIVE_KEY.search(str(key)) else _sanitize_tool_value(item)
             )
             for key, item in value.items()
         }
@@ -522,9 +501,7 @@ def _activation_has_reply(
         for message in history.message:
             content = message.get("content")
             if (
-                message.get("role") == "assistant"
-                and isinstance(content, str)
-                and content.strip()
+                message.get("role") == "assistant" and isinstance(content, str) and content.strip()
             ) or _assistant_response_text(message):
                 return True
     return False

@@ -144,8 +144,40 @@
     @apply my-2;
   }
 
+  .chat-markdown h1,
+  .chat-markdown h2,
+  .chat-markdown h3,
+  .chat-markdown h4,
+  .chat-markdown h5,
+  .chat-markdown h6 {
+    @apply my-3 font-semibold tracking-tight text-foreground;
+  }
+
+  .chat-markdown h1 {
+    @apply text-lg;
+  }
+
+  .chat-markdown h2 {
+    @apply text-base;
+  }
+
+  .chat-markdown h3,
+  .chat-markdown h4,
+  .chat-markdown h5,
+  .chat-markdown h6 {
+    @apply text-sm;
+  }
+
   .chat-markdown strong {
     @apply font-semibold text-foreground;
+  }
+
+  .chat-markdown em {
+    @apply italic;
+  }
+
+  .chat-markdown del {
+    @apply text-muted-foreground line-through;
   }
 
   .chat-markdown a {
@@ -183,6 +215,26 @@
 
   .chat-markdown hr {
     @apply my-3 border-border;
+  }
+
+  .chat-markdown table {
+    @apply my-3 block max-w-full overflow-x-auto border-collapse text-xs;
+  }
+
+  .chat-markdown th {
+    @apply border border-border bg-muted px-2 py-1.5 text-left font-semibold text-foreground;
+  }
+
+  .chat-markdown td {
+    @apply border border-border px-2 py-1.5 align-top;
+  }
+
+  .chat-markdown img {
+    @apply my-3 max-w-full rounded-md border border-border;
+  }
+
+  .chat-markdown input[type='checkbox'] {
+    @apply mr-1.5 align-middle accent-primary;
   }
 
   .markdown-document {

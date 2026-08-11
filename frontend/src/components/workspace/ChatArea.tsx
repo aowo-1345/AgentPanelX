@@ -13,11 +13,7 @@ import {
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type {
-  ConversationMessage,
-  FeatureAction,
-  Panel,
-} from '@/api/types';
+import type { ConversationMessage, FeatureAction, Panel } from '@/api/types';
 import { ActionCard } from './ActionCard';
 
 interface CommandNotice {

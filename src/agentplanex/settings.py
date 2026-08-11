@@ -99,7 +99,7 @@ class BashSettings(_SettingsModel):
     """Limits applied to project-scoped Bash executions."""
 
     timeout_seconds: float = Field(default=30.0, gt=0)
-    output_limit: int = Field(default=65_536, gt=0)
+    output_limit: int = Field(default=10_000, gt=0)
 
 
 class CodexSettings(_SettingsModel):

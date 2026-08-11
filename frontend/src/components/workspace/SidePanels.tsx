@@ -156,7 +156,43 @@ function PlanPanel({ panel }: { panel: Panel<PlanData> }) {
   );
 }
 
-function MilestonesPanel({ panel }: { panel: Panel<MilestonesData> }) {
+function milestoneDisplayState(milestoneKey: string, state: string, runtime: RuntimeData | null) {
+  if (state !== 'pending' || runtime?.current_milestone_key !== milestoneKey) return state;
+  if (runtime.status === 'IN_PROGRESS') return 'in progress';
+  if (runtime.status === 'BLOCKED') return 'blocked';
+  return state;
+}
+
+function milestoneStateTone(state: string) {
+  if (state === 'completed') return 'bg-emerald-500/15 text-emerald-300';
+  if (state === 'in progress') return 'bg-blue-500/15 text-blue-300';
+  if (state === 'blocked') return 'bg-red-500/15 text-red-300';
+  return 'bg-muted text-muted-foreground';
+}
+
+function activeStageState(
+  milestoneKey: string,
+  stageKey: string,
+  runtime: RuntimeData | null,
+) {
+  if (
+    runtime?.current_milestone_key !== milestoneKey ||
+    runtime.current_stage_key !== stageKey
+  ) {
+    return null;
+  }
+  if (runtime.status === 'IN_PROGRESS') return 'running';
+  if (runtime.status === 'BLOCKED') return 'blocked';
+  return null;
+}
+
+function MilestonesPanel({
+  panel,
+  runtime,
+}: {
+  panel: Panel<MilestonesData>;
+  runtime: RuntimeData | null;
+}) {
   return (
     <PanelState panel={panel}>
       {(data) => (
@@ -164,22 +200,57 @@ function MilestonesPanel({ panel }: { panel: Panel<MilestonesData> }) {
           {data.milestones.length === 0 ? (
             <p className="text-xs italic text-muted-foreground/60">No milestones published</p>
           ) : (
-            data.milestones.map((milestone) => (
-              <div key={milestone.key} className="space-y-1.5 border-l border-border pl-2.5">
-                <div className="flex items-center justify-between gap-2 text-xs">
-                  <span className="font-mono text-primary">{milestone.key}</span>
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] uppercase text-muted-foreground">
-                    {milestone.state}
-                  </span>
-                </div>
-                <p className="text-xs leading-relaxed">{milestone.objective}</p>
-                {milestone.stages.map((stage) => (
-                  <div key={stage.key} className="text-[11px] text-muted-foreground">
-                    <span className="font-mono">{stage.key}</span> · {stage.objective}
+            data.milestones.map((milestone) => {
+              const displayState = milestoneDisplayState(
+                milestone.key,
+                milestone.state,
+                runtime,
+              );
+              return (
+                <div key={milestone.key} className="space-y-1.5 border-l border-border pl-2.5">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-mono text-primary">{milestone.key}</span>
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[9px] uppercase ${milestoneStateTone(displayState)}`}
+                    >
+                      {displayState}
+                    </span>
                   </div>
-                ))}
-              </div>
-            ))
+                  <p className="text-xs leading-relaxed">{milestone.objective}</p>
+                  {milestone.stages.map((stage) => {
+                    const stageState = activeStageState(
+                      milestone.key,
+                      stage.key,
+                      runtime,
+                    );
+                    return (
+                      <div
+                        key={stage.key}
+                        className={`flex items-start gap-1.5 rounded px-1.5 py-1 text-[11px] ${
+                          stageState === 'blocked'
+                            ? 'bg-red-500/10 text-red-200'
+                            : stageState === 'running'
+                              ? 'bg-blue-500/10 text-blue-200'
+                              : 'text-muted-foreground'
+                        }`}
+                      >
+                        <span className="font-mono">{stage.key}</span>
+                        <span className="min-w-0 flex-1">· {stage.objective}</span>
+                        {stageState && (
+                          <span
+                            className={`shrink-0 text-[9px] uppercase ${
+                              stageState === 'blocked' ? 'text-red-300' : 'text-blue-300'
+                            }`}
+                          >
+                            {stageState}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })
           )}
           <KeyValue label="Snapshot" value={data.snapshot_id} />
         </div>
@@ -268,7 +339,10 @@ export function SidePanels({ runtime, plan, milestones, git, timeline }: SidePan
   const panels: Array<[string, ReactNode]> = [
     ['Runtime', <RuntimePanel key="runtime" panel={runtime} />],
     ['Current plan', <PlanPanel key="plan" panel={plan} />],
-    ['Milestones', <MilestonesPanel key="milestones" panel={milestones} />],
+    [
+      'Milestones',
+      <MilestonesPanel key="milestones" panel={milestones} runtime={runtime.data} />,
+    ],
     ['Git', <GitPanel key="git" panel={git} />],
     ['Timeline', <TimelinePanel key="timeline" panel={timeline} />],
   ];

@@ -82,9 +82,7 @@ class ActionRequest(Schema):
 
     @model_validator(mode="after")
     def require_rejection_feedback(self) -> "ActionRequest":
-        if self.action is FeatureAction.REJECT_PLAN and not (
-            self.feedback or ""
-        ).strip():
+        if self.action is FeatureAction.REJECT_PLAN and not (self.feedback or "").strip():
             raise ValueError("reject-plan requires non-empty feedback")
         return self
 

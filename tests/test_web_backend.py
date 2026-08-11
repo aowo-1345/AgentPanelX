@@ -33,12 +33,7 @@ def _git(project_path: Path, *arguments: str) -> str:
 
 
 def _prepare_case(model_base_url: str) -> tuple[Path, Path]:
-    case_path = (
-        Path(__file__).resolve().parents[1]
-        / ".agentplanex"
-        / "tests"
-        / "web-e2e"
-    )
+    case_path = Path(__file__).resolve().parents[1] / ".agentplanex" / "tests" / "web-e2e"
     shutil.rmtree(case_path, ignore_errors=True)
     repository_path = case_path / "repository"
     repository_path.mkdir(parents=True)
@@ -311,12 +306,15 @@ def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
                 }
             ]
 
-            assert _request(
-                base_url,
-                "POST",
-                f"/api/projects/{project_id}/features/{triage_id}/actions",
-                {"action": "begin"},
-            )[0] == 200
+            assert (
+                _request(
+                    base_url,
+                    "POST",
+                    f"/api/projects/{project_id}/features/{triage_id}/actions",
+                    {"action": "begin"},
+                )[0]
+                == 200
+            )
             status, board = _request(base_url, "GET", "/api/features")
             assert status == 200
             assert isinstance(board, list)
@@ -332,9 +330,7 @@ def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
             assert isinstance(accepted, dict)
             assert accepted["status"] == "PENDING"
 
-            workspace_path = (
-                f"/api/projects/{project_id}/features/{triage_id}/workspace"
-            )
+            workspace_path = f"/api/projects/{project_id}/features/{triage_id}/workspace"
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 status, workspace = _request(base_url, "GET", workspace_path)
@@ -351,28 +347,31 @@ def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
             else:
                 pytest.fail("Workspace did not expose the Project Owner reply")
             assert [message["role"] for message in messages] == ["user", "assistant"]
-            assert [
-                document["content"] for document in workspace["plan"]["data"]["documents"]
-            ] == [
+            assert [document["content"] for document in workspace["plan"]["data"]["documents"]] == [
                 "# Architecture\n\nHTTP stays an adapter.\n",
                 "# Requirements\n\nExpose the workspace.\n",
                 "# Roadmap\n\nShip the backend.\n",
             ]
             assert workspace["git"]["data"]["branch"] == feature["branch"]
+            assert (
+                _request(
+                    base_url,
+                    "POST",
+                    f"/api/projects/{project_id}/features/{triage_id}/actions",
+                    {"action": "reject-plan", "feedback": "  "},
+                )[0]
+                == 422
+            )
 
-            assert _request(
-                base_url,
-                "POST",
-                f"/api/projects/{project_id}/features/{triage_id}/actions",
-                {"action": "reject-plan", "feedback": "  "},
-            )[0] == 422
-
-            assert _request(
-                base_url,
-                "POST",
-                f"/api/projects/{project_id}/features/{triage_id}/messages",
-                {"content": "This activation will be interrupted."},
-            )[0] == 202
+            assert (
+                _request(
+                    base_url,
+                    "POST",
+                    f"/api/projects/{project_id}/features/{triage_id}/messages",
+                    {"content": "This activation will be interrupted."},
+                )[0]
+                == 202
+            )
             assert model_endpoint.second_request_started.wait(timeout=5)
             status, interrupted_workspace = _request(
                 base_url,
@@ -381,9 +380,7 @@ def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
             )
             assert status == 200
             assert isinstance(interrupted_workspace, dict)
-            assert interrupted_workspace["runtime"]["data"]["activation_status"] == (
-                "RUNNING"
-            )
+            assert interrupted_workspace["runtime"]["data"]["activation_status"] == ("RUNNING")
             status, active_delete = _request(
                 base_url,
                 "DELETE",
@@ -403,21 +400,26 @@ def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
             assert isinstance(pending_feature, dict)
             pending_triage_id = pending_feature["triage_id"]
             pending_workspace_path = (
-                f"/api/projects/{project_id}/features/"
-                f"{pending_triage_id}/workspace"
+                f"/api/projects/{project_id}/features/{pending_triage_id}/workspace"
             )
-            assert _request(
-                base_url,
-                "POST",
-                f"/api/projects/{project_id}/features/{pending_triage_id}/actions",
-                {"action": "begin"},
-            )[0] == 200
-            assert _request(
-                base_url,
-                "POST",
-                f"/api/projects/{project_id}/features/{pending_triage_id}/messages",
-                {"content": "Resume this after restart."},
-            )[0] == 202
+            assert (
+                _request(
+                    base_url,
+                    "POST",
+                    f"/api/projects/{project_id}/features/{pending_triage_id}/actions",
+                    {"action": "begin"},
+                )[0]
+                == 200
+            )
+            assert (
+                _request(
+                    base_url,
+                    "POST",
+                    f"/api/projects/{project_id}/features/{pending_triage_id}/messages",
+                    {"content": "Resume this after restart."},
+                )[0]
+                == 202
+            )
             status, pending_workspace = _request(
                 base_url,
                 "GET",

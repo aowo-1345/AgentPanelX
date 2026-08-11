@@ -26,7 +26,7 @@ def run_local_shell(
     *,
     cwd: Path,
     timeout_seconds: float = 30.0,
-    output_limit: int = 65_536,
+    output_limit: int = 10_000,
     env: Mapping[str, str] | None = None,
 ) -> ActionOutput:
     """Execute one Bash command with writes confined to the requested project."""
