@@ -1,15 +1,15 @@
 project_owner_agent:
-  active_model: "openai"
+  active_model: "qwen"
   models:
-    openai:
-      name: "your-model-name"
-      base_url: "https://api.openai.com/v1"
-      api_key_env: "OPENAI_API_KEY"
+    qwen:
+      name: "qwen3.7-max-preview"
+      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      api_key_env: "DASHSCOPE_API_KEY"
       http_headers: {}
       reasoning_effort: "high"
       service_tier: null
       timeout_seconds: 60.0
-  step_limit: 20
+  step_limit: 200
   max_consecutive_format_errors: 3
   context_memory:
     capacity_tokens: 128000
@@ -203,12 +203,12 @@ runtime:
         only a JSON object containing one short summary field.
   bash:
     timeout_seconds: 30.0
-    output_limit: 65536
+    output_limit: 10000
   codex:
     executable: null
     model: null
     network_access: true
-    timeout_seconds: 600.0
+    timeout_seconds: 1800.0
     response_limit: 65536
     artifact_limit: 262144
   agents:
