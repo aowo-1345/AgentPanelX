@@ -128,6 +128,63 @@
     @apply bg-black/75 backdrop-blur-sm;
   }
 
+  .chat-markdown {
+    @apply whitespace-pre-wrap break-words;
+  }
+
+  .chat-markdown > :first-child {
+    @apply mt-0;
+  }
+
+  .chat-markdown > :last-child {
+    @apply mb-0;
+  }
+
+  .chat-markdown p {
+    @apply my-2;
+  }
+
+  .chat-markdown strong {
+    @apply font-semibold text-foreground;
+  }
+
+  .chat-markdown a {
+    @apply text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary;
+  }
+
+  .chat-markdown ul {
+    @apply my-2 list-disc space-y-1 pl-5;
+  }
+
+  .chat-markdown ol {
+    @apply my-2 list-decimal space-y-1 pl-5;
+  }
+
+  .chat-markdown li > ul,
+  .chat-markdown li > ol {
+    @apply my-1;
+  }
+
+  .chat-markdown blockquote {
+    @apply my-2 border-l-2 border-primary/40 pl-3 text-muted-foreground;
+  }
+
+  .chat-markdown code {
+    @apply rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-blue-200;
+  }
+
+  .chat-markdown pre {
+    @apply my-2 max-w-full overflow-x-auto whitespace-pre rounded-md border border-border bg-background p-3 text-xs leading-5;
+  }
+
+  .chat-markdown pre code {
+    @apply bg-transparent p-0 text-inherit;
+  }
+
+  .chat-markdown hr {
+    @apply my-3 border-border;
+  }
+
   .markdown-document {
     @apply text-sm leading-7 text-foreground/90;
   }

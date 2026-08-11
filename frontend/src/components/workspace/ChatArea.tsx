@@ -11,6 +11,8 @@ import {
   User,
 } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type {
   ConversationMessage,
   FeatureAction,
@@ -36,6 +38,27 @@ interface ChatAreaProps {
   onAction: (action: FeatureAction, feedback?: string) => Promise<void>;
   readOnly?: boolean;
   readOnlyLabel?: string;
+}
+
+function OwnerMessage({ content }: { content: string }) {
+  return (
+    <div className="chat-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a({ children, ...props }) {
+            return (
+              <a {...props} target="_blank" rel="noreferrer">
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 function MessageBubble({ message }: { message: ConversationMessage }) {
@@ -66,13 +89,13 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
           {user ? 'You' : 'Project Owner'}
         </div>
         <div
-          className={`whitespace-pre-wrap rounded-lg border px-3 py-2 text-sm leading-relaxed ${
+          className={`rounded-lg border px-3 py-2 text-sm leading-relaxed ${
             user
-              ? 'rounded-tr-sm border-primary/25 bg-primary/15'
+              ? 'whitespace-pre-wrap rounded-tr-sm border-primary/25 bg-primary/15'
               : 'rounded-tl-sm border-border bg-card'
           }`}
         >
-          {message.content}
+          {user ? message.content : <OwnerMessage content={message.content} />}
         </div>
       </div>
       {user && (
