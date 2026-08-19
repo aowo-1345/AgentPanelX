@@ -306,7 +306,7 @@ def _approve_current_plan(
     commit_sha = approval["result"]["plan_commit_sha"]
     assert isinstance(commit_sha, str)
 
-    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
     drive_code = debug_tool_cli.main(
         ["--cwd", str(project_path), "--print", "drive"]
     )
@@ -425,7 +425,7 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
 ) -> None:
     project_path = initialize_git_project()
     _write_specs(project_path)
-    monkeypatch.setattr(project_owner_service, "JBBModel", _PlanRequestingModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _PlanRequestingModel)
 
     submit_result = debug_tool_cli.main(
         [
@@ -525,7 +525,7 @@ def test_executes_project_bound_action_without_constructing_a_model(
         def __init__(self, **_kwargs: object) -> None:
             raise AssertionError("tool debug entry must not construct a model")
 
-    monkeypatch.setattr(project_owner_service, "JBBModel", _UnexpectedModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _UnexpectedModel)
 
     result = debug_tool_cli.main(
         [
@@ -644,7 +644,7 @@ def test_tool_driven_delivery_uses_same_activation_without_owner_model(
         def __init__(self, **_kwargs: object) -> None:
             raise AssertionError("Tool-driven activation must not construct a model")
 
-    monkeypatch.setattr(project_owner_service, "JBBModel", _UnexpectedModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _UnexpectedModel)
 
     request_code = debug_tool_cli.main(
         [
@@ -1927,7 +1927,7 @@ def test_request_then_approve_commits_specs_and_queues_owner_activation(
     assert _git(project_path, "rev-parse", "HEAD") == initial_head
 
     _ReplyingModel.queries = []
-    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
     approve_result = debug_tool_cli.main(
         ["--cwd", str(project_path), "--print", "approve"]
     )
@@ -2013,7 +2013,7 @@ def test_request_then_reject_does_not_commit_and_queues_owner_activation(
     )
     capfd.readouterr()
 
-    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
     reject_result = debug_tool_cli.main(
         [
             "--cwd",
@@ -2076,7 +2076,7 @@ def test_plain_text_submits_then_drives_a_restart_safe_user_activation(
 ) -> None:
     project_path = initialize_git_project()
     _ReplyingModel.queries = []
-    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
 
     result = debug_tool_cli.main(
         ["--cwd", str(project_path), "--print", "please inspect the plan"]

@@ -11,6 +11,8 @@ from typing import ClassVar
 import pytest
 
 from agentplanex.domains import ActionOutput, Message, SummaryHistory
+from agentplanex.infrastructure import openai_responses as openai_responses_module
+from agentplanex.infrastructure.openai_responses import OpenAIResponsesTransport
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
@@ -19,8 +21,10 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteSummaryHistoryRepository,
 )
 from agentplanex.project_owner_agent.exception import ReplyToHuman
-from agentplanex.project_owner_agent.models import jbb as jbb_model_module
-from agentplanex.project_owner_agent.models.jbb import JBBModel
+from agentplanex.project_owner_agent.models.responses import (
+    ProjectOwnerModel,
+    ResponsesClient,
+)
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 from scripts import debug_owner_fork_cli, debug_tool_cli
 
@@ -161,7 +165,7 @@ def test_owner_fork_cli_keeps_two_interrogation_turns_in_memory_only(
     before = _database_snapshot(project_path)
     _WitnessModel.queries = []
     _WitnessModel.constructions = []
-    monkeypatch.setattr(debug_owner_fork_cli, "JBBModel", _WitnessModel)
+    monkeypatch.setattr(debug_owner_fork_cli, "ProjectOwnerModel", _WitnessModel)
     questions = iter(
         (
             "What state did you believe the project was in?",
@@ -202,9 +206,11 @@ def test_owner_fork_cli_keeps_two_interrogation_turns_in_memory_only(
     assert len(_WitnessModel.constructions) == 1
     configured_model = load_settings(DEFAULT_SETTINGS_PATH).project_owner_agent
     construction = _WitnessModel.constructions[0]
-    assert construction["model"] == configured_model.selected_model.name
-    transport = construction["transport"]
-    assert isinstance(transport, jbb_model_module.OpenAIResponsesTransport)
+    responses = construction["responses"]
+    assert isinstance(responses, ResponsesClient)
+    assert responses.model == configured_model.selected_model.name
+    transport = responses.transport
+    assert isinstance(transport, OpenAIResponsesTransport)
     assert transport.base_url == configured_model.selected_model.base_url
     assert transport.api_key_env == configured_model.selected_model.api_key_env
     assert "Historical Project Owner Fork" in str(
@@ -227,7 +233,7 @@ def test_debug_clis_do_not_import_each_other() -> None:
     assert "debug_tool_cli" not in fork_source
 
 
-def test_jbb_model_omits_tool_surface_for_historical_fork(
+def test_project_owner_model_omits_tool_surface_for_historical_fork(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
@@ -253,11 +259,20 @@ def test_jbb_model_omits_tool_surface_for_historical_fork(
         responses = _Responses()
 
     monkeypatch.setattr(
-        jbb_model_module,
+        openai_responses_module,
         "OpenAI",
         lambda **_kwargs: _Client(),
     )
-    model = JBBModel(model="owner-model", tools=None)
+    model = ProjectOwnerModel(
+        tools=None,
+        responses=ResponsesClient(
+            model="owner-model",
+            transport=OpenAIResponsesTransport(
+                base_url="https://api.openai.com/v1",
+                timeout_seconds=60.0,
+            ),
+        ),
+    )
 
     with pytest.raises(ReplyToHuman, match="checkpoint answer"):
         model.query(

@@ -5,13 +5,14 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import ClassVar
+from typing import ClassVar, cast
 
+import httpx
 import pytest
 import yaml
-from openai import omit
+from openai import APIConnectionError, omit
 
-from agentplanex import cli
+from agentplanex import bootstrap, cli
 from agentplanex.domains import (
     ActionOutput,
     AgentExit,
@@ -21,16 +22,16 @@ from agentplanex.domains import (
     SummaryHistory,
 )
 from agentplanex.infrastructure import local_shell as local_shell_module
+from agentplanex.infrastructure import openai_responses as openai_responses_module
+from agentplanex.infrastructure.openai_responses import OpenAIResponsesTransport
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
 )
-from agentplanex.project_owner_agent.exception import ReplyToHuman
-from agentplanex.project_owner_agent.models import jbb as jbb_model_module
-from agentplanex.project_owner_agent.models.jbb import (
-    OpenAIResponsesTransport,
+from agentplanex.project_owner_agent.exception import ModelGatewayError, ReplyToHuman
+from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
 )
 from agentplanex.project_runtime import ProjectRuntime
@@ -70,6 +71,14 @@ class _ReplyingModel:
         outputs: list[ActionOutput],
     ) -> list[Message]:
         raise AssertionError("The replying model does not call tools")
+
+
+class _UnusedResponsesTransport:
+    def create(self, _request: ResponsesRequest) -> object:
+        raise AssertionError("This test replaces the Project Owner model")
+
+
+_UNUSED_RESPONSES_TRANSPORT = _UnusedResponsesTransport()
 
 
 class _BashCallingModel:
@@ -240,7 +249,7 @@ def test_responses_transport_applies_selected_gateway_configuration(
         return _Client()
 
     monkeypatch.setenv("TOOLCODE_API_KEY", "test-secret")
-    monkeypatch.setattr(jbb_model_module, "OpenAI", create_client)
+    monkeypatch.setattr(openai_responses_module, "OpenAI", create_client)
     transport = OpenAIResponsesTransport(
         base_url="https://toolcode.example",
         timeout_seconds=240.0,
@@ -265,6 +274,7 @@ def test_responses_transport_applies_selected_gateway_configuration(
         "api_key": "test-secret",
         "base_url": "https://toolcode.example",
         "timeout": 240.0,
+        "max_retries": 2,
         "default_headers": {
             "x-openai-actor-authorization": "local-image-extension"
         },
@@ -274,6 +284,86 @@ def test_responses_transport_applies_selected_gateway_configuration(
     assert request["model"] == "gpt-5.6-sol"
     assert request["reasoning"] == {"effort": "high"}
     assert request["service_tier"] is omit
+
+
+def test_responses_transport_exposes_final_sdk_failure_as_gateway_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sdk_error = APIConnectionError(
+        request=httpx.Request("POST", "https://toolcode.example/responses")
+    )
+
+    class _Responses:
+        def create(self, **_kwargs: object) -> object:
+            raise sdk_error
+
+    class _Client:
+        responses = _Responses()
+
+    monkeypatch.setenv("TOOLCODE_API_KEY", "test-secret")
+    monkeypatch.setattr(
+        openai_responses_module,
+        "OpenAI",
+        lambda **_kwargs: _Client(),
+    )
+    transport = OpenAIResponsesTransport(
+        base_url="https://toolcode.example",
+        timeout_seconds=60.0,
+        api_key_env="TOOLCODE_API_KEY",
+    )
+
+    with pytest.raises(ModelGatewayError) as raised:
+        transport.create(
+            ResponsesRequest(
+                model="gpt-5.6-sol",
+                instructions="Only reply with ok.",
+                input=({"role": "user", "content": "hello"},),
+                tools=(),
+                tool_choice="none",
+            )
+        )
+
+    assert raised.value.__cause__ is sdk_error
+
+
+def test_workspace_runtimes_share_one_responses_transport(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transports: list[object] = []
+    closed: list[object] = []
+
+    class _Transport:
+        def close(self) -> None:
+            closed.append(self)
+
+    transport = _Transport()
+
+    def create_transport(**_kwargs: object) -> _Transport:
+        return transport
+
+    def create_runtime(**kwargs: object) -> ProjectRuntime:
+        transports.append(kwargs["responses_transport"])
+        return cast(ProjectRuntime, object())
+
+    monkeypatch.setattr(bootstrap, "OpenAIResponsesTransport", create_transport)
+    monkeypatch.setattr(bootstrap, "create_project_runtime", create_runtime)
+    configured = load_settings(DEFAULT_SETTINGS_PATH)
+    settings = configured.model_copy(
+        update={
+            "workspace": configured.workspace.model_copy(
+                update={"data_home": tmp_path}
+            )
+        }
+    )
+
+    workspace = bootstrap.create_workspace(settings)
+    workspace.runtime_factory(tmp_path / "feature-a")
+    workspace.runtime_factory(tmp_path / "feature-b")
+    workspace.close()
+
+    assert transports == [transport, transport]
+    assert closed == [transport]
 
 
 def test_repository_settings_select_a_portable_agentplanex_data_home() -> None:
@@ -505,12 +595,13 @@ def test_runtime_restores_owner_history_across_activations(
 ) -> None:
     _ReplyingModel.constructions = 0
     _ReplyingModel.queries = []
-    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
     project_path = initialize_git_project()
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
 
     runtime.submit_message("first")
@@ -521,6 +612,7 @@ def test_runtime_restores_owner_history_across_activations(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
     restarted_runtime.submit_message("third")
     third_result = restarted_runtime.drive_next_activation()
@@ -554,12 +646,13 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
 ) -> None:
     _ReplyingModel.constructions = 0
     _ReplyingModel.queries = []
-    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
     project_path = initialize_git_project()
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
 
     first_activation = runtime.submit_message("first")
@@ -611,6 +704,7 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
     result = restarted_runtime.drive_next_activation()
 
@@ -653,12 +747,13 @@ def test_activation_rejects_summary_from_another_owner_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _ReplyingModel.queries = []
-    monkeypatch.setattr(project_owner_service, "JBBModel", _ReplyingModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
     project_path = initialize_git_project()
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
     first_activation = runtime.submit_message("first")
     runtime.drive_next_activation()
@@ -713,7 +808,7 @@ def test_runtime_applies_bash_limits(
     output_limit: int,
     expected: str,
 ) -> None:
-    monkeypatch.setattr(project_owner_service, "JBBModel", _BashCallingModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _BashCallingModel)
     project_path = initialize_git_project()
     runtime = ProjectRuntime(
         project_path=project_path,
@@ -722,6 +817,7 @@ def test_runtime_applies_bash_limits(
             bash_output_limit=output_limit,
         ),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
 
     runtime.submit_message(command)
@@ -788,12 +884,13 @@ def test_sandbox_denial_blocks_until_the_user_sends_another_message(
 ) -> None:
     _PolicyAwareBashModel.calls = 0
     _PolicyAwareBashModel.observation = None
-    monkeypatch.setattr(project_owner_service, "JBBModel", _PolicyAwareBashModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _PolicyAwareBashModel)
     project_path = initialize_git_project()
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
 
     with socket.socket() as listener:

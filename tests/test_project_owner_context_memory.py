@@ -16,7 +16,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
 )
-from agentplanex.project_owner_agent.models.jbb import (
+from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
     ResponsesTransport,
 )

@@ -9,7 +9,7 @@ from typing import Protocol, TextIO
 from agentplanex.bootstrap import create_project_runtime
 from agentplanex.domains import AgentExitStatus, OwnerActivation
 from agentplanex.project_owner_agent.approval import ApprovalMode
-from agentplanex.project_owner_agent.exception import JBBModelError
+from agentplanex.project_owner_agent.exception import ModelError
 from agentplanex.services.owner_activation import ActivationDriveResult
 
 type InputReader = Callable[[str], str]
@@ -55,7 +55,7 @@ def _run_once(
     try:
         runtime.submit_message(task)
         driven = runtime.drive_next_activation()
-    except (JBBModelError, ValueError) as error:
+    except (ModelError, ValueError) as error:
         print(str(error), file=error_output)
         return 1
 

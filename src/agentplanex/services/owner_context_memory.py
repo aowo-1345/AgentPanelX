@@ -20,7 +20,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
 )
-from agentplanex.project_owner_agent.models.jbb import JBBResponses
+from agentplanex.project_owner_agent.models.responses import ResponsesClient
 from agentplanex.project_owner_agent.tools import ToolCatalog
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.owner_context import render_summary_messages
@@ -34,7 +34,7 @@ class ProjectOwnerContextMemory:
     database: SQLiteDatabase
     settings: Settings
     tools: ToolCatalog
-    responses: JBBResponses
+    responses: ResponsesClient
     event_bus: EventBus
     owners: SQLiteProjectOwnerAgentRepository = field(
         default_factory=SQLiteProjectOwnerAgentRepository

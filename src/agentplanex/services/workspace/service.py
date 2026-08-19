@@ -27,6 +27,10 @@ from agentplanex.services.workspace.queries import (
 _UNSAFE_SLUG = re.compile(r"[^a-z0-9]+")
 
 
+def _noop() -> None:
+    pass
+
+
 @dataclass(slots=True)
 class WorkspaceService:
     """Locate Feature Runtimes and own every external Workspace command."""
@@ -37,6 +41,7 @@ class WorkspaceService:
     queries: WorkspaceQueries
     dispatcher: WorkspaceDispatcher
     runtime_factory: Callable[[Path], ProjectRuntime]
+    close_resources: Callable[[], None] = _noop
 
     def start(self) -> int:
         """Terminalize interrupted work without driving any old task."""
@@ -48,7 +53,10 @@ class WorkspaceService:
         return failed_features
 
     def close(self) -> None:
-        self.dispatcher.close()
+        try:
+            self.dispatcher.close()
+        finally:
+            self.close_resources()
 
     def register_project(
         self,

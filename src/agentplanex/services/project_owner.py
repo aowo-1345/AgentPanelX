@@ -33,9 +33,9 @@ from agentplanex.project_owner_agent.agent import AgentConfig, DefaultAgent
 from agentplanex.project_owner_agent.approval import ApprovalMode, TerminalApproval
 from agentplanex.project_owner_agent.exception import AgentFlowExit
 from agentplanex.project_owner_agent.interactive import InteractiveAgent
-from agentplanex.project_owner_agent.models.jbb import (
-    JBBModel,
-    JBBResponses,
+from agentplanex.project_owner_agent.models.responses import (
+    ProjectOwnerModel,
+    ResponsesClient,
     format_tool_call_message,
     format_tool_output_message,
 )
@@ -63,7 +63,7 @@ class ProjectOwnerService:
     event_bus: EventBus
     owner_contexts: ProjectOwnerContextQuery
     context_memory: ProjectOwnerContextMemory
-    responses: JBBResponses
+    responses: ResponsesClient
     observation_skill: Path
     prompts: AgentPromptCatalog
     contexts: SQLiteProjectRuntimeContextRepository = field(
@@ -319,14 +319,10 @@ class ProjectOwnerService:
         activation: OwnerActivation,
     ) -> DefaultAgent:
         owner_settings = self.settings.project_owner_agent
-        model_settings = owner_settings.selected_model
         fixed_tools = self.tools.select(owner.tools)
-        model = JBBModel(
-            model=model_settings.name,
+        model = ProjectOwnerModel(
             tools=fixed_tools,
-            base_url=model_settings.base_url,
-            timeout_seconds=model_settings.timeout_seconds,
-            transport=self.responses.transport,
+            responses=self.responses,
         )
         config = AgentConfig(
             system_prompt=system_prompt,

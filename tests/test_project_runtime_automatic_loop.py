@@ -16,7 +16,8 @@ from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteOwnerActivationRepository,
 )
-from agentplanex.project_owner_agent.models.jbb import (
+from agentplanex.project_owner_agent.exception import ModelGatewayError
+from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
     ResponsesTransport,
 )
@@ -36,7 +37,7 @@ class _FailingOwner(ResponsesTransport):
     """A deterministic remote-model adapter that fails outside Agent control flow."""
 
     def create(self, _request: ResponsesRequest) -> object:
-        raise RuntimeError("owner gateway exploded")
+        raise ModelGatewayError("owner gateway exploded")
 
 
 class _UnexpectedOwner(ResponsesTransport):
@@ -253,14 +254,10 @@ def test_drive_until_waiting_blocks_runtime_when_owner_fails(
     assert context.status == "BLOCKED"
     workspace = runtime.project_workspace_view(context.triage_id)
     assert workspace.owner_activation is None
-    failure_messages = [
-        message.content
-        for message in workspace.conversation
-        if message.role == "status"
+    assert [(message.role, message.content) for message in workspace.conversation] == [
+        ("user", "Trigger a deterministic Owner failure."),
+        ("status", "Project Owner failed: ModelGatewayError: owner gateway exploded"),
     ]
-    assert len(failure_messages) == 1
-    assert "Project Owner failed:" in failure_messages[0]
-    assert "owner gateway exploded" in failure_messages[0]
 
 
 @pytest.mark.parametrize(

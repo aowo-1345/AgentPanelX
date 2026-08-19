@@ -71,5 +71,9 @@ class ToolRequestedExit(AgentFlowExit):
         super().__init__(status=agent_exit.status, content=agent_exit.content)
 
 
-class JBBModelError(RuntimeError):
-    """The JBB request or response failed outside model-controlled formatting."""
+class ModelError(RuntimeError):
+    """A model request or response failed outside model-controlled formatting."""
+
+
+class ModelGatewayError(ModelError):
+    """The configured model gateway failed after SDK handling was exhausted."""
