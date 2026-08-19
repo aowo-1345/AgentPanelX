@@ -30,6 +30,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectOwnerAgentRepository,
 )
 from agentplanex.project_owner_agent.exception import ReplyToHuman
+from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import project_owner as project_owner_service
@@ -69,6 +70,14 @@ class _RecordingOwnerModel:
         raise AssertionError("The recording Owner does not call tools")
 
 
+class _UnusedResponsesTransport:
+    def create(self, _request: ResponsesRequest) -> object:
+        raise AssertionError("This test replaces the Project Owner model")
+
+
+_UNUSED_RESPONSES_TRANSPORT = _UnusedResponsesTransport()
+
+
 def _settings(*, owner_prompt: str | None = None) -> Settings:
     configured = load_settings(DEFAULT_SETTINGS_PATH)
     prompts = configured.runtime.prompts
@@ -105,11 +114,12 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
 ) -> None:
     project_path = initialize_git_project()
     _RecordingOwnerModel.queries = []
-    monkeypatch.setattr(project_owner_service, "JBBModel", _RecordingOwnerModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _RecordingOwnerModel)
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
 
     activation = runtime.submit_message("Clarify the current project work.")
@@ -134,19 +144,21 @@ def test_existing_owner_prompt_remains_the_session_contract_after_restart(
 ) -> None:
     project_path = initialize_git_project()
     _RecordingOwnerModel.queries = []
-    monkeypatch.setattr(project_owner_service, "JBBModel", _RecordingOwnerModel)
+    monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _RecordingOwnerModel)
     old_prompt = "Configured Owner prompt before restart."
     current_prompt = "Configured Owner prompt after restart."
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=_settings(owner_prompt=old_prompt),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
     activation = runtime.submit_message("Use the persisted Owner contract.")
     runtime = ProjectRuntime(
         project_path=project_path,
         settings=_settings(owner_prompt=current_prompt),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
@@ -194,6 +206,7 @@ def test_runtime_uses_packaged_observation_skill_independent_of_target_project(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
 
 

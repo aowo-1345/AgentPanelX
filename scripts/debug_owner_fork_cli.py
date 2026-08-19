@@ -14,13 +14,16 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 from const import TARGET_PROJECT  # noqa: E402
 
 from agentplanex.domains import RestoredOwnerContext  # noqa: E402
+from agentplanex.infrastructure.openai_responses import (  # noqa: E402
+    OpenAIResponsesTransport,
+)
 from agentplanex.infrastructure.sqlite import (  # noqa: E402
     SQLiteDatabase,
     verify_schema,
 )
-from agentplanex.project_owner_agent.models.jbb import (  # noqa: E402
-    JBBModel,
-    OpenAIResponsesTransport,
+from agentplanex.project_owner_agent.models.responses import (  # noqa: E402
+    ProjectOwnerModel,
+    ResponsesClient,
 )
 from agentplanex.services.agent_contracts import AgentPromptCatalog  # noqa: E402
 from agentplanex.services.historical_owner import (  # noqa: E402
@@ -64,18 +67,19 @@ def main(
 
     try:
         model_settings = settings.project_owner_agent.selected_model
-        model = JBBModel(
-            model=model_settings.name,
-            tools=None,
+        transport = OpenAIResponsesTransport(
             base_url=model_settings.base_url,
             timeout_seconds=model_settings.timeout_seconds,
-            transport=OpenAIResponsesTransport(
-                base_url=model_settings.base_url,
-                timeout_seconds=model_settings.timeout_seconds,
-                api_key_env=model_settings.api_key_env,
-                http_headers=model_settings.http_headers,
-                reasoning_effort=model_settings.reasoning_effort,
-                service_tier=model_settings.service_tier,
+            api_key_env=model_settings.api_key_env,
+            http_headers=model_settings.http_headers,
+            reasoning_effort=model_settings.reasoning_effort,
+            service_tier=model_settings.service_tier,
+        )
+        model = ProjectOwnerModel(
+            tools=None,
+            responses=ResponsesClient(
+                model=model_settings.name,
+                transport=transport,
             ),
         )
         fork = HistoricalOwnerForkService(contexts, prompts).open(

@@ -15,9 +15,8 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.project_owner_agent.approval import ApprovalMode
-from agentplanex.project_owner_agent.models.jbb import (
-    JBBResponses,
-    OpenAIResponsesTransport,
+from agentplanex.project_owner_agent.models.responses import (
+    ResponsesClient,
     ResponsesTransport,
 )
 from agentplanex.project_runtime.executions import create_project_executions
@@ -61,7 +60,7 @@ class ProjectRuntime:
         project_path: Path,
         settings: Settings,
         approval_mode: ApprovalMode,
-        responses_transport: ResponsesTransport | None = None,
+        responses_transport: ResponsesTransport,
         stage_executor: StageExecutor | None = None,
     ) -> None:
         project_path = project_path.resolve()
@@ -73,19 +72,10 @@ class ProjectRuntime:
         initialize_schema(database)
         event_bus = EventBus((SQLiteTimelineRecorder(database),))
         model_settings = settings.project_owner_agent.selected_model
-        transport = (
-            responses_transport
-            if responses_transport is not None
-            else OpenAIResponsesTransport(
-                base_url=model_settings.base_url,
-                timeout_seconds=model_settings.timeout_seconds,
-                api_key_env=model_settings.api_key_env,
-                http_headers=model_settings.http_headers,
-                reasoning_effort=model_settings.reasoning_effort,
-                service_tier=model_settings.service_tier,
-            )
+        responses = ResponsesClient(
+            model=model_settings.name,
+            transport=responses_transport,
         )
-        responses = JBBResponses(model=model_settings.name, transport=transport)
         runtime_contexts = RuntimeContextService(database, event_bus)
         activations = SQLiteOwnerActivationRepository()
         collaboration = AgentCollaborationService.from_settings(

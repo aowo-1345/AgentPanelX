@@ -16,8 +16,17 @@ import yaml
 from agentplanex.bootstrap import create_workspace
 from agentplanex.domains import FeatureBinding
 from agentplanex.infrastructure.workspace_git import WorkspaceGitError
+from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
+
+
+class _UnusedResponsesTransport:
+    def create(self, _request: ResponsesRequest) -> object:
+        raise AssertionError("Workspace inspection must not call the model gateway")
+
+
+_UNUSED_RESPONSES_TRANSPORT = _UnusedResponsesTransport()
 
 
 def _git(project_path: Path, *arguments: str) -> str:
@@ -382,11 +391,13 @@ def test_installed_cli_runs_two_isolated_features_end_to_end(
         project_path=first_worktree,
         settings=settings,
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
     second_runtime = ProjectRuntime(
         project_path=second_worktree,
         settings=settings,
         approval_mode="yolo",
+        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
     first_view = first_runtime.project_control_view()
     second_view = second_runtime.project_control_view()

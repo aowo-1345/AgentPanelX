@@ -15,7 +15,7 @@ from pydantic import (
 )
 
 DEFAULT_SETTINGS_PATH = Path("config/settings.yaml")
-DEFAULT_JBB_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_WORKSPACE_DATA_HOME = Path(".agentplanex")
 
 
@@ -27,7 +27,7 @@ class ModelSettings(_SettingsModel):
     """Project Owner model connection settings."""
 
     name: str = Field(min_length=1)
-    base_url: str = Field(default=DEFAULT_JBB_BASE_URL, min_length=1)
+    base_url: str = Field(default=DEFAULT_OPENAI_BASE_URL, min_length=1)
     api_key_env: str = Field(default="OPENAI_API_KEY", min_length=1)
     http_headers: dict[str, str] = Field(default_factory=dict)
     reasoning_effort: Literal[
