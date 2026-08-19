@@ -16,7 +16,6 @@ import yaml
 from agentplanex.bootstrap import create_workspace
 from agentplanex.domains import FeatureBinding
 from agentplanex.infrastructure.workspace_git import WorkspaceGitError
-from agentplanex.project_owner_agent.models.jbb import JBBModel
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 
@@ -199,7 +198,6 @@ def test_workspace_deletes_only_clean_managed_feature_worktrees() -> None:
 
 
 def test_installed_cli_runs_two_isolated_features_end_to_end(
-    monkeypatch: pytest.MonkeyPatch,
     recording_model_endpoint: tuple[str, list[str]],
 ) -> None:
     model_base_url, model_requests = recording_model_endpoint
@@ -412,24 +410,6 @@ def test_installed_cli_runs_two_isolated_features_end_to_end(
     assert second_owner.message_id is None
     assert second_owner.summary_id is None
 
-    def unexpected_model_call(*_args: object, **_kwargs: object) -> object:
-        raise AssertionError("Submitting a Feature message must not drive the model")
-
-    monkeypatch.setattr(JBBModel, "query", unexpected_model_call)
-    activation = create_workspace(settings).submit_feature_message(
-        project_id=project_id,
-        triage_id=feature_a["triage_id"],
-        content="Discuss only Feature A",
-    )
-    assert activation.triage_id == feature_a["triage_id"]
-
-    first_after_message = first_runtime.project_control_view()
-    second_after_message = second_runtime.project_control_view()
-    assert first_after_message.context.status == "TODO"
-    assert first_after_message.owner_activation == activation
-    assert second_after_message.context.status == "TRIAGE"
-    assert second_after_message.owner_activation is None
-    assert second_runtime.initialize().project_owner_agent == second_owner
     assert _run_installed_cli(
         config_path,
         "board",

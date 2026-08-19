@@ -203,6 +203,7 @@ class WorkspaceSettings(_SettingsModel):
     """User-level Registry and long-lived Feature worktree location."""
 
     data_home: Path = DEFAULT_WORKSPACE_DATA_HOME
+    max_parallel_features: int = Field(default=4, ge=1)
 
     @field_validator("data_home")
     @classmethod

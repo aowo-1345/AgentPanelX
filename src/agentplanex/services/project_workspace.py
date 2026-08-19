@@ -138,7 +138,7 @@ class ProjectWorkspaceQuery:
         )
 
     def _context(self, triage_id: str) -> ProjectRuntimeContext:
-        with self.database.connection() as connection:
+        with self.database.read_only_connection() as connection:
             context = self.contexts.get(connection, triage_id)
         if context is None:
             raise LookupError(f"Project Runtime Context not found: {triage_id}")
@@ -149,7 +149,7 @@ class ProjectWorkspaceQuery:
         triage_id: str,
     ) -> tuple[OwnerActivation | None, StageRun | None, str | None]:
         try:
-            with self.database.connection() as connection:
+            with self.database.read_only_connection() as connection:
                 return (
                     self.activations.get_unfinished(connection, triage_id),
                     self.stage_runs.get_active(connection, triage_id),
@@ -165,7 +165,7 @@ class ProjectWorkspaceQuery:
         if context.current_snapshot_id is None:
             return None, None
         try:
-            with self.database.connection() as connection:
+            with self.database.read_only_connection() as connection:
                 snapshot = self.snapshots.get(connection, context.current_snapshot_id)
             if snapshot is None:
                 raise LookupError(f"Milestone Snapshot not found: {context.current_snapshot_id}")
@@ -178,7 +178,7 @@ class ProjectWorkspaceQuery:
         triage_id: str,
     ) -> tuple[tuple[ExecutionEvent, ...], str | None]:
         try:
-            with self.database.connection() as connection:
+            with self.database.read_only_connection() as connection:
                 events = self.events.list_by_triage_id(connection, triage_id)
             return events[-self.history_limit :], None
         except (sqlite3.Error, ValueError) as error:
@@ -190,7 +190,7 @@ class ProjectWorkspaceQuery:
         activation: OwnerActivation | None,
     ) -> tuple[tuple[VisibleMessage, ...], str | None, bool]:
         try:
-            with self.database.connection() as connection:
+            with self.database.read_only_connection() as connection:
                 owner = self.owners.get_by_triage_id(connection, triage_id)
                 if owner is None:
                     return (), None, False

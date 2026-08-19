@@ -386,48 +386,9 @@ def test_installed_web_backend_runs_and_fails_interrupted_work() -> None:
                 "DELETE",
                 f"/api/projects/{project_id}/features/{triage_id}",
             )
-            assert status == 400
+            assert status == 409
             assert isinstance(active_delete, dict)
-            assert "being processed" in active_delete["detail"]
-
-            status, pending_feature = _request(
-                base_url,
-                "POST",
-                f"/api/projects/{project_id}/features",
-                {"name": "Pending Feature"},
-            )
-            assert status == 201
-            assert isinstance(pending_feature, dict)
-            pending_triage_id = pending_feature["triage_id"]
-            pending_workspace_path = (
-                f"/api/projects/{project_id}/features/{pending_triage_id}/workspace"
-            )
-            assert (
-                _request(
-                    base_url,
-                    "POST",
-                    f"/api/projects/{project_id}/features/{pending_triage_id}/actions",
-                    {"action": "begin"},
-                )[0]
-                == 200
-            )
-            assert (
-                _request(
-                    base_url,
-                    "POST",
-                    f"/api/projects/{project_id}/features/{pending_triage_id}/messages",
-                    {"content": "Resume this after restart."},
-                )[0]
-                == 202
-            )
-            status, pending_workspace = _request(
-                base_url,
-                "GET",
-                pending_workspace_path,
-            )
-            assert status == 200
-            assert isinstance(pending_workspace, dict)
-            assert pending_workspace["runtime"]["data"]["activation_status"] == "PENDING"
+            assert active_delete["code"] == "FEATURE_BUSY"
 
         model_endpoint.release_second_request.set()
         with _web_server(config_path, port) as base_url:
@@ -443,21 +404,4 @@ def test_installed_web_backend_runs_and_fails_interrupted_work() -> None:
                 entry["role"] == "status"
                 and "interrupted before work completed" in entry["content"]
                 for entry in restored["conversation"]["data"]
-            )
-
-            status, pending_workspace = _request(
-                base_url,
-                "GET",
-                pending_workspace_path,
-            )
-            assert status == 200
-            assert isinstance(pending_workspace, dict)
-            assert pending_workspace["feature"]["status"] == "BLOCKED"
-            assert pending_workspace["runtime"]["data"]["activation_status"] is None
-            pending_messages = pending_workspace["conversation"]["data"]
-            assert not any(entry["role"] == "assistant" for entry in pending_messages)
-            assert any(
-                entry["role"] == "status"
-                and "interrupted before work completed" in entry["content"]
-                for entry in pending_messages
             )

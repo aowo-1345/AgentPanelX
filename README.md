@@ -65,7 +65,8 @@ flowchart TB
 
     subgraph APX[AgentPanelX]
         API[FastAPI Workspace API]
-        Worker[Workspace Worker]
+        Workspace[Workspace Service]
+        Dispatcher[Bounded Feature Dispatcher]
         Runtime[Project Runtime]
         Owner[Project Owner Agent]
         Collaboration[Planner / Reviewer Collaboration]
@@ -84,9 +85,10 @@ flowchart TB
     Browser <-->|commands + polling| API
     External --> Skills
     Skills <-->|read / bounded commands| Runtime
-    API --> Worker
-    API --> Projection
-    Worker --> Runtime
+    API --> Workspace
+    Workspace --> Dispatcher
+    Workspace --> Projection
+    Dispatcher --> Runtime
     Runtime --> Owner
     Runtime --> Collaboration
     Runtime --> Delivery
@@ -149,7 +151,7 @@ React Web Console
       │ same-origin /api + silent polling
 FastAPI Workspace API
       │
-WorkspaceService ── WorkspaceWorker
+WorkspaceService ── WorkspaceDispatcher
       │
 Feature ProjectRuntime
       ├── Project Owner / Planning / Delivery
@@ -158,7 +160,7 @@ Feature ProjectRuntime
       └── project-local SQLite / Messages / Snapshots / Stage runs
 ```
 
-Each Feature owns a managed worktree and a project-local SQLite runtime. Git and filesystem effects remain separated from business decisions; Plan and Milestone gates validate exact subjects; the EventBus records execution facts without becoming a second source of truth.
+Each Feature owns a managed worktree and a project-local SQLite runtime. The Dispatcher runs different Features concurrently up to the configured limit while keeping each Feature exclusive; it does not maintain a retry queue or resume interrupted work on startup. Git and filesystem effects remain separated from business decisions; Plan and Milestone gates validate exact subjects; the EventBus records execution facts without becoming a second source of truth.
 
 Read [Architecture](docs/architecture.md) for component boundaries, message sequencing, delivery contracts, polling projections, and BLOCKED attribution.
 

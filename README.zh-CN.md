@@ -65,7 +65,8 @@ flowchart TB
 
     subgraph APX[AgentPanelX]
         API[FastAPI Workspace API]
-        Worker[Workspace Worker]
+        Workspace[Workspace Service]
+        Dispatcher[有界 Feature Dispatcher]
         Runtime[Project Runtime]
         Owner[Project Owner Agent]
         Collaboration[Planner / Reviewer Collaboration]
@@ -84,9 +85,10 @@ flowchart TB
     Browser <-->|commands + polling| API
     External --> Skills
     Skills <-->|read / bounded commands| Runtime
-    API --> Worker
-    API --> Projection
-    Worker --> Runtime
+    API --> Workspace
+    Workspace --> Dispatcher
+    Workspace --> Projection
+    Dispatcher --> Runtime
     Runtime --> Owner
     Runtime --> Collaboration
     Runtime --> Delivery
@@ -149,7 +151,7 @@ React Web Console
       │ same-origin /api + silent polling
 FastAPI Workspace API
       │
-WorkspaceService ── WorkspaceWorker
+WorkspaceService ── WorkspaceDispatcher
       │
 Feature ProjectRuntime
       ├── Project Owner / Planning / Delivery
@@ -158,7 +160,7 @@ Feature ProjectRuntime
       └── project-local SQLite / Messages / Snapshots / Stage runs
 ```
 
-每个 Feature 绑定一个 managed worktree 和项目本地 SQLite Runtime。Git 与文件系统副作用和业务决策保持分层；Plan 与 Milestone Gate 校验精确 subject；EventBus 记录执行事实，但不成为第二份状态来源。
+每个 Feature 绑定一个 managed worktree 和项目本地 SQLite Runtime。Dispatcher 在配置上限内并行执行不同 Feature，同时保证单个 Feature 互斥；它不维护等待队列，启动时也不自动续跑中断工作。Git 与文件系统副作用和业务决策保持分层；Plan 与 Milestone Gate 校验精确 subject；EventBus 记录执行事实，但不成为第二份状态来源。
 
 组件边界、消息时序、交付 Contract、轮询投影与 BLOCKED 归因路径见[系统架构](docs/architecture.md)。
 

@@ -3,7 +3,6 @@
 from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.delivery import DeliveryService
 from agentplanex.services.event_bus import EventBus
-from agentplanex.services.feature_runtime_context import FeatureRuntimeContextQuery
 from agentplanex.services.historical_owner import HistoricalOwnerForkService
 from agentplanex.services.owner_activation import (
     ActivationDriveResult,
@@ -18,15 +17,12 @@ from agentplanex.services.project_runtime import (
     ToolActivationDriveResult,
 )
 from agentplanex.services.runtime_context import RuntimeContextService
-from agentplanex.services.workspace import WorkspaceService
-from agentplanex.services.workspace_board import WorkspaceBoardQuery
 
 __all__ = [
     "ActivationDriveResult",
     "AgentCollaborationService",
     "DeliveryService",
     "EventBus",
-    "FeatureRuntimeContextQuery",
     "HistoricalOwnerForkService",
     "OwnerActivationDriver",
     "PlanningService",
@@ -37,6 +33,4 @@ __all__ = [
     "ProjectRuntimeService",
     "RuntimeContextService",
     "ToolActivationDriveResult",
-    "WorkspaceBoardQuery",
-    "WorkspaceService",
 ]

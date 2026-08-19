@@ -12,7 +12,7 @@ from agentplanex.domains import (
     ManagedProject,
     OwnerActivation,
 )
-from agentplanex.services.workspace import FeatureWorkspace
+from agentplanex.services.workspace.queries import FeatureWorkspaceView
 
 
 class Schema(BaseModel):
@@ -213,46 +213,46 @@ def activation_response(activation: OwnerActivation) -> ActivationResponse:
     )
 
 
-def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
-    control = workspace.control
-    context = control.context
+def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
+    runtime_view = workspace.runtime_view
+    context = runtime_view.context
     feature = WorkspaceFeatureResponse(
         project_id=workspace.project.project_id,
         project_name=workspace.project.name,
         triage_id=workspace.binding.triage_id,
         name=workspace.binding.name,
         status=context.status,
-        branch=control.git_branch or context.git_branch,
+        branch=runtime_view.git_branch or context.git_branch,
         pending_action=context.pending_action,
         current_milestone_key=context.current_milestone_key,
         current_stage_key=context.current_stage_key,
         worktree_path=str(workspace.binding.worktree_path),
     )
-    snapshot = control.snapshot
+    snapshot = runtime_view.snapshot
     return WorkspaceResponse(
         project=project_response(workspace.project),
         feature=feature,
-        available_actions=list(control.available_actions),
+        available_actions=list(runtime_view.available_actions),
         runtime=Panel(
             data=(
                 RuntimeData(
                     status=context.status,
                     pending_action=context.pending_action,
                     activation_status=(
-                        control.owner_activation.status.value
-                        if control.owner_activation is not None
+                        runtime_view.owner_activation.status.value
+                        if runtime_view.owner_activation is not None
                         else None
                     ),
-                    activation_has_reply=control.activation_has_reply,
+                    activation_has_reply=runtime_view.activation_has_reply,
                     current_milestone_key=context.current_milestone_key,
                     current_stage_key=context.current_stage_key,
                     blocked_reason=context.blocked_reason,
                     blocked_capability=context.blocked_capability,
                 )
-                if control.runtime_error is None
+                if runtime_view.runtime_error is None
                 else None
             ),
-            error=control.runtime_error,
+            error=runtime_view.runtime_error,
         ),
         conversation=Panel(
             data=(
@@ -272,27 +272,27 @@ def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
                             else None
                         ),
                     )
-                    for message in control.conversation
+                    for message in runtime_view.conversation
                 ]
-                if control.conversation_error is None
+                if runtime_view.conversation_error is None
                 else None
             ),
-            error=control.conversation_error,
+            error=runtime_view.conversation_error,
         ),
         plan=Panel(
             data=(
                 PlanData(
                     documents=[
                         PlanDocumentData(name=item.name, content=item.content)
-                        for item in control.plan_documents
+                        for item in runtime_view.plan_documents
                     ],
                     pending_subject_digest=context.pending_plan_subject_digest,
                     current_commit_sha=context.current_plan_commit_sha,
                 )
-                if control.plan_error is None
+                if runtime_view.plan_error is None
                 else None
             ),
-            error=control.plan_error,
+            error=runtime_view.plan_error,
         ),
         milestones=Panel(
             data=(
@@ -315,10 +315,10 @@ def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
                         else []
                     ),
                 )
-                if control.milestones_error is None
+                if runtime_view.milestones_error is None
                 else None
             ),
-            error=control.milestones_error,
+            error=runtime_view.milestones_error,
         ),
         timeline=Panel(
             data=(
@@ -329,19 +329,20 @@ def workspace_response(workspace: FeatureWorkspace) -> WorkspaceResponse:
                         created_at=event.created_at,
                         payload=event.payload,
                     )
-                    for event in control.timeline
+                    for event in runtime_view.timeline
                 ]
-                if control.timeline_error is None
+                if runtime_view.timeline_error is None
                 else None
             ),
-            error=control.timeline_error,
+            error=runtime_view.timeline_error,
         ),
         git=Panel(
             data=(
-                GitData(branch=control.git_branch, head=control.git_head)
-                if control.git_branch is not None and control.git_head is not None
+                GitData(branch=runtime_view.git_branch, head=runtime_view.git_head)
+                if runtime_view.git_branch is not None
+                and runtime_view.git_head is not None
                 else None
             ),
-            error=control.git_error,
+            error=runtime_view.git_error,
         ),
     )

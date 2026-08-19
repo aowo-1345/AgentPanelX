@@ -6,14 +6,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from agentplanex.bootstrap import create_workspace
-from agentplanex.domains import ManagedProject
-from agentplanex.services.workspace import WorkspaceService
-from agentplanex.services.workspace_worker import WorkspaceWorker
+from agentplanex.domains import FeatureAction, ManagedProject
+from agentplanex.services.workspace.service import WorkspaceService
 from agentplanex.settings import Settings, load_settings
 from agentplanex.web.errors import install_error_handlers
 from agentplanex.web.schemas import (
@@ -36,15 +35,14 @@ from agentplanex.web.schemas import (
 
 def create_app(settings: Settings, *, frontend_dist: Path | None = None) -> FastAPI:
     workspace = create_workspace(settings)
-    worker = WorkspaceWorker(workspace)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        worker.start()
+        workspace.start()
         try:
             yield
         finally:
-            worker.close()
+            workspace.close()
 
     app = FastAPI(title="AgentPlaneX", lifespan=lifespan)
     app.add_middleware(
@@ -54,7 +52,7 @@ def create_app(settings: Settings, *, frontend_dist: Path | None = None) -> Fast
         allow_headers=["*"],
     )
     install_error_handlers(app)
-    _install_routes(app, workspace, worker)
+    _install_routes(app, workspace)
     if frontend_dist is not None:
         _install_frontend(app, frontend_dist)
     return app
@@ -63,7 +61,6 @@ def create_app(settings: Settings, *, frontend_dist: Path | None = None) -> Fast
 def _install_routes(
     app: FastAPI,
     workspace: WorkspaceService,
-    worker: WorkspaceWorker,
 ) -> None:
     def project_with_version(project: ManagedProject) -> ProjectResponse:
         return project_response(
@@ -148,7 +145,6 @@ def _install_routes(
             triage_id=triage_id,
             content=request.content,
         )
-        worker.notify()
         return activation_response(activation)
 
     @app.post(
@@ -159,6 +155,7 @@ def _install_routes(
         project_id: str,
         triage_id: str,
         request: ActionRequest,
+        response: Response,
     ) -> WorkspaceResponse:
         result = workspace.perform_feature_action(
             project_id=project_id,
@@ -166,7 +163,8 @@ def _install_routes(
             action=request.action,
             feedback=request.feedback or "",
         )
-        worker.notify()
+        if request.action is not FeatureAction.BEGIN:
+            response.status_code = status.HTTP_202_ACCEPTED
         return workspace_response(result)
 
 

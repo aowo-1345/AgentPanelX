@@ -15,19 +15,29 @@ from agentplanex.domains import (
     ProjectBoard,
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGitError
-from agentplanex.services import WorkspaceService
+from agentplanex.services.workspace.errors import WorkspaceSchedulingError
+from agentplanex.services.workspace.service import WorkspaceService
 from agentplanex.settings import load_settings
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Execute one Project or Feature command against the configured Workspace."""
     args = _parser().parse_args(argv)
+    workspace: WorkspaceService | None = None
     try:
         workspace = create_workspace(load_settings(args.config))
         result = _dispatch(workspace, args)
-    except (LookupError, ValueError, WorkspaceGitError) as error:
+    except (
+        LookupError,
+        ValueError,
+        WorkspaceGitError,
+        WorkspaceSchedulingError,
+    ) as error:
         print(str(error), file=sys.stderr)
         return 1
+    finally:
+        if workspace is not None:
+            workspace.close()
     print(json.dumps(result, ensure_ascii=False), file=sys.stdout)
     return 0
 

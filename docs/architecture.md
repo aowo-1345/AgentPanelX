@@ -22,7 +22,8 @@ flowchart TB
 
     subgraph APX[AgentPanelX]
         API[FastAPI Workspace API]
-        Worker[Workspace Worker]
+        Workspace[Workspace Service]
+        Dispatcher[Bounded Feature Dispatcher]
         Runtime[Project Runtime]
         Owner[Project Owner Agent]
         Collaboration[Planner / Reviewer Collaboration]
@@ -41,9 +42,10 @@ flowchart TB
     Browser <-->|commands + polling| API
     External --> Skills
     Skills <-->|read / bounded commands| Runtime
-    API --> Worker
-    API --> Projection
-    Worker --> Runtime
+    API --> Workspace
+    Workspace --> Dispatcher
+    Workspace --> Projection
+    Dispatcher --> Runtime
     Runtime --> Owner
     Runtime --> Collaboration
     Runtime --> Delivery
@@ -72,7 +74,8 @@ flowchart TB
 
     subgraph Application[Application Services]
         WorkspaceService[Workspace Service]
-        WorkspaceWorker[Workspace Worker]
+        WorkspaceDispatcher[Workspace Dispatcher]
+        WorkspaceQueries[Workspace Queries]
         ProjectRuntime[Project Runtime Service]
         ControlQuery[Project Control Query]
     end
@@ -104,8 +107,9 @@ flowchart TB
     end
 
     Interface --> Application
-    WorkspaceService --> ProjectRuntime
-    WorkspaceWorker --> ProjectRuntime
+    WorkspaceService --> WorkspaceDispatcher
+    WorkspaceService --> WorkspaceQueries
+    WorkspaceDispatcher --> ProjectRuntime
     ProjectRuntime --> Orchestration
     ControlQuery --> Domain
     Orchestration --> Domain
@@ -119,11 +123,18 @@ flowchart TB
 
 ### Workspace Service
 
-`WorkspaceService` 管理公开的项目级操作：注册仓库、创建 Feature worktree、读取 Board、组合 Workspace、提交消息、批准或拒绝 Plan、开始和继续 Delivery。它负责把 Web 命令映射为 Project Runtime 的显式方法，不在路由层隐藏业务状态转换。
+`WorkspaceService` 是 Web 与 CLI 唯一调用的 Workspace 接口。它根据
+`project_id + triage_id` 找到 Feature binding 和对应 `ProjectRuntime`，把公开命令
+映射为 Runtime 的显式方法。`WorkspaceQueries` 只组合 Registry、Feature SQLite 与
+Git 事实，不构造 Runtime 或模型，也不触发执行。
 
-### Workspace Worker
+### Workspace Dispatcher
 
-`WorkspaceWorker` 是单一后台推进器。API 接受命令后只唤醒 Worker；Worker 串行消费所有可自动推进的 Owner Activation 和 Delivery step，避免多个后台线程同时改变同一 Feature。进程启动时，它会先把所有 Feature 遗留的 Activation 和 StageRun 归并为 `FAILED + BLOCKED`，不会自动续跑中断前的工作。
+`WorkspaceDispatcher` 不扫描数据库，也不维护等待队列。它只在 Message、Plan 决策
+或首次 Delivery 请求到达时执行并发准入：同一 Feature 互斥，不同 Feature 最多按
+`workspace.max_parallel_features` 有界并行。准入成功后先持久化命令，再在后台调用该
+Feature 的 `ProjectRuntime.drive_until_waiting()`；容量已满或 Feature 正忙时，在持久化
+前立即拒绝。`begin-feature` 与删除只使用同 Feature 排他门，不占全局自动执行槽。
 
 ### Project Runtime Service
 
@@ -193,8 +204,9 @@ sequenceDiagram
     participant Web as Web Console
     participant API as Workspace API
     participant WS as Workspace Service
+    participant Dispatcher as Workspace Dispatcher
+    participant Runtime as Feature Project Runtime
     participant DB as SQLite
-    participant Worker as Workspace Worker
     participant Driver as Activation Driver
     participant Owner as Project Owner
     participant Tool as Runtime Tool
@@ -202,11 +214,15 @@ sequenceDiagram
     User->>Web: 描述交付目标
     Web->>API: POST feature message
     API->>WS: submit_feature_message
-    WS->>DB: Message + PENDING Activation
-    DB-->>WS: activation_id
+    WS->>Dispatcher: admit feature execution
+    Dispatcher->>Runtime: submit_message
+    Runtime->>DB: Message + PENDING Activation
+    DB-->>Runtime: activation_id
+    Runtime-->>Dispatcher: durable Activation
+    Dispatcher->>Runtime: schedule drive_until_waiting
+    Dispatcher-->>WS: Activation
     WS-->>Web: 202 Accepted
-    WS->>Worker: notify
-    Worker->>Driver: drive_next_activation
+    Runtime->>Driver: drive_next_activation
     Driver->>DB: claim PENDING -> RUNNING
     Driver->>Owner: restore context and run ReAct loop
     loop Tool-driven reasoning
@@ -222,7 +238,10 @@ sequenceDiagram
     end
 ```
 
-API 先返回 durable receipt，不等待模型完成。Activation 的 `PENDING → RUNNING → terminal` 状态独立持久化，因此网页可以同时呈现 Owner 正在运行、具体 Tool step、最终回复或失败原因。若 Web 进程在 Activation 运行中退出，重启恢复会将遗留运行标记为明确失败，避免永远停留在 `RUNNING`。
+API 在命令已持久化且后台执行已提交后返回 durable receipt，不等待模型完成。
+Activation 的 `PENDING → RUNNING → terminal` 状态独立持久化，因此网页可以同时
+呈现 Owner 正在运行、具体 Tool step、最终回复或失败原因。若 Web 进程中断，下一次
+启动只把遗留未完成的 Activation 或 StageRun 归并为 `FAILED + BLOCKED`，不自动续跑。
 
 ## 6. 核心链路二：滚动规划与 Hard Gate
 
@@ -430,7 +449,8 @@ flowchart LR
 
 ## 12. 并发、恢复与安全边界
 
-- **串行机器推进：** 一个 Workspace Worker 依次消费自动步骤；Project Runtime 同时拒绝冲突的 Owner 与 Delivery 命令。
+- **有界 Feature 并行：** Dispatcher 默认允许 4 个不同 Feature 自动执行；同一 Feature 始终互斥，满载请求立即拒绝且不进入队列。
+- **定向执行：** 只有新接受的用户命令会驱动其目标 Feature；启动时不扫描并自动执行旧任务。
 - **Durable Activation：** Message 与 Activation 原子创建；重启后不保留无法证明仍在执行的 `RUNNING` 状态。
 - **Durable Stage：** Stage claim、输出 commit、Candidate ref 与完成状态分别持久化，允许在边界处恢复。
 - **隔离工作区：** Feature、Reviewer 和 Stage 使用独立 worktree 或 workspace，降低并行 Agent 相互覆盖的风险。
@@ -444,8 +464,8 @@ flowchart LR
 | 关注点 | 入口 |
 | --- | --- |
 | FastAPI 与 SPA host | `src/agentplanex/web/app.py` |
-| Workspace commands 与 projection | `src/agentplanex/services/workspace.py`, `workspace_board.py`, `project_workspace.py` |
-| 后台推进器 | `src/agentplanex/services/workspace_worker.py` |
+| Workspace commands 与准入 | `src/agentplanex/services/workspace/service.py`, `dispatcher.py` |
+| Workspace read projection | `src/agentplanex/services/workspace/queries.py`, `services/project_workspace.py` |
 | Project Runtime 协调 | `src/agentplanex/services/project_runtime.py` |
 | Project Owner 与 Activation | `src/agentplanex/services/project_owner.py`, `owner_activation.py` |
 | Context Memory / Rolling Summary | `src/agentplanex/services/owner_context_memory.py`, `owner_context.py` |

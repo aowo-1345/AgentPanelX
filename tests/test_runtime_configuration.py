@@ -281,6 +281,7 @@ def test_repository_settings_select_a_portable_agentplanex_data_home() -> None:
 
     assert settings.workspace.data_home == DEFAULT_WORKSPACE_DATA_HOME
     assert settings.workspace.data_home == Path(".agentplanex")
+    assert settings.workspace.max_parallel_features == 4
 
 
 def test_repository_settings_select_a_declared_model_without_embedded_credentials(

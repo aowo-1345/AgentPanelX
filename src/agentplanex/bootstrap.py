@@ -6,11 +6,9 @@ from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_runtime import ProjectRuntime
-from agentplanex.services import (
-    FeatureRuntimeContextQuery,
-    WorkspaceBoardQuery,
-    WorkspaceService,
-)
+from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
+from agentplanex.services.workspace.queries import WorkspaceQueries
+from agentplanex.services.workspace.service import WorkspaceService
 from agentplanex.settings import Settings, load_settings
 
 
@@ -33,17 +31,14 @@ def create_workspace(settings: Settings) -> WorkspaceService:
     registry = WorkspaceRegistry.at(settings.workspace.data_home / "registry.sqlite3")
     registry.initialize()
     git = WorkspaceGit()
-    runtime_contexts = FeatureRuntimeContextQuery()
     return WorkspaceService(
         data_home=settings.workspace.data_home,
         registry=registry,
         git=git,
-        board_query=WorkspaceBoardQuery(
-            registry=registry,
-            git=git,
-            runtime_contexts=runtime_contexts,
+        queries=WorkspaceQueries(registry=registry, git=git),
+        dispatcher=WorkspaceDispatcher(
+            max_parallel_features=settings.workspace.max_parallel_features
         ),
-        runtime_contexts=runtime_contexts,
         runtime_factory=lambda project_path: create_project_runtime(
             project_path=project_path,
             approval_mode="yolo",
