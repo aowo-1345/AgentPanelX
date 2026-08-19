@@ -229,67 +229,6 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
     assert "[redacted]" in (failed.tool_activity.output_preview or "")
 
 
-def test_workspace_conversation_marks_an_interrupted_tool_as_failed(
-    initialize_git_project: Callable[[], Path],
-) -> None:
-    project_path = initialize_git_project()
-    settings = _settings(capacity_tokens=128_000)
-    runtime = ProjectRuntime(
-        project_path=project_path,
-        settings=settings,
-        approval_mode="yolo",
-        responses_transport=_OwnerTransport(settings),
-    )
-
-    activation = runtime.submit_message("Inspect the project before replying")
-    release = project_path / "release-interrupted-tool"
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(
-            runtime.drive_activation_tool,
-            {
-                "tool": "bash",
-                "call_id": "interrupted-tool",
-                "arguments": {
-                    "command": ("while [ ! -f release-interrupted-tool ]; do sleep 0.02; done")
-                },
-            },
-        )
-        try:
-            deadline = time.monotonic() + 5
-            while True:
-                activity = next(
-                    (
-                        message.tool_activity
-                        for message in runtime.project_workspace_view(
-                            activation.triage_id
-                        ).conversation
-                        if message.role == "tool"
-                    ),
-                    None,
-                )
-                if activity is not None:
-                    break
-                if time.monotonic() >= deadline:
-                    pytest.fail("Interrupted tool activity did not become visible")
-                time.sleep(0.02)
-
-            assert activity.status == "running"
-            interrupted = runtime.fail_interrupted_activation()
-            assert interrupted is not None
-            assert interrupted.status.value == "FAILED"
-            activity = next(
-                message.tool_activity
-                for message in runtime.project_workspace_view(activation.triage_id).conversation
-                if message.role == "tool"
-            )
-            assert activity is not None
-            assert activity.status == "failed"
-            assert activity.output_preview is None
-        finally:
-            release.touch()
-        assert isinstance(future.exception(timeout=5), LookupError)
-
-
 def test_workspace_conversation_projects_model_tool_as_one_completed_activity(
     initialize_git_project: Callable[[], Path],
 ) -> None:

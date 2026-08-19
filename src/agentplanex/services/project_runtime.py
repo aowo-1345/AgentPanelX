@@ -19,6 +19,8 @@ from agentplanex.domains import (
     ProjectOwnerTaskType,
     ProjectRuntimeContext,
     RuntimeContextChangeReason,
+    StageRun,
+    StageRunStatus,
     ToolExecutionResult,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
@@ -122,41 +124,85 @@ class ProjectRuntimeService:
         """Claim and consume one activation for this project."""
         with self.database.transaction() as connection:
             context = self.owner.ensure_state(connection)
-        return self.driver.drive_next(context.triage_id)
+        result = self.driver.drive_next(context.triage_id)
+        if (
+            result.activation is not None
+            and result.activation.status is OwnerActivationStatus.FAILED
+        ):
+            self._block_failed_activation(result.activation)
+        return result
 
-    def fail_interrupted_activation(self) -> OwnerActivation | None:
-        """Fail an activation left RUNNING across process restart."""
+    def drive_until_waiting(self) -> ProjectRuntimeContext:
+        """Drive durable automatic work until control returns to a human."""
+        while True:
+            with self.database.transaction() as connection:
+                context = self.owner.ensure_state(connection)
+            activation = self.driver.unfinished(context.triage_id)
+            stage_run = self.delivery.active_stage_run(context.triage_id)
+
+            activation_runnable = (
+                activation is not None
+                and activation.status is OwnerActivationStatus.PENDING
+                and activation.driver_mode is None
+            )
+            stage_runnable = (
+                stage_run is not None
+                and stage_run.status is StageRunStatus.QUEUED
+            )
+            if activation_runnable and stage_runnable:
+                raise RuntimeError(
+                    "Project Runtime invariant violated: Owner activation and "
+                    "StageRun are both runnable"
+                )
+            if context.status in {"BLOCKED", "DONE"}:
+                return context
+            if context.pending_action is not None:
+                return context
+            if activation is not None:
+                if not activation_runnable or stage_run is not None:
+                    return context
+                self.drive_next_activation()
+                continue
+            if stage_run is not None:
+                if not stage_runnable:
+                    return context
+                self.drive_delivery()
+                continue
+            return context
+
+    def fail_interrupted_work(self) -> bool:
+        """Terminalize unfinished automatic work left by a stopped process."""
+        finished_at = datetime.now(UTC)
+        failure = "Project Runtime process was interrupted before work completed."
         with self.database.transaction() as connection:
             context = self.owner.ensure_state(connection)
-            activation = self.activations.get_unfinished(
-                connection, context.triage_id
-            )
-            if (
-                activation is None
-                or activation.status is not OwnerActivationStatus.RUNNING
-            ):
-                return None
-            failed = self.activations.mark_failed(
+            failed_activations = self.driver.fail_interrupted(
                 connection,
-                activation.activation_id,
-                datetime.now(UTC),
-                "AgentPlaneX Web stopped while this activation was running.",
+                context.triage_id,
+                finished_at=finished_at,
+                failure=failure,
             )
-        if failed.driver_mode is None:
-            raise RuntimeError("Recovered activation has no driver mode")
-        self.event_bus.publish(
-            ExecutionEvent(
-                triage_id=failed.triage_id,
-                event_type=ExecutionEventType.REACT_LOOP_EXITED,
-                react_loop_id=failed.activation_id,
-                payload={
-                    "agent_exit_status": AgentExitStatus.UNHANDLED_EXCEPTION.value,
-                    "driver_mode": failed.driver_mode.value,
-                    "recovered_after_restart": True,
-                },
+            failed_stages = self.delivery.fail_interrupted_stage_runs(
+                connection,
+                context.triage_id,
+                finished_at=finished_at,
+                failure=failure,
             )
-        )
-        return failed
+            if not failed_activations and not failed_stages:
+                return False
+            _, context_event = self.runtime_contexts.transition_in_transaction(
+                connection,
+                context.triage_id,
+                reason=RuntimeContextChangeReason.INTERRUPTED_WORK_FAILED,
+                mutate=_block_runtime_execution,
+            )
+        for activation in failed_activations:
+            self.event_bus.publish(_interrupted_activation_event(activation))
+        for stage_run in failed_stages:
+            self.event_bus.publish(_interrupted_stage_event(stage_run))
+        if context_event is not None:
+            self.event_bus.publish(context_event)
+        return True
 
     def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult:
         """Drive one activation step with a supplied Tool Action, without a model."""
@@ -184,6 +230,8 @@ class ProjectRuntimeService:
         if result_exit is not None:
             activation = self.driver.finish(activation, result_exit)
             self._publish_tool_loop_exited(activation, result_exit)
+            if activation.status is OwnerActivationStatus.FAILED:
+                self._block_failed_activation(activation)
         else:
             activation = self.driver.release_tool(activation)
         return ToolActivationDriveResult(
@@ -210,6 +258,7 @@ class ProjectRuntimeService:
         )
         activation = self.driver.finish(claim.activation, result_exit)
         self._publish_tool_loop_exited(activation, result_exit)
+        self._block_failed_activation(activation)
         return ToolActivationDriveResult(
             activation=activation,
             started=claim.started,
@@ -298,11 +347,21 @@ class ProjectRuntimeService:
         )
         failed = self.driver.finish(activation, result_exit)
         self._publish_tool_loop_exited(failed, result_exit)
+        self._block_failed_activation(failed)
         return ToolActivationDriveResult(
             activation=failed,
             started=started,
             tool_result=None,
             exit=result_exit,
+        )
+
+    def _block_failed_activation(self, activation: OwnerActivation) -> None:
+        if activation.status is not OwnerActivationStatus.FAILED:
+            raise ValueError("Only a failed Owner activation can block the Runtime")
+        self.runtime_contexts.transition(
+            activation.triage_id,
+            reason=RuntimeContextChangeReason.OWNER_ACTIVATION_FAILED,
+            mutate=_block_runtime_execution,
         )
 
     def _publish_tool_loop_entered(self, activation: OwnerActivation) -> None:
@@ -452,6 +511,58 @@ def _begin_feature(context: ProjectRuntimeContext) -> ProjectRuntimeContext:
             f"{context.triage_id} is {context.status}"
         )
     return replace(context, status="TODO")
+
+
+def _block_runtime_execution(
+    context: ProjectRuntimeContext,
+) -> ProjectRuntimeContext:
+    if context.status == "BLOCKED":
+        return context
+    if context.status == "DONE":
+        raise ValueError("Completed Project Runtime cannot contain failed work")
+    return replace(context, status="BLOCKED")
+
+
+def _interrupted_activation_event(activation: OwnerActivation) -> ExecutionEvent:
+    if activation.status is not OwnerActivationStatus.FAILED:
+        raise ValueError("Interrupted Activation event requires a failed Activation")
+    if activation.driver_mode is None or activation.failure is None:
+        raise ValueError("Failed Activation is missing its terminal facts")
+    return ExecutionEvent(
+        triage_id=activation.triage_id,
+        event_type=ExecutionEventType.OWNER_ACTIVATION_FAILED,
+        react_loop_id=(
+            activation.activation_id if activation.started_at is not None else None
+        ),
+        payload={
+            "activation_id": activation.activation_id,
+            "task_type": activation.task_type.value,
+            "driver_mode": activation.driver_mode.value,
+            "failure": activation.failure,
+            "interrupted": True,
+            "started": activation.started_at is not None,
+        },
+    )
+
+
+def _interrupted_stage_event(stage_run: StageRun) -> ExecutionEvent:
+    if stage_run.status is not StageRunStatus.FAILED or stage_run.failure is None:
+        raise ValueError("Interrupted Stage event requires a failed StageRun")
+    return ExecutionEvent(
+        triage_id=stage_run.triage_id,
+        event_type=ExecutionEventType.STAGE_RUN_FAILED,
+        payload={
+            "stage_run_id": stage_run.stage_run_id,
+            "run_id": stage_run.run_id,
+            "snapshot_id": stage_run.snapshot_id,
+            "milestone_key": stage_run.milestone_key,
+            "stage_key": stage_run.stage_key,
+            "input_commit_sha": stage_run.input_commit_sha,
+            "failure": stage_run.failure,
+            "interrupted": True,
+            "started": stage_run.started_at is not None,
+        },
+    )
 
 
 def _plan_decision_message(

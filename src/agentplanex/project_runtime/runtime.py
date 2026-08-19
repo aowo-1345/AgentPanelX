@@ -48,7 +48,7 @@ from agentplanex.services.project_workspace import (
     ProjectWorkspaceQuery,
     ProjectWorkspaceView,
 )
-from agentplanex.services.stage_executor import CodexStageExecutor
+from agentplanex.services.stage_executor import CodexStageExecutor, StageExecutor
 from agentplanex.settings import Settings
 
 
@@ -62,6 +62,7 @@ class ProjectRuntime:
         settings: Settings,
         approval_mode: ApprovalMode,
         responses_transport: ResponsesTransport | None = None,
+        stage_executor: StageExecutor | None = None,
     ) -> None:
         project_path = project_path.resolve()
         if not project_path.is_dir():
@@ -116,11 +117,15 @@ class ProjectRuntime:
         )
         delivery_runner = DeliveryRunner(
             delivery=delivery,
-            executor=CodexStageExecutor(
-                project_path,
-                collaboration.transport,
-                collaboration.observation_skill,
-                collaboration.prompts,
+            executor=(
+                stage_executor
+                if stage_executor is not None
+                else CodexStageExecutor(
+                    project_path,
+                    collaboration.transport,
+                    collaboration.observation_skill,
+                    collaboration.prompts,
+                )
             ),
             git=git,
         )
@@ -202,9 +207,13 @@ class ProjectRuntime:
         """Claim and process one pending Owner activation."""
         return self._service.drive_next_activation()
 
-    def fail_interrupted_activation(self) -> OwnerActivation | None:
-        """Fail an activation that remained RUNNING across process restart."""
-        return self._service.fail_interrupted_activation()
+    def drive_until_waiting(self) -> ProjectRuntimeContext:
+        """Run durable automatic work until control must return to the user."""
+        return self._service.drive_until_waiting()
+
+    def fail_interrupted_work(self) -> bool:
+        """Fail unfinished automatic work left by a stopped Runtime process."""
+        return self._service.fail_interrupted_work()
 
     def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult:
         """Drive one Owner activation step with a supplied Tool Action."""

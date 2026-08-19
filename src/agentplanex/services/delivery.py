@@ -338,6 +338,22 @@ class DeliveryService:
         with self.database.connection() as connection:
             return self.stage_runs.get_active(connection, triage_id)
 
+    def fail_interrupted_stage_runs(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+        *,
+        finished_at: datetime,
+        failure: str,
+    ) -> tuple[StageRun, ...]:
+        """Terminalize active StageRuns inside the caller's transaction."""
+        return self.stage_runs.fail_active(
+            connection,
+            triage_id,
+            finished_at=finished_at,
+            failure=failure,
+        )
+
     def claim_next_stage(
         self,
         triage_id: str,
@@ -514,9 +530,8 @@ class DeliveryService:
         *,
         failure: str,
         finished_at: datetime,
-        append_execution_result: ExecutionResultWriter,
     ) -> StageCompletion:
-        """Record a terminal Stage failure, block delivery, and wake the Owner."""
+        """Record a terminal Stage failure and block delivery."""
         normalized_failure = " ".join(failure.split())
         if not normalized_failure:
             raise ValueError("Stage failure must not be empty")
@@ -540,11 +555,6 @@ class DeliveryService:
                 reason=RuntimeContextChangeReason.STAGE_RUN_FAILED,
                 mutate=lambda latest: self._stage_failed(latest, running),
             )
-            activation = append_execution_result(
-                connection,
-                updated,
-                _stage_failed_message(updated, failed),
-            )
         if context_event is not None:
             self.event_bus.publish(context_event)
         self.event_bus.publish(
@@ -565,7 +575,7 @@ class DeliveryService:
             stage_run=failed,
             next_stage_run=None,
             candidate_commit_sha=None,
-            activation=activation,
+            activation=None,
         )
 
     def decide_milestone_candidate(
@@ -1397,36 +1407,6 @@ def _candidate_ready_message(
                 "accept or reject it with decide_milestone_candidate. Afterwards "
                 "reassess whether to run next, update Milestones, revise Specs, or "
                 "return control to the user."
-            ),
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
-
-
-def _stage_failed_message(
-    context: ProjectRuntimeContext,
-    stage_run: StageRun,
-) -> str:
-    return json.dumps(
-        {
-            "event": "STAGE_EXECUTION_FAILED",
-            "runtime_status": context.status,
-            "work_object": {
-                "snapshot_id": stage_run.snapshot_id,
-                "run_id": stage_run.run_id,
-                "stage_run_id": stage_run.stage_run_id,
-                "milestone_key": stage_run.milestone_key,
-                "stage_key": stage_run.stage_key,
-                "input_commit_sha": stage_run.input_commit_sha,
-            },
-            "failure": stage_run.failure,
-            "required_decision": (
-                "Diagnose the fixed failure. Consult Planner or Reviewer, update the "
-                "Milestone View or Specs when their contract is wrong, or retry the "
-                "first unfinished Milestone with run_next_milestone when the approved "
-                "Plan and current Snapshot remain valid. BLOCKED does not invoke a "
-                "Hard Gate."
             ),
         },
         ensure_ascii=False,

@@ -1,5 +1,6 @@
 """Claim and consume the durable Project Owner activation mailbox."""
 
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -68,6 +69,27 @@ class OwnerActivationDriver:
         return ActivationDriveResult(
             activation=self.finish(activation, result),
             exit=result,
+        )
+
+    def unfinished(self, triage_id: str) -> OwnerActivation | None:
+        """Read the sole unfinished Activation through its owning service."""
+        with self.database.connection() as connection:
+            return self.activations.get_unfinished(connection, triage_id)
+
+    def fail_interrupted(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+        *,
+        finished_at: datetime,
+        failure: str,
+    ) -> tuple[OwnerActivation, ...]:
+        """Terminalize unfinished Activations inside the caller's transaction."""
+        return self.activations.fail_unfinished(
+            connection,
+            triage_id,
+            finished_at=finished_at,
+            failure=failure,
         )
 
     def claim_for_tool(self, triage_id: str) -> ActivationClaim:

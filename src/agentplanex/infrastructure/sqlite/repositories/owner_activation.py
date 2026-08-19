@@ -193,6 +193,41 @@ class SQLiteOwnerActivationRepository:
             failure=failure,
         )
 
+    def fail_unfinished(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+        *,
+        finished_at: datetime,
+        failure: str,
+    ) -> tuple[OwnerActivation, ...]:
+        """Terminalize every Activation that survived an interrupted process."""
+        if not failure.strip():
+            raise ValueError("Activation failure must not be empty")
+        encoded_finished_at = _encode_datetime(finished_at)
+        rows = connection.execute(
+            f"""
+            UPDATE owner_activation
+            SET
+                status = ?,
+                driver_mode = COALESCE(driver_mode, ?),
+                finished_at = ?,
+                failure = ?
+            WHERE triage_id = ? AND status IN (?, ?)
+            RETURNING {self._COLUMNS}
+            """,
+            (
+                OwnerActivationStatus.FAILED.value,
+                OwnerActivationMode.MODEL.value,
+                encoded_finished_at,
+                failure,
+                triage_id,
+                OwnerActivationStatus.PENDING.value,
+                OwnerActivationStatus.RUNNING.value,
+            ),
+        ).fetchall()
+        return tuple(self._from_row(row) for row in rows)
+
     def _finish(
         self,
         connection: sqlite3.Connection,

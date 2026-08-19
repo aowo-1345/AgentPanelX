@@ -17,7 +17,12 @@ class OwnerActivationStatus(StrEnum):
 
 
 class OwnerActivationMode(StrEnum):
-    """The actor currently responsible for consuming an activation."""
+    """The driver selected to consume an activation.
+
+    ``started_at`` remains the authoritative fact for whether that driver ever
+    claimed work. A process interruption can terminalize accepted automatic work
+    before its selected MODEL driver starts.
+    """
 
     MODEL = "MODEL"
     TOOL = "TOOL"
@@ -64,14 +69,19 @@ class OwnerActivation:
             return
         if self.driver_mode is None:
             raise ValueError("Started activation must have a driver mode")
-        if self.started_at is None:
-            raise ValueError("Started activation must have started_at")
         if self.status is OwnerActivationStatus.RUNNING:
+            if self.started_at is None:
+                raise ValueError("Running activation must have started_at")
             if self.finished_at is not None or self.failure is not None:
                 raise ValueError("Running activation cannot have a terminal result")
             return
         if self.finished_at is None:
             raise ValueError("Finished activation must have finished_at")
+        if (
+            self.status is OwnerActivationStatus.COMPLETED
+            and self.started_at is None
+        ):
+            raise ValueError("Completed activation must have started_at")
         if self.status is OwnerActivationStatus.FAILED:
             if self.failure is None or not self.failure.strip():
                 raise ValueError("Failed activation must contain a failure")

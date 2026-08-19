@@ -1728,7 +1728,7 @@ def test_candidate_that_changes_canonical_specs_cannot_be_accepted(
     )
 
 
-def test_invalid_stage_output_becomes_failed_fact_block_and_owner_activation(
+def test_invalid_stage_output_becomes_failed_fact_and_block_without_activation(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -1758,8 +1758,7 @@ def test_invalid_stage_output_becomes_failed_fact_block_and_owner_activation(
     assert driven["result"]["context_status"] == "BLOCKED"
     assert driven["result"]["stage_run"]["status"] == "FAILED"
     assert "required delivery document" in driven["result"]["stage_run"]["failure"]
-    assert driven["activation"]["task_type"] == "EXECUTION_RESULT"
-    assert driven["activation"]["status"] == "PENDING"
+    assert driven["activation"] is None
     assert _git(project_path, "rev-parse", "HEAD") == target_commit_sha
 
     view_code = debug_tool_cli.main(
@@ -1772,16 +1771,11 @@ def test_invalid_stage_output_becomes_failed_fact_block_and_owner_activation(
     assert view["context"]["current_stage_key"] == "stage-fail"
     assert view["context"]["current_candidate_commit_sha"] is None
     assert view["stage_runs"][0]["status"] == "FAILED"
-    assert view["allowed_actions"] == ["drive"]
-    failure_message = next(
-        json.loads(content)
+    assert view["allowed_actions"] == ["message"]
+    assert all(
+        '"event": "STAGE_EXECUTION_FAILED"' not in content
         for content in _loaded_message_contents(project_path)
-        if '"event": "STAGE_EXECUTION_FAILED"' in content
     )
-    assert failure_message["runtime_status"] == "BLOCKED"
-    assert failure_message["work_object"]["run_id"] == run_id
-    assert failure_message["work_object"]["stage_key"] == "stage-fail"
-    assert "run_next_milestone" in failure_message["required_decision"]
 
     event_types = [event.event_type.value for event in _loaded_events(project_path)]
     assert "AGENT_INVOCATION_FAILED" in event_types
@@ -1802,10 +1796,6 @@ def test_invalid_stage_output_becomes_failed_fact_block_and_owner_activation(
     )
     assert candidate_ref.returncode != 0
 
-    assert debug_tool_cli.main(
-        ["--cwd", str(project_path), "--print", "drive"]
-    ) == 0
-    capfd.readouterr()
     retry_code = debug_tool_cli.main(
         [
             "--cwd",

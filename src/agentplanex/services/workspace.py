@@ -51,7 +51,7 @@ class FeatureRuntime(Protocol):
 
     def drive_delivery(self) -> DeliveryDriveResult: ...
 
-    def fail_interrupted_activation(self) -> OwnerActivation | None: ...
+    def fail_interrupted_work(self) -> bool: ...
 
     def project_control_view(self) -> ProjectControlView: ...
 
@@ -271,18 +271,14 @@ class WorkspaceService:
         finally:
             feature_lock.release()
 
-    def recover_interrupted_activations(self) -> int:
-        recovered = 0
+    def fail_interrupted_work(self) -> int:
+        """Fail unfinished automatic work across every managed Feature."""
+        failed_features = 0
         for project in self.registry.list_projects():
             for binding in self.registry.list_features(project.project_id):
-                if (
-                    self.runtime_factory(
-                        binding.worktree_path
-                    ).fail_interrupted_activation()
-                    is not None
-                ):
-                    recovered += 1
-        return recovered
+                if self.runtime_factory(binding.worktree_path).fail_interrupted_work():
+                    failed_features += 1
+        return failed_features
 
     def drive_next_automatic_step(self) -> bool:
         """Drive at most one machine-owned step across the whole Workspace."""

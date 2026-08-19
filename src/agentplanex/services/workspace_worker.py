@@ -16,7 +16,7 @@ class WorkspaceWorker:
     _thread: Thread | None = field(default=None, init=False)
 
     def start(self) -> None:
-        self.workspace.recover_interrupted_activations()
+        self.workspace.fail_interrupted_work()
         self._thread = Thread(target=self._run, name="agentplanex-worker", daemon=True)
         self._thread.start()
         self.notify()

@@ -123,7 +123,7 @@ flowchart TB
 
 ### Workspace Worker
 
-`WorkspaceWorker` 是单一后台推进器。API 接受命令后只唤醒 Worker；Worker 串行消费所有可自动推进的 Owner Activation 和 Delivery step，避免多个后台线程同时改变同一 Feature。进程启动时，它会先恢复被中断的 Activation，再继续处理可运行任务。
+`WorkspaceWorker` 是单一后台推进器。API 接受命令后只唤醒 Worker；Worker 串行消费所有可自动推进的 Owner Activation 和 Delivery step，避免多个后台线程同时改变同一 Feature。进程启动时，它会先把所有 Feature 遗留的 Activation 和 StageRun 归并为 `FAILED + BLOCKED`，不会自动续跑中断前的工作。
 
 ### Project Runtime Service
 
@@ -134,6 +134,14 @@ flowchart TB
 - Owner 运行期间不能并发启动 Delivery，Delivery 运行期间不能提交冲突命令；
 - Plan 决策、Milestone 更新、Candidate 接受或拒绝均通过 Service Contract 执行；
 - Tool 驱动模式与模型驱动模式共享同一 Runtime、持久化和事件链路。
+
+`ProjectRuntime.drive_until_waiting()` 以持久化的 Activation、StageRun 与 Context
+为依据，连续推进本 Feature 已获准执行的工作：中间 Stage 会继续到下一 Stage，
+最终 Candidate 会生成 `EXECUTION_RESULT` Activation 并再次交给 Owner。循环在
+人工 Tool、审批、Owner 回复、`BLOCKED`、`DONE` 或没有自动工作时返回。若 Owner
+或 Stage 失败，对应工作会进入 `FAILED` 且 Context 进入 `BLOCKED`；Stage 失败不
+伪造 Owner Activation。`fail_interrupted_work()` 只把进程中断遗留的未完成工作
+归并为 `FAILED + BLOCKED`，不调用模型或 Stage Executor，也不自动续跑。
 
 ### Project Owner Agent
 

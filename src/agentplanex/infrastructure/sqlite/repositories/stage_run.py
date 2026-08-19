@@ -149,6 +149,41 @@ class SQLiteStageRunRepository:
             finished_at=finished_at,
         )
 
+    def fail_active(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+        *,
+        finished_at: datetime,
+        failure: str,
+    ) -> tuple[StageRun, ...]:
+        """Terminalize every StageRun that survived an interrupted process."""
+        if not failure.strip():
+            raise ValueError("StageRun failure must not be empty")
+        encoded_finished_at = _encode_datetime(finished_at)
+        rows = connection.execute(
+            f"""
+            UPDATE stage_run
+            SET
+                status = ?,
+                lease_expires_at = NULL,
+                finished_at = ?,
+                output_commit_sha = NULL,
+                failure = ?
+            WHERE triage_id = ? AND status IN (?, ?)
+            RETURNING {self._COLUMNS}
+            """,
+            (
+                StageRunStatus.FAILED.value,
+                encoded_finished_at,
+                failure,
+                triage_id,
+                StageRunStatus.QUEUED.value,
+                StageRunStatus.RUNNING.value,
+            ),
+        ).fetchall()
+        return tuple(self._from_row(row) for row in rows)
+
     def _finish(
         self,
         connection: sqlite3.Connection,

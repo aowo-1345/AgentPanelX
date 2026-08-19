@@ -165,9 +165,9 @@ class StageRun:
             ):
                 raise ValueError("Queued StageRun cannot have lifecycle results")
             return
-        if self.started_at is None:
-            raise ValueError("Started StageRun must have started_at")
         if self.status is StageRunStatus.RUNNING:
+            if self.started_at is None:
+                raise ValueError("Running StageRun must have started_at")
             if self.lease_expires_at is None:
                 raise ValueError("Running StageRun must have lease_expires_at")
             if any(
@@ -181,6 +181,8 @@ class StageRun:
         if self.lease_expires_at is not None:
             raise ValueError("Finished StageRun cannot retain a lease")
         if self.status is StageRunStatus.SUCCEEDED:
+            if self.started_at is None:
+                raise ValueError("Succeeded StageRun must have started_at")
             _require_text("output_commit_sha", self.output_commit_sha or "")
             if self.failure is not None:
                 raise ValueError("Succeeded StageRun cannot contain a failure")

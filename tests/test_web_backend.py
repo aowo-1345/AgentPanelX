@@ -219,7 +219,7 @@ def _web_server(config_path: Path, port: int) -> Iterator[str]:
 
 
 @pytest.mark.e2e
-def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
+def test_installed_web_backend_runs_and_fails_interrupted_work() -> None:
     with _model_endpoint() as model_endpoint:
         repository_path, config_path = _prepare_case(model_endpoint.base_url)
         port = _free_port()
@@ -436,29 +436,28 @@ def test_installed_web_backend_runs_and_recovers_the_workspace() -> None:
             assert status == 200
             assert isinstance(restored, dict)
             assert restored["feature"]["triage_id"] == triage_id
+            assert restored["feature"]["status"] == "BLOCKED"
+            assert restored["runtime"]["data"]["activation_status"] is None
             assert restored["conversation"]["data"][:2] == messages
             assert any(
                 entry["role"] == "status"
-                and "stopped while this activation was running" in entry["content"]
+                and "interrupted before work completed" in entry["content"]
                 for entry in restored["conversation"]["data"]
             )
 
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                status, pending_workspace = _request(
-                    base_url,
-                    "GET",
-                    pending_workspace_path,
-                )
-                assert status == 200
-                assert isinstance(pending_workspace, dict)
-                pending_messages = pending_workspace["conversation"]["data"]
-                if any(
-                    entry["role"] == "assistant"
-                    and entry["content"] == "The Project Owner is ready."
-                    for entry in pending_messages
-                ):
-                    break
-                time.sleep(0.05)
-            else:
-                pytest.fail("Restarted Worker did not resume the pending activation")
+            status, pending_workspace = _request(
+                base_url,
+                "GET",
+                pending_workspace_path,
+            )
+            assert status == 200
+            assert isinstance(pending_workspace, dict)
+            assert pending_workspace["feature"]["status"] == "BLOCKED"
+            assert pending_workspace["runtime"]["data"]["activation_status"] is None
+            pending_messages = pending_workspace["conversation"]["data"]
+            assert not any(entry["role"] == "assistant" for entry in pending_messages)
+            assert any(
+                entry["role"] == "status"
+                and "interrupted before work completed" in entry["content"]
+                for entry in pending_messages
+            )

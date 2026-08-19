@@ -13,7 +13,6 @@ from agentplanex.domains import (
     OwnerActivation,
     StageRun,
 )
-from agentplanex.infrastructure.codex import CodexTransportError
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.services.delivery import (
     DeliveryError,
@@ -23,11 +22,7 @@ from agentplanex.services.delivery import (
     delivery_candidate_ref,
     delivery_run_ref,
 )
-from agentplanex.services.stage_executor import (
-    StageExecutionRequest,
-    StageExecutor,
-    StageExecutorError,
-)
+from agentplanex.services.stage_executor import StageExecutionRequest, StageExecutor
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +75,6 @@ class DeliveryRunner:
                 active.stage_run_id,
                 failure="Stage execution lease expired before a terminal result",
                 finished_at=now,
-                append_execution_result=append_execution_result,
             )
             self._remove_worktree(active.run_id)
             return self._failed_result(completion)
@@ -163,12 +157,7 @@ class DeliveryRunner:
                     },
                 )
             )
-        except (
-            CodexTransportError,
-            DeliveryError,
-            GitRepositoryError,
-            StageExecutorError,
-        ) as error:
+        except Exception as error:
             if invocation_started:
                 self.delivery.event_bus.publish(
                     ExecutionEvent(
@@ -187,7 +176,6 @@ class DeliveryRunner:
                 claim.stage_run.stage_run_id,
                 failure=_failure_message(error),
                 finished_at=datetime.now(UTC),
-                append_execution_result=append_execution_result,
             )
             self._remove_worktree(claim.stage_run.run_id)
             return self._failed_result(completion)
