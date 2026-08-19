@@ -8,7 +8,6 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from agentplanex.domains import ProjectRuntimeContext
-from agentplanex.project_owner_agent.exception import FormatError
 from agentplanex.project_owner_agent.models.responses import (
     ProjectOwnerModel,
     ResponsesClient,
@@ -20,7 +19,7 @@ from agentplanex.services.event_bus import EventBus
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 
 
-def test_tool_catalog_rejects_empty_conversation_id_before_execution(
+def test_tool_catalog_treats_empty_conversation_id_as_a_new_conversation(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -36,24 +35,16 @@ def test_tool_catalog_rejects_empty_conversation_id_before_execution(
         "artifacts": [],
     }
 
-    with pytest.raises(ToolArgumentError, match="conversation_id"):
-        executions.tools.create_action(
-            name="talk_to_agent",
-            call_id="call-1",
-            arguments=arguments,
-        )
-
-    arguments["conversation_id"] = None
     action = executions.tools.create_action(
         name="talk_to_agent",
-        call_id="call-2",
+        call_id="call-1",
         arguments=arguments,
     )
 
     assert action == {
         "tool": "talk_to_agent",
-        "call_id": "call-2",
-        "arguments": arguments,
+        "call_id": "call-1",
+        "arguments": {**arguments, "conversation_id": None},
     }
 
 
@@ -239,7 +230,7 @@ def test_direct_execution_uses_the_same_argument_contract(
                 "agent_id": "planner",
                 "kind": "task",
                 "message": "Create plan.md.",
-                "conversation_id": "",
+                "conversation_id": "not-an-apx-id",
                 "artifacts": [],
             },
         },
@@ -282,7 +273,7 @@ def test_unknown_agent_is_rejected_before_an_invocation_event(
     assert events == []
 
 
-def test_model_tool_call_is_validated_before_becoming_an_action(
+def test_model_tool_call_normalizes_empty_conversation_id_before_action(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -321,5 +312,18 @@ def test_model_tool_call_is_validated_before_becoming_an_action(
         ),
     )
 
-    with pytest.raises(FormatError, match="conversation_id"):
-        model.query([{"role": "system", "content": "Test Owner."}])
+    message = model.query([{"role": "system", "content": "Test Owner."}])
+
+    assert message["extra"]["actions"] == [
+        {
+            "tool": "talk_to_agent",
+            "call_id": "call-invalid",
+            "arguments": {
+                "agent_id": "planner",
+                "kind": "task",
+                "message": "Create plan.md.",
+                "conversation_id": None,
+                "artifacts": [],
+            },
+        }
+    ]

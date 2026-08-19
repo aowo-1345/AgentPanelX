@@ -52,13 +52,6 @@ class MilestoneArguments(ToolArgumentsModel):
         description="Ordered Stages needed to deliver this Milestone.",
     )
 
-    @model_validator(mode="after")
-    def require_unique_stage_keys(self) -> Self:
-        keys = [stage.key for stage in self.stages]
-        if len(keys) != len(set(keys)):
-            raise ValueError("Stage keys must be unique within a Milestone")
-        return self
-
     def to_domain(self) -> Milestone:
         return Milestone(
             key=self.key,
@@ -84,10 +77,7 @@ class UpdateMilestonesArguments(ToolArgumentsModel):
     )
 
     @model_validator(mode="after")
-    def require_complete_view(self) -> Self:
-        keys = [milestone.key for milestone in self.milestones]
-        if len(keys) != len(set(keys)):
-            raise ValueError("Milestone keys must be unique")
+    def require_pending_milestone(self) -> Self:
         if not any(milestone.state == "pending" for milestone in self.milestones):
             raise ValueError("Milestone View must contain a pending Milestone")
         return self

@@ -3,7 +3,7 @@
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from pydantic import Field, StringConstraints
+from pydantic import Field, StringConstraints, field_validator
 
 from agentplanex.domains import (
     AgentCollaborationError,
@@ -61,6 +61,11 @@ class TalkToAgentArguments(ToolArgumentsModel):
     artifacts: list[ArtifactInput] = Field(
         description="Read-only Runtime artifact inputs; use an empty array when absent."
     )
+
+    @field_validator("conversation_id", mode="before")
+    @classmethod
+    def empty_conversation_id_starts_new_conversation(cls, value: object) -> object:
+        return None if value == "" else value
 
     def to_request(self) -> TalkToAgentRequest:
         return TalkToAgentRequest(
