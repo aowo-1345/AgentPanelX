@@ -30,6 +30,7 @@ flowchart TB
         Delivery[Stage Delivery]
         Projection[Board / Workspace Projection]
         Bus[Event Bus]
+        Registry[(Workspace Registry)]
     end
 
     subgraph Project[Target Git Project]
@@ -43,6 +44,7 @@ flowchart TB
     External --> Skills
     Skills <-->|read / bounded commands| Runtime
     API --> Workspace
+    Workspace --> Registry
     Workspace --> Dispatcher
     Workspace --> Projection
     Dispatcher --> Runtime
@@ -76,7 +78,8 @@ flowchart TB
         WorkspaceService[Workspace Service]
         WorkspaceDispatcher[Workspace Dispatcher]
         WorkspaceQueries[Workspace Queries]
-        ProjectRuntime[Project Runtime Service]
+        ProjectRuntime[ProjectRuntime Facade]
+        RuntimeService[ProjectRuntimeService]
         ControlQuery[Project Control Query]
     end
 
@@ -100,6 +103,7 @@ flowchart TB
 
     subgraph Infrastructure[Infrastructure]
         API[FastAPI]
+        Registry[(Workspace Registry SQLite)]
         DB[(SQLite)]
         Git[(Git / Worktrees / Refs)]
         Codex[Codex CLI Transport]
@@ -109,8 +113,11 @@ flowchart TB
     Interface --> Application
     WorkspaceService --> WorkspaceDispatcher
     WorkspaceService --> WorkspaceQueries
-    WorkspaceDispatcher --> ProjectRuntime
-    ProjectRuntime --> Orchestration
+    WorkspaceService --> Registry
+    WorkspaceService --> ProjectRuntime
+    WorkspaceQueries --> Registry
+    ProjectRuntime --> RuntimeService
+    RuntimeService --> Orchestration
     ControlQuery --> Domain
     Orchestration --> Domain
     Domain --> DB
@@ -123,7 +130,7 @@ flowchart TB
 
 ### Workspace Service
 
-`WorkspaceService` 是 Web 与 CLI 唯一调用的 Workspace 接口。它根据
+`WorkspaceService` 是用户级 Web 与已安装 CLI 唯一调用的 Workspace 接口。它根据
 `project_id + triage_id` 找到 Feature binding 和对应 `ProjectRuntime`，把公开命令
 映射为 Runtime 的显式方法。`WorkspaceQueries` 只组合 Registry、Feature SQLite 与
 Git 事实，不构造 Runtime 或模型，也不触发执行。
@@ -136,9 +143,12 @@ Git 事实，不构造 Runtime 或模型，也不触发执行。
 Feature 的 `ProjectRuntime.drive_until_waiting()`；容量已满或 Feature 正忙时，在持久化
 前立即拒绝。`begin-feature` 与删除只使用同 Feature 排他门，不占全局自动执行槽。
 
-### Project Runtime Service
+### ProjectRuntime 与 ProjectRuntimeService
 
-`ProjectRuntimeService` 是 Project Owner、Planning、Delivery 与查询投影之间的协调边界。它保证：
+`ProjectRuntime` 是一个 Feature 的统一 facade 与 composition root；它持有该 Feature 的
+Runtime services，并向 Workspace、Control 和调试入口暴露稳定命令。内部的
+`ProjectRuntimeService` 负责协调 Project Owner、Planning 与 Delivery；查询投影从同一
+SQLite/Git 事实独立读取，不参与调度。它保证：
 
 - 用户 Message 与 `PENDING` Owner Activation 在同一事务内创建；
 - 一个 Feature 同时只存在一个未完成 Owner Activation；
@@ -164,6 +174,7 @@ AgentPanelX 不使用单个状态对象描述整个项目。不同事实由最�
 
 | 事实 | 权威来源 | 主要写入方 | 前端呈现 |
 | --- | --- | --- | --- |
+| Project identity、Feature binding、worktree 路径 | Workspace Registry SQLite | Workspace Service / Registry | Project / Feature navigation |
 | 用户意图、Owner 回复、Tool activity | SQLite Message History | Project Owner Service | Conversation |
 | Owner 运行状态与失败 | SQLite Owner Activation | Activation Driver | Runtime / Conversation |
 | Rolling Summary 与 Owner 上下文 | SQLite Context Memory | Owner Context Memory | Owner 下一次激活 |
@@ -194,7 +205,12 @@ flowchart LR
     Projection --> UI
 ```
 
-SQLite 负责可恢复的运行状态，Git 负责需要版本语义的交付事实。`.agentplanex/` 通过目标仓库的 `.git/info/exclude` 隔离，不进入业务 commit。任何操作都必须经过 Runtime 与 Service；直接修改 SQLite 或 Git ref 不属于受支持的控制路径。
+Workspace Registry 与 Feature Runtime 数据库是两个层次：前者只保存 Project identity 和
+Feature-to-worktree binding；后者由每个 Feature 独立持有 Context、Message、Activation、
+Snapshot、StageRun 与 Timeline。Dispatcher 的准入状态只存在于 Web 进程内，不新增调度表。
+Git 负责需要版本语义的交付事实。受管 Feature 初始化时，`ProjectRuntime.initialize()` 将
+`.agentplanex/` 写入目标仓库的 `.git/info/exclude`，避免 Runtime 数据进入业务 commit。
+任何操作都必须经过 Runtime 与 Service；直接修改 SQLite 或 Git ref 不属于受支持的控制路径。
 
 ## 5. 核心链路一：从目标到 Project Owner Activation
 
@@ -221,11 +237,12 @@ sequenceDiagram
     Runtime-->>Dispatcher: durable Activation
     Dispatcher->>Runtime: schedule drive_until_waiting
     Dispatcher-->>WS: Activation
-    WS-->>Web: 202 Accepted
+    WS-->>API: Activation
+    API-->>Web: 202 Accepted
     Runtime->>Driver: drive_next_activation
     Driver->>DB: claim PENDING -> RUNNING
     Driver->>Owner: restore context and run ReAct loop
-    loop Tool-driven reasoning
+    loop Owner ReAct tool calls
         Owner->>Tool: execute typed Action
         Tool->>DB: persist result and state change
         Tool-->>Owner: structured Tool result
@@ -287,9 +304,12 @@ Milestone View 使用相同设计：完整 Milestone 集合与当前 Plan commit
 
 ## 7. 核心链路三：隔离执行与 Candidate 决策
 
+下图从首次 Start 已获用户批准或后续 Milestone 已明确入队开始，不重复上一节的人工审批门。
+
 ```mermaid
 sequenceDiagram
     participant Owner as Project Owner
+    participant Runtime as Project Runtime
     participant Delivery as Delivery Service
     participant DB as Runtime Context
     participant Runner as Delivery Runner
@@ -300,32 +320,35 @@ sequenceDiagram
 
     Owner->>Delivery: run_next_milestone
     Delivery->>DB: queue durable Stage Run
-    Runner->>DB: claim one Stage
-    Runner->>Stage: execute claimed Stage
-    Stage->>WT: create isolated worktree
-    Stage->>Agent: run fixed Stage objective
-    Agent->>WT: inspect / edit / test
-    Stage->>Git: record output commit
-    alt More stages remain
-        Runner->>DB: complete Stage and queue next Stage
-    else Milestone candidate ready
-        Runner->>Git: update refs/agentplanex/candidates/run-id
-        Runner->>DB: persist candidate commit SHA
-        Runner-->>Owner: candidate awaiting decision
-        Owner->>Delivery: accept or reject candidate
-        alt Accepted
-            Delivery->>Git: integrate candidate into Feature branch
-            Delivery->>DB: advance Milestone / Feature
-        else Rejected
-            Delivery->>DB: record rejection and return to planning
+    loop Same admitted drive until a human waiting point
+        Runtime->>Runner: drive one queued Stage
+        Runner->>DB: claim one Stage
+        Runner->>WT: prepare isolated worktree from fixed input
+        Runner->>Stage: execute claimed Stage
+        Stage->>Agent: run fixed Stage objective
+        Agent->>WT: inspect / edit / test
+        Runner->>Git: record output commit
+        alt More stages remain
+            Runner->>DB: complete Stage and queue next Stage
+        else Milestone candidate ready
+            Runner->>Git: update refs/agentplanex/candidates/run-id
+            Runner->>DB: persist candidate SHA and EXECUTION_RESULT Activation
+            Runtime->>Owner: drive candidate Activation
+            Owner->>Delivery: accept or reject candidate
+            alt Accepted
+                Delivery->>Git: integrate candidate into Feature branch
+                Delivery->>DB: advance Milestone / Feature
+            else Rejected
+                Delivery->>DB: record rejection and return to planning
+            end
         end
-    end
-    opt Stage fails
-        Runner->>DB: persist failure + BLOCKED context
+        opt Stage fails
+            Runner->>DB: persist failure + BLOCKED context
+        end
     end
 ```
 
-一次 Worker tick 最多驱动一个 durable Stage，长任务因此可以在多个进程生命周期之间继续。Stage worktree、output commit、candidate ref 和 Runtime Context 相互校验，避免仅凭一段 Agent 文本把任务判定为完成。
+`ProjectRuntime.drive_until_waiting()` 在同一次已准入请求中逐个驱动排队的 Stage，并在 Candidate 就绪后继续消费 `EXECUTION_RESULT` Activation，直到需要人工审批、Owner 回复、失败或没有可运行工作。若进程中断，下一次启动会把遗留工作终结为 `FAILED + BLOCKED`，不会跨进程自动续跑；持久化的 Stage、commit、ref 与 Context 用于审计和显式重试，而不是隐式恢复。
 
 ## 8. Feature 生命周期
 
@@ -337,9 +360,9 @@ stateDiagram-v2
     TODO --> READY: approved Plan + runnable Milestones
     READY --> IN_PROGRESS: start delivery
     IN_PROGRESS --> IN_PROGRESS: complete Stage / queue next
-    IN_PROGRESS --> TODO: replan or reject candidate
+    IN_PROGRESS --> IN_PROGRESS: replan or reject candidate
     IN_PROGRESS --> BLOCKED: Stage or Runtime failure
-    BLOCKED --> IN_PROGRESS: bounded recovery
+    BLOCKED --> IN_PROGRESS: explicit Owner recovery command
     IN_PROGRESS --> DONE: accept final candidate
 ```
 
@@ -416,7 +439,7 @@ flowchart TB
 
 ### Control
 
-通过真实 Runtime 执行有边界的命令：驱动 Owner Activation、发送消息、批准或拒绝 Plan、开始 Milestone、推进一个 Delivery step。它复用 Web Console 的 Service Contract，不直接写数据库或 Git ref。
+通过真实 `ProjectRuntime` 执行有边界的命令：驱动 Owner Activation、发送消息、批准或拒绝 Plan、开始 Milestone、推进一个 Delivery step。它与 Web 最终使用相同的单 Feature Runtime 状态转换，但不经过 `WorkspaceService`，也不直接写数据库或 Git ref。
 
 ### Attribution
 
@@ -449,10 +472,10 @@ flowchart LR
 
 ## 12. 并发、恢复与安全边界
 
-- **有界 Feature 并行：** Dispatcher 默认允许 4 个不同 Feature 自动执行；同一 Feature 始终互斥，满载请求立即拒绝且不进入队列。
+- **有界 Feature 并行：** 单 Web 进程内的 Dispatcher 默认允许 4 个不同 Feature 自动执行；同一 Feature 始终互斥，满载请求立即拒绝且不进入队列。
 - **定向执行：** 只有新接受的用户命令会驱动其目标 Feature；启动时不扫描并自动执行旧任务。
-- **Durable Activation：** Message 与 Activation 原子创建；重启后不保留无法证明仍在执行的 `RUNNING` 状态。
-- **Durable Stage：** Stage claim、输出 commit、Candidate ref 与完成状态分别持久化，允许在边界处恢复。
+- **Durable Activation：** Message 与 Activation 原子创建；启动时遗留的 `PENDING` 或 `RUNNING` Activation 会终结为 `FAILED`，不会自动重新执行。
+- **Durable Stage：** Stage claim、输出 commit、Candidate ref 与完成状态分别持久化；启动时遗留的 `QUEUED` 或 `RUNNING` StageRun 会终结为 `FAILED + BLOCKED`，后续只能由显式新动作重新排队。
 - **隔离工作区：** Feature、Reviewer 和 Stage 使用独立 worktree 或 workspace，降低并行 Agent 相互覆盖的风险。
 - **Fail-closed Hard Gate：** digest、manifest、artifact 或 Reviewer Contract 任一不满足即停止推进。
 - **本地优先：** Web host 限制为 `127.0.0.1` 或 `localhost`；模型凭据只从环境变量读取。
@@ -464,6 +487,7 @@ flowchart LR
 | 关注点 | 入口 |
 | --- | --- |
 | FastAPI 与 SPA host | `src/agentplanex/web/app.py` |
+| Project / Feature Registry | `src/agentplanex/infrastructure/workspace_registry.py` |
 | Workspace commands 与准入 | `src/agentplanex/services/workspace/service.py`, `dispatcher.py` |
 | Workspace read projection | `src/agentplanex/services/workspace/queries.py`, `services/project_workspace.py` |
 | Project Runtime 协调 | `src/agentplanex/services/project_runtime.py` |
