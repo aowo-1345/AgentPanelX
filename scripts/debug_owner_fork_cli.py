@@ -14,10 +14,13 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 from const import TARGET_PROJECT  # noqa: E402
 
 from agentplanex.bootstrap import create_responses_transport  # noqa: E402
-from agentplanex.domains import RestoredOwnerContext  # noqa: E402
 from agentplanex.infrastructure.sqlite import (  # noqa: E402
     SQLiteDatabase,
     verify_schema,
+)
+from agentplanex.project_owner_agent.context import OwnerContextSnapshot  # noqa: E402
+from agentplanex.project_owner_agent.context.rendering import (  # noqa: E402
+    render_checkpoint,
 )
 from agentplanex.project_owner_agent.models.responses import (  # noqa: E402
     ProjectOwnerModel,
@@ -27,7 +30,6 @@ from agentplanex.services.agent_contracts import AgentPromptCatalog  # noqa: E40
 from agentplanex.services.historical_owner import (  # noqa: E402
     HistoricalOwnerForkService,
 )
-from agentplanex.services.owner_context import ProjectOwnerContextQuery  # noqa: E402
 from agentplanex.settings import load_settings  # noqa: E402
 
 type InputReader = Callable[[str], str]
@@ -46,21 +48,21 @@ def main(
         settings = load_settings()
         prompts = AgentPromptCatalog(settings.runtime.prompts)
         verify_schema(database)
-        contexts = ProjectOwnerContextQuery(database, prompts.summary_context_header)
+        forks = HistoricalOwnerForkService(database, prompts)
     except Exception as error:
         _print_error("database", error, output)
         return 1
 
     if args.print_context:
         try:
-            restored = contexts.restore(
+            restored = forks.restore(
                 args.message_id,
                 summary_id=args.summary_id,
             )
         except Exception as error:
             _print_error("context", error, output)
             return 1
-        _print_context(restored, output)
+        _print_context(restored, prompts.summary_context_header, output)
         return 0
 
     try:
@@ -73,7 +75,7 @@ def main(
                 transport=transport,
             ),
         )
-        fork = HistoricalOwnerForkService(contexts, prompts).open(
+        fork = forks.open(
             args.message_id,
             summary_id=args.summary_id,
             model=model,
@@ -95,7 +97,10 @@ def main(
                     "agent_definition": fork.fidelity.agent_definition,
                     "model": fork.fidelity.model,
                 },
-                "context": _restored_context_json(fork.context),
+                "context": _restored_context_json(
+                    fork.context,
+                    prompts.summary_context_header,
+                ),
             },
             ensure_ascii=False,
         ),
@@ -130,13 +135,20 @@ def main(
         )
 
 
-def _print_context(restored: RestoredOwnerContext, output: TextIO) -> None:
+def _print_context(
+    restored: OwnerContextSnapshot,
+    summary_context_header: str,
+    output: TextIO,
+) -> None:
     print(
         json.dumps(
             {
                 "action": "context",
                 "ok": True,
-                "context": _restored_context_json(restored),
+                "context": _restored_context_json(
+                    restored,
+                    summary_context_header,
+                ),
             },
             ensure_ascii=False,
         ),
@@ -144,7 +156,10 @@ def _print_context(restored: RestoredOwnerContext, output: TextIO) -> None:
     )
 
 
-def _restored_context_json(restored: RestoredOwnerContext) -> dict[str, object]:
+def _restored_context_json(
+    restored: OwnerContextSnapshot,
+    summary_context_header: str,
+) -> dict[str, object]:
     return {
         "triage_id": restored.triage_id,
         "project_owner_session_id": restored.project_owner_session_id,
@@ -153,21 +168,30 @@ def _restored_context_json(restored: RestoredOwnerContext) -> dict[str, object]:
             "sequence": restored.through_sequence,
         },
         "summary": (
-                {
-                    "summary_id": restored.summary_id,
-                    "intent_summary_content": restored.intent_summary_content,
-                    "trajectory_summary_content": (
-                        restored.trajectory_summary_content
-                    ),
-                "covered_through_message_id": restored.covered_through_message_id,
+            {
+                "summary_id": restored.summary.summary_id,
+                "intent_summary_content": restored.summary.intent_summary_content,
+                "trajectory_summary_content": (
+                    restored.summary.trajectory_summary_content
+                ),
+                "covered_through_message_id": (
+                    restored.summary.covered_through_message_id
+                ),
                 "covered_through_sequence": restored.covered_through_sequence,
             }
-            if restored.summary_id is not None
+            if restored.summary is not None
             else None
         ),
         "system_prompt": restored.system_prompt,
         "tools": list(restored.tools),
-        "messages": list(restored.messages),
+        "messages": list(
+            render_checkpoint(
+                system_prompt=restored.system_prompt,
+                summary=restored.summary,
+                message_history=restored.message_history,
+                summary_context_header=summary_context_header,
+            )
+        ),
     }
 
 

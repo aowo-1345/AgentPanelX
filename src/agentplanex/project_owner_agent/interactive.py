@@ -9,11 +9,9 @@ from agentplanex.domains import (
 from agentplanex.project_owner_agent.agent import (
     AgentConfig,
     DefaultAgent,
-    MessageAppender,
-    QueryPreparer,
-    _unchanged_query,
 )
 from agentplanex.project_owner_agent.approval import Approval
+from agentplanex.project_owner_agent.context import OwnerContextManager
 from agentplanex.project_owner_agent.models.base import Message, Model
 
 
@@ -23,18 +21,14 @@ class InteractiveAgent(DefaultAgent):
         model: Model,
         execute_tool: ToolExecutor,
         *,
-        append_messages: MessageAppender,
-        initial_messages: list[Message],
-        prepare_query: QueryPreparer = _unchanged_query,
+        owner_context: OwnerContextManager,
         approval: Approval,
         config: AgentConfig,
     ) -> None:
         super().__init__(
             model,
             execute_tool,
-            append_messages=append_messages,
-            initial_messages=initial_messages,
-            prepare_query=prepare_query,
+            owner_context=owner_context,
             config=config,
         )
         self.approval = approval

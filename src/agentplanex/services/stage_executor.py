@@ -7,12 +7,11 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from agentplanex.agent_contracts import InvocationContract, PromptRole
 from agentplanex.domains import Milestone, Stage, StageRun
 from agentplanex.infrastructure.codex import CodexTurnRequest, CodexTurnTransport
 from agentplanex.services.agent_contracts import (
     AgentPromptCatalog,
-    InvocationContract,
-    PromptRole,
 )
 
 _STAGE_OUTPUT_SCHEMA: dict[str, Any] = {

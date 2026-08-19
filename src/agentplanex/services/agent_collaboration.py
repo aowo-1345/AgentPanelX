@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from agentplanex.agent_contracts import InvocationContract, PromptRole
 from agentplanex.domains import (
     AgentCard,
     AgentCollaborationError,
@@ -34,8 +35,6 @@ from agentplanex.infrastructure.codex import (
 )
 from agentplanex.services.agent_contracts import (
     AgentPromptCatalog,
-    InvocationContract,
-    PromptRole,
     resolve_observation_skill,
 )
 from agentplanex.settings import RuntimeSettings

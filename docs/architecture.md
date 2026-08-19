@@ -170,6 +170,10 @@ SQLite/Git 事实独立读取，不参与调度。它保证：
 
 Project Owner 是长期目标的用户代理。它读取 Message History、Rolling Summary、Project Runtime Context 与当前工作区，通过 ReAct loop 选择 `bash`、`talk_to_agent`、`request_plan_approval`、`update_milestones`、`run_next_milestone` 和 `decide_milestone_candidate` 等 Tool，将一次自然语言目标逐步推进为可审查、可执行、可恢复的交付过程。
 
+`project_owner_agent.context.OwnerContextManager` 统一拥有模型可见上下文：它从 Runtime adapter 取得固定 Activation 检查点的原始 Message/Summary 事实，渲染 System Prompt 与 Invocation Contract，在每次请求前计算完整 token 使用量，并在超限时生成、校验和切换 Rolling Summary。Runtime adapter 只负责追加消息、返回新的上下文修订位置、以 CAS 原子提交 Summary，以及把压缩通知记录到 Timeline；Agent 不接触 SQLite、Repository、Transaction 或 EventBus。Summary 只有在 Runtime 确认提交后才替换内存表示，失败时继续使用完整原始上下文。
+
+Historical Project Owner 使用相同的检查点选择与 Summary/增量消息渲染规则，再叠加只读归因角色指令。旧 Message History、Summary History、Activation 指针和三类 Context Compaction 事件保持原有语义，不需要 Schema 迁移。
+
 每个 Runtime Tool 在对应的 `project_runtime/executions/` 模块内共同定义参数模型、模型可见说明与执行逻辑。`ToolCatalog` 从参数模型生成 provider schema，并在模型调用形成 `Action` 前执行同一份校验；`ProjectExecutions` 对调试或手工调用再次使用该 Contract 后才 dispatch。参数形状只定义一次，依赖当前 Runtime 状态的业务判断仍由 Execution 与 Service 负责。
 
 `bootstrap` 为每个 Workspace 创建一个共享的 OpenAI Responses Transport；Owner 主请求与 Rolling Summary 压缩复用其中的 OpenAI Client。超时和重试由 OpenAI SDK 负责，SDK 重试耗尽后统一抛出 `ModelGatewayError`，并沿 Runtime 现有的未处理异常路径使 Activation 进入 `FAILED`、Context 进入 `BLOCKED`。
@@ -183,7 +187,7 @@ AgentPanelX 不使用单个状态对象描述整个项目。不同事实由最�
 | Project identity、Feature binding、worktree 路径 | Workspace Registry SQLite | Workspace Service / Registry | Project / Feature navigation |
 | 用户意图、Owner 回复、Tool activity | SQLite Message History | Project Owner Service | Conversation |
 | Owner 运行状态与失败 | SQLite Owner Activation | Activation Driver | Runtime / Conversation |
-| Rolling Summary 与 Owner 上下文 | SQLite Context Memory | Owner Context Memory | Owner 下一次激活 |
+| Rolling Summary 与 Owner 上下文 | SQLite Message / Summary History | Project Owner Runtime adapter | Owner ContextManager |
 | Feature 状态、pending action、Plan identity | SQLite Project Runtime Context | Runtime / Planning / Delivery | Board / Runtime |
 | Plan 文档与批准版本 | Git working tree + Plan commit | Project Owner / Planning | Plan panel / Git |
 | Milestone、Stage 与 Candidate | SQLite snapshot + Git refs | Delivery Service / Runner | Milestones / Runtime / Git |
@@ -499,7 +503,7 @@ flowchart LR
 | Project Runtime 协调 | `src/agentplanex/services/project_runtime.py` |
 | Project Owner 与 Activation | `src/agentplanex/services/project_owner.py`, `owner_activation.py` |
 | Owner Tool Contract 与执行 | `src/agentplanex/project_owner_agent/tools/base.py`, `project_runtime/executions/` |
-| Context Memory / Rolling Summary | `src/agentplanex/services/owner_context_memory.py`, `owner_context.py` |
+| Context Management / Rolling Summary | `src/agentplanex/project_owner_agent/context/`, `services/project_owner.py` |
 | Planning 与 Hard Gate | `src/agentplanex/services/planning.py`, `plan_hard_gate.py` |
 | Agent Collaboration | `src/agentplanex/services/agent_collaboration.py`, `agent_contracts.py` |
 | Delivery 状态机与 Runner | `src/agentplanex/services/delivery.py`, `delivery_runner.py` |

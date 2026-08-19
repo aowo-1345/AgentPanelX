@@ -21,7 +21,8 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesTransport,
 )
 from agentplanex.project_runtime import ProjectRuntime
-from agentplanex.services.owner_context import ProjectOwnerContextQuery
+from agentplanex.services.agent_contracts import AgentPromptCatalog
+from agentplanex.services.historical_owner import HistoricalOwnerForkService
 from agentplanex.settings import (
     DEFAULT_SETTINGS_PATH,
     ContextMemorySettings,
@@ -563,20 +564,23 @@ def test_attribution_uses_the_summary_available_at_its_checkpoint(
     assert first.activation.summary_id is not None
     assert future.activation is not None
     assert future.activation.summary_id is not None
-    contexts = ProjectOwnerContextQuery(
+    contexts = HistoricalOwnerForkService(
         SQLiteDatabase.for_project(project_path),
-        settings.runtime.prompts.summary_context_header,
+        AgentPromptCatalog(settings.runtime.prompts),
     )
     selected_summary_id = contexts.latest_summary_id_through(checkpoint.message_id)
 
     assert selected_summary_id == first.activation.summary_id
-    assert contexts.restore(checkpoint.message_id).summary_id is None
+    assert contexts.restore(checkpoint.message_id).summary is None
     restored = contexts.restore(
         checkpoint.message_id,
         summary_id=selected_summary_id,
     )
-    assert restored.summary_id == first.activation.summary_id
-    assert restored.messages[-1]["content"] == "historical checkpoint"
+    assert restored.summary is not None
+    assert restored.summary.summary_id == first.activation.summary_id
+    assert restored.message_history[-1].message[-1]["content"] == (
+        "historical checkpoint"
+    )
     with pytest.raises(ValueError, match="must not follow activation message"):
         contexts.restore(
             checkpoint.message_id,

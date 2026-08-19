@@ -39,8 +39,6 @@ from agentplanex.services.owner_activation import (
     ActivationDriveResult,
     OwnerActivationDriver,
 )
-from agentplanex.services.owner_context import ProjectOwnerContextQuery
-from agentplanex.services.owner_context_memory import ProjectOwnerContextMemory
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning import PlanDecision
 from agentplanex.services.project_workspace import (
@@ -82,10 +80,6 @@ class ProjectRuntime:
             project_path,
             settings.runtime,
             observation_skill=observation_skill,
-        )
-        owner_contexts = ProjectOwnerContextQuery(
-            database,
-            collaboration.prompts.summary_context_header,
         )
         hard_gate = CodexPlanHardGate(collaboration)
         planning = PlanningService(
@@ -132,13 +126,6 @@ class ProjectRuntime:
             collaboration,
             event_bus,
         )
-        context_memory = ProjectOwnerContextMemory(
-            database=database,
-            settings=settings,
-            tools=executions.tools,
-            responses=responses,
-            event_bus=event_bus,
-        )
         owner = ProjectOwnerService(
             database=database,
             settings=settings,
@@ -146,8 +133,6 @@ class ProjectRuntime:
             tools=executions.tools,
             tool_executor=executions.execute,
             event_bus=event_bus,
-            owner_contexts=owner_contexts,
-            context_memory=context_memory,
             responses=responses,
             observation_skill=collaboration.observation_skill,
             prompts=collaboration.prompts,

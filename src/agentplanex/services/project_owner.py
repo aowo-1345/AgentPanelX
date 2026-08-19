@@ -2,11 +2,11 @@
 
 import os
 import sqlite3
-from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import uuid4
 
+from agentplanex.agent_contracts import InvocationContract, PromptRole
 from agentplanex.domains import (
     Action,
     AgentExit,
@@ -20,17 +20,29 @@ from agentplanex.domains import (
     ProjectOwnerAgent,
     ProjectOwnerTask,
     ProjectRuntimeContext,
+    SummaryHistory,
     ToolExecutionResult,
     ToolExecutor,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
+    SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteProjectRuntimeContextRepository,
+    SQLiteSummaryHistoryRepository,
 )
 from agentplanex.project_owner_agent.agent import AgentConfig, DefaultAgent
 from agentplanex.project_owner_agent.approval import ApprovalMode, TerminalApproval
+from agentplanex.project_owner_agent.context import (
+    ContextCompactionNotice,
+    ContextCompactionPhase,
+    OwnerContextManager,
+    OwnerContextPolicy,
+    OwnerContextRevision,
+    OwnerContextSnapshot,
+    SummaryDraft,
+)
 from agentplanex.project_owner_agent.exception import AgentFlowExit
 from agentplanex.project_owner_agent.interactive import InteractiveAgent
 from agentplanex.project_owner_agent.models.responses import (
@@ -42,12 +54,8 @@ from agentplanex.project_owner_agent.models.responses import (
 from agentplanex.project_owner_agent.tools import ToolCatalog
 from agentplanex.services.agent_contracts import (
     AgentPromptCatalog,
-    InvocationContract,
-    PromptRole,
 )
 from agentplanex.services.event_bus import EventBus
-from agentplanex.services.owner_context import ProjectOwnerContextQuery
-from agentplanex.services.owner_context_memory import ProjectOwnerContextMemory
 from agentplanex.settings import Settings
 
 
@@ -61,8 +69,6 @@ class ProjectOwnerService:
     tools: ToolCatalog
     tool_executor: ToolExecutor
     event_bus: EventBus
-    owner_contexts: ProjectOwnerContextQuery
-    context_memory: ProjectOwnerContextMemory
     responses: ResponsesClient
     observation_skill: Path
     prompts: AgentPromptCatalog
@@ -74,6 +80,12 @@ class ProjectOwnerService:
     )
     messages: SQLiteMessageHistoryRepository = field(
         default_factory=SQLiteMessageHistoryRepository
+    )
+    summaries: SQLiteSummaryHistoryRepository = field(
+        default_factory=SQLiteSummaryHistoryRepository
+    )
+    activations: SQLiteOwnerActivationRepository = field(
+        default_factory=SQLiteOwnerActivationRepository
     )
 
     def __post_init__(self) -> None:
@@ -134,11 +146,11 @@ class ProjectOwnerService:
     def run_activation(self, activation: OwnerActivation) -> AgentExit:
         """Restore persisted Owner history and run exactly one activation."""
         try:
-            context, messages = self._load_state_for_activation(activation)
+            context = self._load_state_for_activation(activation)
             owner = context.project_owner_agent
             if owner is None:
                 raise RuntimeError("Project Owner was not restored")
-            agent = self._build_agent(messages, owner.system_prompt, owner, activation)
+            agent = self._build_agent(context, owner, activation)
         except Exception as error:
             return _unhandled_exit(error)
 
@@ -186,7 +198,7 @@ class ProjectOwnerService:
     ) -> ToolExecutionResult:
         """Execute and persist one Tool step inside a claimed manual Owner loop."""
 
-        context, _ = self._load_state_for_activation(
+        context = self._load_state_for_activation(
             activation,
             allow_advanced_checkpoint=True,
         )
@@ -223,7 +235,7 @@ class ProjectOwnerService:
         reply = content.strip()
         if not reply:
             raise ValueError("Project Owner reply must not be empty")
-        context, _ = self._load_state_for_activation(
+        context = self._load_state_for_activation(
             activation,
             allow_advanced_checkpoint=True,
         )
@@ -235,7 +247,7 @@ class ProjectOwnerService:
         activation: OwnerActivation,
         *,
         allow_advanced_checkpoint: bool = False,
-    ) -> tuple[ProjectRuntimeContext, tuple[Message, ...]]:
+    ) -> ProjectRuntimeContext:
         if activation.status is not OwnerActivationStatus.RUNNING:
             raise ValueError(
                 "Project Owner can only run a claimed activation: "
@@ -258,18 +270,13 @@ class ProjectOwnerService:
                     "Owner activation checkpoint is not the current message: "
                     f"{activation.message_id} != {owner.message_id}"
                 )
-            messages = self._load_messages(connection, owner, activation)
-            messages = self._with_activation_contract(messages, context, activation)
-        return context, messages
+        return context
 
-    def _with_activation_contract(
+    def _invocation_contract(
         self,
-        messages: tuple[Message, ...],
         context: ProjectRuntimeContext,
         activation: OwnerActivation,
-    ) -> tuple[Message, ...]:
-        if not messages or messages[0].get("role") != "system":
-            raise RuntimeError("Restored Owner context has no System Prompt")
+    ) -> InvocationContract:
         fixed_work_object = {
             "activation_id": activation.activation_id,
             "message_id": activation.message_id,
@@ -290,31 +297,25 @@ class ProjectOwnerService:
             "current_stage_key": context.current_stage_key,
             "current_candidate_commit_sha": context.current_candidate_commit_sha,
         }
-        envelope = self.prompts.render_invocation(
-            InvocationContract(
-                role=PromptRole.PROJECT_OWNER,
-                operation=f"owner_activation:{activation.task_type.value}",
-                project_root=self.database.path.parent.parent,
-                observation_skill=self.observation_skill,
-                triage_id=context.triage_id,
-                fixed_work_object=fixed_work_object,
-                workspace={
-                    "project_repository": "read_only",
-                    "runtime_mutation": "exposed_tools_only",
-                },
-                output_contract={
-                    "one_of": ["tool_action", "concise_user_reply"],
-                },
-            )
+        return InvocationContract(
+            role=PromptRole.PROJECT_OWNER,
+            operation=f"owner_activation:{activation.task_type.value}",
+            project_root=self.database.path.parent.parent,
+            observation_skill=self.observation_skill,
+            triage_id=context.triage_id,
+            fixed_work_object=fixed_work_object,
+            workspace={
+                "project_repository": "read_only",
+                "runtime_mutation": "exposed_tools_only",
+            },
+            output_contract={
+                "one_of": ["tool_action", "concise_user_reply"],
+            },
         )
-        system = dict(messages[0])
-        system["content"] = f"{system.get('content', '')}\n\n{envelope}"
-        return (system, *messages[1:])
 
     def _build_agent(
         self,
-        messages: tuple[Message, ...],
-        system_prompt: str,
+        context: ProjectRuntimeContext,
         owner: ProjectOwnerAgent,
         activation: OwnerActivation,
     ) -> DefaultAgent:
@@ -325,39 +326,52 @@ class ProjectOwnerService:
             responses=self.responses,
         )
         config = AgentConfig(
-            system_prompt=system_prompt,
             step_limit=owner_settings.step_limit,
             max_consecutive_format_errors=owner_settings.max_consecutive_format_errors,
         )
-
-        def prepare_query(
-            context: ProjectRuntimeContext,
-            query_index: int,
-            current: Sequence[Message],
-        ) -> Sequence[Message]:
-            return self.context_memory.prepare_query(
-                context,
-                activation,
-                query_index,
-                current,
-            )
+        owner_context = OwnerContextManager.restore(
+            runtime=self,
+            runtime_context=context,
+            activation=activation,
+            invocation=self._invocation_contract(context, activation),
+            observation_instruction=(
+                self.settings.runtime.prompts.observation_instruction
+            ),
+            policy=OwnerContextPolicy(
+                model_name=owner_settings.selected_model.name,
+                capacity_tokens=owner_settings.context_memory.capacity_tokens,
+                compaction_threshold=(
+                    owner_settings.context_memory.compaction_threshold
+                ),
+                summary_context_header=(
+                    self.settings.runtime.prompts.summary_context_header
+                ),
+                trajectory_summary_prompt=(
+                    self.settings.runtime.prompts.trajectory_summary
+                ),
+                initial_intent_summary_prompt=(
+                    self.settings.runtime.prompts.initial_intent_summary
+                ),
+                update_intent_summary_prompt=(
+                    self.settings.runtime.prompts.update_intent_summary
+                ),
+            ),
+            tools=fixed_tools,
+            summary_model=self.responses,
+        )
 
         return (
             DefaultAgent(
                 model,
                 self._execute_latest_context,
-                append_messages=self.append_messages,
-                initial_messages=messages,
-                prepare_query=prepare_query,
+                owner_context=owner_context,
                 config=config,
             )
             if self.approval_mode == "yolo"
             else InteractiveAgent(
                 model,
                 self._execute_latest_context,
-                append_messages=self.append_messages,
-                initial_messages=list(messages),
-                prepare_query=prepare_query,
+                owner_context=owner_context,
                 approval=TerminalApproval(
                     require_tty=os.getenv(
                         "AGENTPLANEX_REQUIRE_INTERACTIVE_TERMINAL", "1"
@@ -386,10 +400,8 @@ class ProjectOwnerService:
         self,
         context: ProjectRuntimeContext,
         appended: tuple[Message, ...],
-    ) -> None:
+    ) -> OwnerContextRevision:
         """Atomically append native Owner messages and advance its checkpoint."""
-        if not appended:
-            return
         owner = context.project_owner_agent
         if owner is None:
             raise ValueError("Project Runtime Context has no Project Owner Agent")
@@ -404,7 +416,99 @@ class ProjectOwnerService:
                     "Project Owner Agent not found: "
                     f"{owner.project_owner_session_id}"
                 )
-            self._append_messages(connection, persisted_owner, appended)
+            if appended:
+                message_id = self._append_messages(
+                    connection,
+                    persisted_owner,
+                    appended,
+                )
+            elif persisted_owner.message_id is not None:
+                message_id = persisted_owner.message_id
+            else:
+                raise RuntimeError("Project Owner has no persisted message checkpoint")
+        return OwnerContextRevision(
+            message_id=message_id,
+            summary_id=persisted_owner.summary_id,
+        )
+
+    def commit_summary(
+        self,
+        context: ProjectRuntimeContext,
+        activation: OwnerActivation,
+        *,
+        expected_revision: OwnerContextRevision,
+        query_index: int,
+        draft: SummaryDraft,
+    ) -> SummaryHistory:
+        """Atomically persist one Agent-produced Summary at an expected revision."""
+
+        owner = context.project_owner_agent
+        if owner is None:
+            raise ValueError("Project Runtime Context has no Project Owner Agent")
+        summary = SummaryHistory(
+            project_owner_session_id=owner.project_owner_session_id,
+            summary_id=uuid4().hex,
+            covered_through_message_id=expected_revision.message_id,
+            intent_summary_content=draft.intent_summary_content,
+            trajectory_summary_content=draft.trajectory_summary_content,
+        )
+        with self.database.transaction() as connection:
+            self.summaries.insert(connection, summary)
+            self.owners.advance_summary(
+                connection,
+                session_id=owner.project_owner_session_id,
+                expected_message_id=expected_revision.message_id,
+                expected_summary_id=expected_revision.summary_id,
+                summary_id=summary.summary_id,
+            )
+            if query_index == 0:
+                self.activations.set_initial_summary(
+                    connection,
+                    activation.activation_id,
+                    summary.summary_id,
+                )
+        return summary
+
+    def record_compaction(
+        self,
+        context: ProjectRuntimeContext,
+        activation: OwnerActivation,
+        notice: ContextCompactionNotice,
+    ) -> None:
+        """Map an Agent context notice to the stable Runtime Timeline contract."""
+
+        event_type = {
+            ContextCompactionPhase.STARTED: (
+                ExecutionEventType.CONTEXT_COMPACTION_STARTED
+            ),
+            ContextCompactionPhase.COMPLETED: (
+                ExecutionEventType.CONTEXT_COMPACTION_COMPLETED
+            ),
+            ContextCompactionPhase.FAILED: (
+                ExecutionEventType.CONTEXT_COMPACTION_FAILED
+            ),
+        }[notice.phase]
+        payload: dict[str, object] = {
+            "compaction_id": notice.compaction_id,
+            "activation_id": activation.activation_id,
+            "query_index": notice.query_index,
+            "covered_through_message_id": notice.covered_through_message_id,
+            "estimated_tokens": notice.estimated_tokens,
+            "capacity_tokens": notice.capacity_tokens,
+            "compaction_threshold": notice.compaction_threshold,
+        }
+        if notice.summary_id is not None:
+            payload["summary_id"] = notice.summary_id
+        if notice.failure_type is not None:
+            payload["failure_type"] = notice.failure_type
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=context.triage_id,
+                event_type=event_type,
+                react_loop_id=activation.activation_id,
+                payload=payload,
+            )
+        )
 
     def _append_messages(
         self,
@@ -428,35 +532,149 @@ class ProjectOwnerService:
         )
         return history.message_id
 
-    def _load_messages(
+    def load_context(
         self,
-        connection: sqlite3.Connection,
-        owner: ProjectOwnerAgent,
+        context: ProjectRuntimeContext,
         activation: OwnerActivation,
-    ) -> tuple[Message, ...]:
-        latest = self.messages.get_latest_by_session_id(
+    ) -> OwnerContextSnapshot:
+        """Load raw persisted facts for one fixed Activation checkpoint."""
+
+        owner = context.project_owner_agent
+        if owner is None:
+            raise ValueError("Project Runtime Context has no Project Owner Agent")
+        restored = restore_owner_context(
+            self.database,
+            activation.message_id,
+            summary_id=activation.summary_id,
+        )
+        if (
+            restored.triage_id != owner.triage_id
+            or restored.project_owner_session_id
+            != owner.project_owner_session_id
+        ):
+            raise RuntimeError(
+                "Restored Owner context does not match the Activation owner"
+            )
+        if restored.revision.message_id != activation.message_id:
+            raise RuntimeError(
+                "Owner activation checkpoint changed while restoring context"
+            )
+        return restored
+
+
+def restore_owner_context(
+    database: SQLiteDatabase,
+    through_message_id: str,
+    *,
+    summary_id: str | None = None,
+) -> OwnerContextSnapshot:
+    """Select raw persisted Owner facts through one immutable checkpoint."""
+
+    checkpoint_id = through_message_id.strip()
+    if not checkpoint_id:
+        raise ValueError("through_message_id must not be empty")
+    selected_summary_id = summary_id.strip() if summary_id is not None else None
+    if selected_summary_id == "":
+        raise ValueError("summary_id must not be empty")
+
+    owners = SQLiteProjectOwnerAgentRepository()
+    messages = SQLiteMessageHistoryRepository()
+    summaries = SQLiteSummaryHistoryRepository()
+    with database.read_only_connection() as connection:
+        through = messages.get(connection, checkpoint_id)
+        if through is None:
+            raise LookupError(f"Message checkpoint not found: {checkpoint_id}")
+        owner = owners.get_by_session_id(
+            connection,
+            through.project_owner_session_id,
+        )
+        if owner is None:
+            raise LookupError(
+                "Project Owner Agent not found for message checkpoint: "
+                f"{checkpoint_id}"
+            )
+        if owner.message_id is None:
+            raise RuntimeError("Project Owner has no persisted message checkpoint")
+        latest = messages.get_latest_by_session_id(
             connection,
             owner.project_owner_session_id,
         )
         latest_id = latest.message_id if latest is not None else None
         if latest_id != owner.message_id:
             raise RuntimeError(
-                "Project Owner Agent latest message pointer does not match message history"
+                "Project Owner Agent latest message pointer does not match "
+                "message history"
             )
 
-        restored = self.owner_contexts.restore_in_connection(
+        summary: SummaryHistory | None = None
+        if selected_summary_id is not None:
+            summary = summaries.get(connection, selected_summary_id)
+            if summary is None:
+                raise LookupError(f"Summary not found: {selected_summary_id}")
+            if summary.project_owner_session_id != owner.project_owner_session_id:
+                raise ValueError(
+                    "Summary does not belong to Owner session: "
+                    f"{selected_summary_id}"
+                )
+        histories = messages.list_between_checkpoints(
             connection,
-            activation.message_id,
-            summary_id=activation.summary_id,
+            owner.project_owner_session_id,
+            after_message_id=(
+                summary.covered_through_message_id if summary is not None else None
+            ),
+            through_message_id=checkpoint_id,
         )
-        if (
-            restored.triage_id != owner.triage_id
-            or restored.project_owner_session_id != owner.project_owner_session_id
-        ):
-            raise RuntimeError(
-                "Restored Owner context does not match the Activation owner"
+        covered_through_sequence: int | None = None
+        if summary is not None:
+            watermark = messages.get(
+                connection,
+                summary.covered_through_message_id,
             )
-        return restored.messages
+            if watermark is None:
+                raise LookupError(
+                    "Summary watermark not found: "
+                    f"{summary.covered_through_message_id}"
+                )
+            covered_through_sequence = watermark.sequence
+
+    return OwnerContextSnapshot(
+        triage_id=owner.triage_id,
+        project_owner_session_id=owner.project_owner_session_id,
+        through_message_id=through.message_id,
+        through_sequence=through.sequence,
+        system_prompt=owner.system_prompt,
+        tools=owner.tools,
+        summary=summary,
+        covered_through_sequence=covered_through_sequence,
+        message_history=histories,
+        revision=OwnerContextRevision(
+            message_id=owner.message_id,
+            summary_id=owner.summary_id,
+        ),
+    )
+
+
+def latest_owner_summary_id_through(
+    database: SQLiteDatabase,
+    through_message_id: str,
+) -> str | None:
+    """Resolve the newest Summary whose watermark does not pass a checkpoint."""
+
+    checkpoint_id = through_message_id.strip()
+    if not checkpoint_id:
+        raise ValueError("through_message_id must not be empty")
+    messages = SQLiteMessageHistoryRepository()
+    summaries = SQLiteSummaryHistoryRepository()
+    with database.read_only_connection() as connection:
+        through = messages.get(connection, checkpoint_id)
+        if through is None:
+            raise LookupError(f"Message checkpoint not found: {checkpoint_id}")
+        summary = summaries.latest_through_message(
+            connection,
+            through.project_owner_session_id,
+            through.sequence,
+        )
+    return summary.summary_id if summary is not None else None
 
 
 def _unhandled_exit(error: Exception) -> AgentExit:

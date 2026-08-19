@@ -43,7 +43,6 @@ from agentplanex.domains.owner_activation import (
     OwnerActivationMode,
     OwnerActivationStatus,
 )
-from agentplanex.domains.owner_context import RestoredOwnerContext
 from agentplanex.domains.project_owner_agent import ProjectOwnerAgent
 from agentplanex.domains.project_runtime_context import ProjectRuntimeContext
 from agentplanex.domains.summary_history import SummaryHistory
@@ -103,7 +102,6 @@ __all__ = [
     "ProjectOwnerTaskType",
     "ProjectRuntimeContext",
     "ResolvedArtifact",
-    "RestoredOwnerContext",
     "RuntimeContextChangeReason",
     "Stage",
     "StageRun",

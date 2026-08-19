@@ -1,6 +1,5 @@
 """Minimal Agent control loop adapted from Mini-SWE-Agent."""
 
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Never
 
@@ -9,6 +8,7 @@ from agentplanex.domains import (
     ToolExecutionResult,
     ToolExecutor,
 )
+from agentplanex.project_owner_agent.context import OwnerContextManager
 from agentplanex.project_owner_agent.exception import (
     FormatError,
     RepeatedFormatError,
@@ -18,31 +18,13 @@ from agentplanex.project_owner_agent.exception import (
 )
 from agentplanex.project_owner_agent.models.base import Message, Model
 
-type MessageAppender = Callable[
-    [ProjectRuntimeContext, tuple[Message, ...]], None
-]
-type QueryPreparer = Callable[
-    [ProjectRuntimeContext, int, Sequence[Message]], Sequence[Message]
-]
-
-
-def _unchanged_query(
-    _context: ProjectRuntimeContext,
-    _query_index: int,
-    messages: Sequence[Message],
-) -> Sequence[Message]:
-    return messages
-
 
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
-    system_prompt: str
     step_limit: int = 20
     max_consecutive_format_errors: int = 3
 
     def __post_init__(self) -> None:
-        if not self.system_prompt.strip():
-            raise ValueError("system_prompt must not be empty")
         if self.step_limit <= 0:
             raise ValueError("step_limit must be positive")
         if self.max_consecutive_format_errors <= 0:
@@ -55,32 +37,19 @@ class DefaultAgent:
         model: Model,
         execute_tool: ToolExecutor,
         *,
-        append_messages: MessageAppender,
-        initial_messages: Sequence[Message] = (),
-        prepare_query: QueryPreparer = _unchanged_query,
+        owner_context: OwnerContextManager,
         config: AgentConfig,
     ) -> None:
         self.model = model
         self.execute_tool = execute_tool
-        self.append_persisted_messages = append_messages
-        self.prepare_query_messages = prepare_query
+        self.owner_context = owner_context
         self.config = config
-        self.messages = [dict(message) for message in initial_messages]
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
 
     def run(self, context: ProjectRuntimeContext, task: str = "") -> Never:
-        initial: list[Message] = []
-        if not self.messages:
-            initial.append(
-                {"role": "system", "content": self.config.system_prompt}
-            )
         if task:
-            initial.append({"role": "user", "content": task})
-        if initial:
-            self.add_messages(context, *initial)
-        if not self.messages:
-            raise ValueError("Agent has no message history or new task")
+            self.add_messages(context, {"role": "user", "content": task})
 
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
@@ -113,17 +82,10 @@ class DefaultAgent:
         """Query the model, persisting only a terminal reply here."""
         if self.n_calls >= self.config.step_limit:
             raise StepLimitExceeded()
-        self.messages = [
-            dict(message)
-            for message in self.prepare_query_messages(
-                context,
-                self.n_calls,
-                self.messages,
-            )
-        ]
+        messages = list(self.owner_context.prepare_query(self.n_calls))
         self.n_calls += 1
         try:
-            message = self.model.query(self.messages)
+            message = self.model.query(messages)
         except ReplyToHuman as error:
             self.add_messages(context, error.response)
             raise
@@ -166,7 +128,5 @@ class DefaultAgent:
         context: ProjectRuntimeContext,
         *messages: Message,
     ) -> list[Message]:
-        appended = tuple(dict(message) for message in messages)
-        self.append_persisted_messages(context, appended)
-        self.messages.extend(appended)
+        appended = self.owner_context.append(messages)
         return list(appended)
