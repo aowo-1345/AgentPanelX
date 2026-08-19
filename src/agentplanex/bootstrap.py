@@ -30,14 +30,14 @@ def create_project_runtime(
         responses_transport=(
             responses_transport
             if responses_transport is not None
-            else _create_responses_transport(configured)
+            else create_responses_transport(configured)
         ),
     )
 
 
 def create_workspace(settings: Settings) -> WorkspaceService:
     """Compose the user-level Workspace over real Registry, Git, and Runtimes."""
-    responses_transport = _create_responses_transport(settings)
+    responses_transport = create_responses_transport(settings)
     registry = WorkspaceRegistry.at(settings.workspace.data_home / "registry.sqlite3")
     registry.initialize()
     git = WorkspaceGit()
@@ -59,7 +59,8 @@ def create_workspace(settings: Settings) -> WorkspaceService:
     )
 
 
-def _create_responses_transport(settings: Settings) -> OpenAIResponsesTransport:
+def create_responses_transport(settings: Settings) -> OpenAIResponsesTransport:
+    """Create the configured OpenAI transport at a composition boundary."""
     model = settings.project_owner_agent.selected_model
     return OpenAIResponsesTransport(
         base_url=model.base_url,

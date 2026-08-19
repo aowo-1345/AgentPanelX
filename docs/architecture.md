@@ -103,6 +103,7 @@ flowchart TB
         DB[(SQLite)]
         Git[(Git / Worktrees / Refs)]
         Codex[Codex CLI Transport]
+        ModelGateway[Shared OpenAI Responses Transport]
         Sandbox[Local Shell / Bubblewrap]
     end
 
@@ -117,6 +118,7 @@ flowchart TB
     Orchestration --> Git
     Collaboration --> Codex
     StageExecutor --> Codex
+    OwnerService --> ModelGateway
     OwnerService --> Sandbox
     API --> WorkspaceService
 ```
@@ -157,6 +159,8 @@ Feature 的 `ProjectRuntime.drive_until_waiting()`；容量已满或 Feature 正
 ### Project Owner Agent
 
 Project Owner 是长期目标的用户代理。它读取 Message History、Rolling Summary、Project Runtime Context 与当前工作区，通过 ReAct loop 选择 `bash`、`talk_to_agent`、`request_plan_approval`、`update_milestones`、`run_next_milestone` 和 `decide_milestone_candidate` 等 Tool，将一次自然语言目标逐步推进为可审查、可执行、可恢复的交付过程。
+
+`bootstrap` 为每个 Workspace 创建一个共享的 OpenAI Responses Transport；Owner 主请求与 Rolling Summary 压缩复用其中的 OpenAI Client。超时和重试由 OpenAI SDK 负责，SDK 重试耗尽后统一抛出 `ModelGatewayError`，并沿 Runtime 现有的未处理异常路径使 Activation 进入 `FAILED`、Context 进入 `BLOCKED`。
 
 ## 4. 权威数据与读写边界
 
