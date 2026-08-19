@@ -60,32 +60,52 @@ class ContextCompactionPhase(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
-class ContextCompactionNotice:
-    """Agent-owned compaction fact for Runtime Timeline persistence."""
+class ContextCompactionAttempt:
+    """Invariant metadata shared by one compaction lifecycle."""
 
-    phase: ContextCompactionPhase
     compaction_id: str
     query_index: int
-    covered_through_message_id: str
     estimated_tokens: int
     capacity_tokens: int
     compaction_threshold: float
-    summary_id: str | None = None
-    failure_type: str | None = None
 
     def __post_init__(self) -> None:
         if not self.compaction_id.strip():
             raise ValueError("compaction_id must not be empty")
         if self.query_index < 0:
             raise ValueError("query_index must not be negative")
-        if not self.covered_through_message_id.strip():
-            raise ValueError("covered_through_message_id must not be empty")
         if self.estimated_tokens < 0:
             raise ValueError("estimated_tokens must not be negative")
         if self.capacity_tokens <= 0:
             raise ValueError("capacity_tokens must be positive")
         if not 0 < self.compaction_threshold <= 1:
             raise ValueError("compaction_threshold must be within (0, 1]")
+
+    def notice(
+        self,
+        phase: ContextCompactionPhase,
+        *,
+        summary_id: str | None = None,
+        failure_type: str | None = None,
+    ) -> "ContextCompactionNotice":
+        return ContextCompactionNotice(
+            attempt=self,
+            phase=phase,
+            summary_id=summary_id,
+            failure_type=failure_type,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCompactionNotice:
+    """One phase transition in an Agent-owned compaction attempt."""
+
+    attempt: ContextCompactionAttempt
+    phase: ContextCompactionPhase
+    summary_id: str | None = None
+    failure_type: str | None = None
+
+    def __post_init__(self) -> None:
         if (self.phase is ContextCompactionPhase.COMPLETED) != (
             self.summary_id is not None
         ):

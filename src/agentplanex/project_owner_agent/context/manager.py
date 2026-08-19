@@ -14,6 +14,7 @@ from agentplanex.domains import (
     SummaryHistory,
 )
 from agentplanex.project_owner_agent.context.compaction import (
+    ContextCompactionAttempt,
     ContextCompactionNotice,
     ContextCompactionPhase,
     OwnerContextPolicy,
@@ -24,20 +25,6 @@ from agentplanex.project_owner_agent.context.compaction import (
 )
 from agentplanex.project_owner_agent.context.rendering import render_owner_context, render_summary
 from agentplanex.project_owner_agent.tools import ToolCatalog
-
-
-@dataclass(frozen=True, slots=True)
-class OwnerContextRevision:
-    """A Runtime-issued position that the Agent carries without interpreting."""
-
-    message_id: str
-    summary_id: str | None
-
-    def __post_init__(self) -> None:
-        if not self.message_id.strip():
-            raise ValueError("message_id must not be empty")
-        if self.summary_id is not None and not self.summary_id.strip():
-            raise ValueError("summary_id must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +40,6 @@ class OwnerContextSnapshot:
     summary: SummaryHistory | None
     covered_through_sequence: int | None
     message_history: tuple[MessageHistory, ...]
-    revision: OwnerContextRevision
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -88,6 +74,22 @@ class OwnerContextSnapshot:
                 raise ValueError("Message history must follow Summary watermark")
 
 
+@dataclass(frozen=True, slots=True)
+class LoadedOwnerContext:
+    """A bounded checkpoint projection plus an opaque live Runtime revision."""
+
+    snapshot: OwnerContextSnapshot
+    revision: object
+
+
+@dataclass(frozen=True, slots=True)
+class CommittedOwnerSummary:
+    """A persisted Summary and the opaque revision created by its commit."""
+
+    summary: SummaryHistory
+    revision: object
+
+
 class OwnerContextRuntime(Protocol):
     """Runtime effects required by one live Owner context."""
 
@@ -95,29 +97,33 @@ class OwnerContextRuntime(Protocol):
         self,
         context: ProjectRuntimeContext,
         activation: OwnerActivation,
-    ) -> OwnerContextSnapshot: ...
+    ) -> LoadedOwnerContext: ...
 
     def append_messages(
         self,
         context: ProjectRuntimeContext,
         appended: tuple[Message, ...],
-    ) -> OwnerContextRevision: ...
+        *,
+        expected_revision: object,
+    ) -> object: ...
 
     def commit_summary(
         self,
         context: ProjectRuntimeContext,
         activation: OwnerActivation,
         *,
-        expected_revision: OwnerContextRevision,
+        expected_revision: object,
         query_index: int,
         draft: SummaryDraft,
-    ) -> SummaryHistory: ...
+    ) -> CommittedOwnerSummary: ...
 
     def record_compaction(
         self,
         context: ProjectRuntimeContext,
         activation: OwnerActivation,
         notice: ContextCompactionNotice,
+        *,
+        revision: object,
     ) -> None: ...
 
 
@@ -131,7 +137,8 @@ class OwnerContextManager:
         runtime_context: ProjectRuntimeContext,
         activation: OwnerActivation,
         messages: Sequence[Message],
-        revision: OwnerContextRevision,
+        revision: object,
+        has_source_summary: bool,
         policy: OwnerContextPolicy,
         tools: ToolCatalog,
         summary_model: SummaryModel,
@@ -144,6 +151,7 @@ class OwnerContextManager:
         self._policy = policy
         self._tools = tools
         self._summary_model = summary_model
+        self._has_source_summary = has_source_summary
 
     @classmethod
     def restore(
@@ -160,7 +168,8 @@ class OwnerContextManager:
     ) -> "OwnerContextManager":
         """Load raw checkpoint facts and render the initial model view."""
 
-        snapshot = runtime.load_context(runtime_context, activation)
+        loaded = runtime.load_context(runtime_context, activation)
+        snapshot = loaded.snapshot
         if snapshot.triage_id != runtime_context.triage_id:
             raise RuntimeError("Restored Owner context does not match Runtime context")
         if snapshot.through_message_id != activation.message_id:
@@ -185,7 +194,8 @@ class OwnerContextManager:
                 observation_instruction=observation_instruction,
                 summary_context_header=policy.summary_context_header,
             ),
-            revision=snapshot.revision,
+            revision=loaded.revision,
+            has_source_summary=snapshot.summary is not None,
             policy=policy,
             tools=tools,
             summary_model=summary_model,
@@ -210,64 +220,56 @@ class OwnerContextManager:
         ):
             return frozen
 
-        compaction_id = uuid4().hex
-        covered_through_message_id = self._revision.message_id
-        self._record_notice(
-            ContextCompactionPhase.STARTED,
-            compaction_id=compaction_id,
+        attempt = ContextCompactionAttempt(
+            compaction_id=uuid4().hex,
             query_index=query_index,
-            covered_through_message_id=covered_through_message_id,
             estimated_tokens=estimate,
             capacity_tokens=self._policy.capacity_tokens,
             compaction_threshold=self._policy.compaction_threshold,
         )
+        attempt_revision = self._revision
+        self._record_notice(
+            attempt.notice(ContextCompactionPhase.STARTED),
+            revision=attempt_revision,
+        )
         try:
             draft = generate_summary(
                 frozen,
-                has_source_summary=self._revision.summary_id is not None,
+                has_source_summary=self._has_source_summary,
                 policy=self._policy,
                 tools=self._tools,
                 model=self._summary_model,
             )
-            summary = self._runtime.commit_summary(
+            committed = self._runtime.commit_summary(
                 self._runtime_context,
                 self._activation,
-                expected_revision=self._revision,
+                expected_revision=attempt_revision,
                 query_index=query_index,
                 draft=draft,
             )
-            if summary.covered_through_message_id != self._revision.message_id:
-                raise RuntimeError("Committed Summary does not match context revision")
         except Exception as error:
             self._record_notice(
-                ContextCompactionPhase.FAILED,
-                compaction_id=compaction_id,
-                query_index=query_index,
-                covered_through_message_id=covered_through_message_id,
-                estimated_tokens=estimate,
-                capacity_tokens=self._policy.capacity_tokens,
-                compaction_threshold=self._policy.compaction_threshold,
-                failure_type=type(error).__name__,
+                attempt.notice(
+                    ContextCompactionPhase.FAILED,
+                    failure_type=type(error).__name__,
+                ),
+                revision=attempt_revision,
             )
             return frozen
 
-        self._revision = OwnerContextRevision(
-            message_id=self._revision.message_id,
-            summary_id=summary.summary_id,
-        )
+        summary = committed.summary
+        self._revision = committed.revision
+        self._has_source_summary = True
         self._messages = [
             dict(frozen[0]),
             *render_summary(summary, self._policy.summary_context_header),
         ]
         self._record_notice(
-            ContextCompactionPhase.COMPLETED,
-            compaction_id=compaction_id,
-            query_index=query_index,
-            covered_through_message_id=covered_through_message_id,
-            estimated_tokens=estimate,
-            capacity_tokens=self._policy.capacity_tokens,
-            compaction_threshold=self._policy.compaction_threshold,
-            summary_id=summary.summary_id,
+            attempt.notice(
+                ContextCompactionPhase.COMPLETED,
+                summary_id=summary.summary_id,
+            ),
+            revision=attempt_revision,
         )
         return tuple(dict(message) for message in self._messages)
 
@@ -280,6 +282,7 @@ class OwnerContextManager:
         revision = self._runtime.append_messages(
             self._runtime_context,
             appended,
+            expected_revision=self._revision,
         )
         self._messages.extend(appended)
         self._revision = revision
@@ -287,29 +290,13 @@ class OwnerContextManager:
 
     def _record_notice(
         self,
-        phase: ContextCompactionPhase,
+        notice: ContextCompactionNotice,
         *,
-        compaction_id: str,
-        query_index: int,
-        covered_through_message_id: str,
-        estimated_tokens: int,
-        capacity_tokens: int,
-        compaction_threshold: float,
-        summary_id: str | None = None,
-        failure_type: str | None = None,
+        revision: object,
     ) -> None:
         self._runtime.record_compaction(
             self._runtime_context,
             self._activation,
-            ContextCompactionNotice(
-                phase=phase,
-                compaction_id=compaction_id,
-                query_index=query_index,
-                covered_through_message_id=covered_through_message_id,
-                estimated_tokens=estimated_tokens,
-                capacity_tokens=capacity_tokens,
-                compaction_threshold=compaction_threshold,
-                summary_id=summary_id,
-                failure_type=failure_type,
-            ),
+            notice,
+            revision=revision,
         )

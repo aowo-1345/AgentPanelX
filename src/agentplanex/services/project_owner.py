@@ -35,11 +35,12 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.project_owner_agent.agent import AgentConfig, DefaultAgent
 from agentplanex.project_owner_agent.approval import ApprovalMode, TerminalApproval
 from agentplanex.project_owner_agent.context import (
+    CommittedOwnerSummary,
     ContextCompactionNotice,
     ContextCompactionPhase,
+    LoadedOwnerContext,
     OwnerContextManager,
     OwnerContextPolicy,
-    OwnerContextRevision,
     OwnerContextSnapshot,
     SummaryDraft,
 )
@@ -57,6 +58,14 @@ from agentplanex.services.agent_contracts import (
 )
 from agentplanex.services.event_bus import EventBus
 from agentplanex.settings import Settings
+
+
+@dataclass(frozen=True, slots=True)
+class _ProjectOwnerRevision:
+    """Runtime-private CAS state carried opaquely by the Owner Agent."""
+
+    message_id: str
+    summary_id: str | None
 
 
 @dataclass(slots=True)
@@ -400,11 +409,18 @@ class ProjectOwnerService:
         self,
         context: ProjectRuntimeContext,
         appended: tuple[Message, ...],
-    ) -> OwnerContextRevision:
+        *,
+        expected_revision: object | None = None,
+    ) -> object:
         """Atomically append native Owner messages and advance its checkpoint."""
         owner = context.project_owner_agent
         if owner is None:
             raise ValueError("Project Runtime Context has no Project Owner Agent")
+        expected = (
+            _require_owner_revision(expected_revision)
+            if expected_revision is not None
+            else None
+        )
 
         with self.database.transaction() as connection:
             persisted_owner = self.owners.get_by_session_id(
@@ -416,6 +432,13 @@ class ProjectOwnerService:
                     "Project Owner Agent not found: "
                     f"{owner.project_owner_session_id}"
                 )
+            if (
+                expected is not None
+                and persisted_owner.message_id != expected.message_id
+            ):
+                raise RuntimeError(
+                    "Project Owner context changed before message append"
+                )
             if appended:
                 message_id = self._append_messages(
                     connection,
@@ -426,9 +449,13 @@ class ProjectOwnerService:
                 message_id = persisted_owner.message_id
             else:
                 raise RuntimeError("Project Owner has no persisted message checkpoint")
-        return OwnerContextRevision(
+        return _ProjectOwnerRevision(
             message_id=message_id,
-            summary_id=persisted_owner.summary_id,
+            summary_id=(
+                expected.summary_id
+                if expected is not None
+                else persisted_owner.summary_id
+            ),
         )
 
     def commit_summary(
@@ -436,19 +463,20 @@ class ProjectOwnerService:
         context: ProjectRuntimeContext,
         activation: OwnerActivation,
         *,
-        expected_revision: OwnerContextRevision,
+        expected_revision: object,
         query_index: int,
         draft: SummaryDraft,
-    ) -> SummaryHistory:
+    ) -> CommittedOwnerSummary:
         """Atomically persist one Agent-produced Summary at an expected revision."""
 
         owner = context.project_owner_agent
         if owner is None:
             raise ValueError("Project Runtime Context has no Project Owner Agent")
+        expected = _require_owner_revision(expected_revision)
         summary = SummaryHistory(
             project_owner_session_id=owner.project_owner_session_id,
             summary_id=uuid4().hex,
-            covered_through_message_id=expected_revision.message_id,
+            covered_through_message_id=expected.message_id,
             intent_summary_content=draft.intent_summary_content,
             trajectory_summary_content=draft.trajectory_summary_content,
         )
@@ -457,8 +485,8 @@ class ProjectOwnerService:
             self.owners.advance_summary(
                 connection,
                 session_id=owner.project_owner_session_id,
-                expected_message_id=expected_revision.message_id,
-                expected_summary_id=expected_revision.summary_id,
+                expected_message_id=expected.message_id,
+                expected_summary_id=expected.summary_id,
                 summary_id=summary.summary_id,
             )
             if query_index == 0:
@@ -467,16 +495,26 @@ class ProjectOwnerService:
                     activation.activation_id,
                     summary.summary_id,
                 )
-        return summary
+        return CommittedOwnerSummary(
+            summary=summary,
+            revision=_ProjectOwnerRevision(
+                message_id=expected.message_id,
+                summary_id=summary.summary_id,
+            ),
+        )
 
     def record_compaction(
         self,
         context: ProjectRuntimeContext,
         activation: OwnerActivation,
         notice: ContextCompactionNotice,
+        *,
+        revision: object,
     ) -> None:
         """Map an Agent context notice to the stable Runtime Timeline contract."""
 
+        attempt = notice.attempt
+        attempted_revision = _require_owner_revision(revision)
         event_type = {
             ContextCompactionPhase.STARTED: (
                 ExecutionEventType.CONTEXT_COMPACTION_STARTED
@@ -489,13 +527,13 @@ class ProjectOwnerService:
             ),
         }[notice.phase]
         payload: dict[str, object] = {
-            "compaction_id": notice.compaction_id,
+            "compaction_id": attempt.compaction_id,
             "activation_id": activation.activation_id,
-            "query_index": notice.query_index,
-            "covered_through_message_id": notice.covered_through_message_id,
-            "estimated_tokens": notice.estimated_tokens,
-            "capacity_tokens": notice.capacity_tokens,
-            "compaction_threshold": notice.compaction_threshold,
+            "query_index": attempt.query_index,
+            "covered_through_message_id": attempted_revision.message_id,
+            "estimated_tokens": attempt.estimated_tokens,
+            "capacity_tokens": attempt.capacity_tokens,
+            "compaction_threshold": attempt.compaction_threshold,
         }
         if notice.summary_id is not None:
             payload["summary_id"] = notice.summary_id
@@ -536,13 +574,13 @@ class ProjectOwnerService:
         self,
         context: ProjectRuntimeContext,
         activation: OwnerActivation,
-    ) -> OwnerContextSnapshot:
+    ) -> LoadedOwnerContext:
         """Load raw persisted facts for one fixed Activation checkpoint."""
 
         owner = context.project_owner_agent
         if owner is None:
             raise ValueError("Project Runtime Context has no Project Owner Agent")
-        restored = restore_owner_context(
+        restored, current_revision = _select_owner_context(
             self.database,
             activation.message_id,
             summary_id=activation.summary_id,
@@ -555,11 +593,17 @@ class ProjectOwnerService:
             raise RuntimeError(
                 "Restored Owner context does not match the Activation owner"
             )
-        if restored.revision.message_id != activation.message_id:
+        if current_revision.message_id != activation.message_id:
             raise RuntimeError(
                 "Owner activation checkpoint changed while restoring context"
             )
-        return restored
+        return LoadedOwnerContext(
+            snapshot=restored,
+            revision=_ProjectOwnerRevision(
+                message_id=activation.message_id,
+                summary_id=activation.summary_id,
+            ),
+        )
 
 
 def restore_owner_context(
@@ -569,6 +613,22 @@ def restore_owner_context(
     summary_id: str | None = None,
 ) -> OwnerContextSnapshot:
     """Select raw persisted Owner facts through one immutable checkpoint."""
+
+    snapshot, _current_revision = _select_owner_context(
+        database,
+        through_message_id,
+        summary_id=summary_id,
+    )
+    return snapshot
+
+
+def _select_owner_context(
+    database: SQLiteDatabase,
+    through_message_id: str,
+    *,
+    summary_id: str | None = None,
+) -> tuple[OwnerContextSnapshot, _ProjectOwnerRevision]:
+    """Select a bounded checkpoint and separately observe the live revision."""
 
     checkpoint_id = through_message_id.strip()
     if not checkpoint_id:
@@ -637,7 +697,7 @@ def restore_owner_context(
                 )
             covered_through_sequence = watermark.sequence
 
-    return OwnerContextSnapshot(
+    snapshot = OwnerContextSnapshot(
         triage_id=owner.triage_id,
         project_owner_session_id=owner.project_owner_session_id,
         through_message_id=through.message_id,
@@ -647,10 +707,10 @@ def restore_owner_context(
         summary=summary,
         covered_through_sequence=covered_through_sequence,
         message_history=histories,
-        revision=OwnerContextRevision(
-            message_id=owner.message_id,
-            summary_id=owner.summary_id,
-        ),
+    )
+    return snapshot, _ProjectOwnerRevision(
+        message_id=owner.message_id,
+        summary_id=owner.summary_id,
     )
 
 
@@ -682,3 +742,9 @@ def _unhandled_exit(error: Exception) -> AgentExit:
         status=AgentExitStatus.UNHANDLED_EXCEPTION,
         content=f"{type(error).__name__}: {error}",
     )
+
+
+def _require_owner_revision(revision: object) -> _ProjectOwnerRevision:
+    if not isinstance(revision, _ProjectOwnerRevision):
+        raise TypeError("Owner context revision was not issued by this Runtime")
+    return revision

@@ -510,6 +510,104 @@ def test_summary_publish_transaction_rejects_a_stale_checkpoint(
     assert summary is None
 
 
+def test_frozen_activation_cannot_replace_a_newer_summary_during_compaction(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    """The Manager-to-Runtime seam preserves the Activation's Summary CAS."""
+
+    project_path = initialize_git_project()
+    roomy_settings = _settings(capacity_tokens=128_000)
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=roomy_settings,
+        approval_mode="yolo",
+        responses_transport=_OwnerTransport(roomy_settings),
+    )
+    baseline = runtime.submit_message("establish a stable history checkpoint")
+    runtime.drive_next_activation()
+
+    database = SQLiteDatabase.for_project(project_path)
+    owners = SQLiteProjectOwnerAgentRepository()
+    summaries = SQLiteSummaryHistoryRepository()
+    with database.transaction() as connection:
+        owner = owners.get_by_triage_id(connection, baseline.triage_id)
+        assert owner is not None
+        assert owner.message_id is not None
+        frozen_summary = SummaryHistory(
+            project_owner_session_id=owner.project_owner_session_id,
+            summary_id="frozen-summary",
+            covered_through_message_id=owner.message_id,
+            intent_summary_content="Preserve the frozen intent.",
+            trajectory_summary_content="Preserve the frozen trajectory.",
+        )
+        summaries.insert(connection, frozen_summary)
+        owners.update(
+            connection,
+            replace(owner, summary_id=frozen_summary.summary_id),
+        )
+
+    activation = runtime.submit_message("frozen-activation-context " * 600)
+    assert activation.summary_id == frozen_summary.summary_id
+
+    with database.transaction() as connection:
+        owner = owners.get_by_triage_id(connection, activation.triage_id)
+        assert owner is not None
+        assert owner.message_id == activation.message_id
+        newer_summary = SummaryHistory(
+            project_owner_session_id=owner.project_owner_session_id,
+            summary_id="newer-summary",
+            covered_through_message_id=activation.message_id,
+            intent_summary_content="A newer intent already won.",
+            trajectory_summary_content="A newer trajectory already won.",
+        )
+        summaries.insert(connection, newer_summary)
+        owners.update(
+            connection,
+            replace(owner, summary_id=newer_summary.summary_id),
+        )
+        summary_count_before = connection.execute(
+            "SELECT COUNT(*) FROM summary_history"
+        ).fetchone()[0]
+
+    compact_settings = _settings(capacity_tokens=3_000)
+    transport = _OwnerTransport(compact_settings)
+    restarted = ProjectRuntime(
+        project_path=project_path,
+        settings=compact_settings,
+        approval_mode="yolo",
+        responses_transport=transport,
+    )
+    driven = restarted.drive_next_activation()
+
+    assert driven.activation is not None
+    assert driven.activation.activation_id == activation.activation_id
+    assert driven.exit is not None
+    assert driven.exit.content == "owner-finished"
+    owner_request = next(
+        request for request in transport.requests if request.tool_choice == "auto"
+    )
+    assert "frozen-activation-context" in json.dumps(
+        owner_request.input,
+        ensure_ascii=False,
+    )
+    with database.read_only_connection() as connection:
+        owner = owners.get_by_triage_id(connection, activation.triage_id)
+        summary_count_after = connection.execute(
+            "SELECT COUNT(*) FROM summary_history"
+        ).fetchone()[0]
+    assert owner is not None
+    assert owner.summary_id == newer_summary.summary_id
+    assert summary_count_after == summary_count_before
+    compaction_events = [
+        event.event_type.value
+        for event in restarted.project_control_view().timeline
+        if event.payload.get("activation_id") == activation.activation_id
+    ]
+    assert compaction_events.count("CONTEXT_COMPACTION_STARTED") == 1
+    assert compaction_events.count("CONTEXT_COMPACTION_FAILED") == 1
+    assert "CONTEXT_COMPACTION_COMPLETED" not in compaction_events
+
+
 def test_restart_fails_when_a_persisted_owner_tool_is_missing(
     initialize_git_project: Callable[[], Path],
 ) -> None:

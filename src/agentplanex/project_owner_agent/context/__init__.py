@@ -7,18 +7,20 @@ from agentplanex.project_owner_agent.context.compaction import (
     SummaryDraft,
 )
 from agentplanex.project_owner_agent.context.manager import (
+    CommittedOwnerSummary,
+    LoadedOwnerContext,
     OwnerContextManager,
-    OwnerContextRevision,
     OwnerContextRuntime,
     OwnerContextSnapshot,
 )
 
 __all__ = [
+    "CommittedOwnerSummary",
     "ContextCompactionNotice",
     "ContextCompactionPhase",
+    "LoadedOwnerContext",
     "OwnerContextManager",
     "OwnerContextPolicy",
-    "OwnerContextRevision",
     "OwnerContextRuntime",
     "OwnerContextSnapshot",
     "SummaryDraft",

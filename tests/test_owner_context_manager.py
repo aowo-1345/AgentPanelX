@@ -1,5 +1,6 @@
 """Behavioral tests for the Project Owner Agent context seam."""
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,11 +16,12 @@ from agentplanex.domains import (
     SummaryHistory,
 )
 from agentplanex.project_owner_agent.context import (
+    CommittedOwnerSummary,
     ContextCompactionNotice,
     ContextCompactionPhase,
+    LoadedOwnerContext,
     OwnerContextManager,
     OwnerContextPolicy,
-    OwnerContextRevision,
     OwnerContextSnapshot,
     SummaryDraft,
 )
@@ -30,57 +32,86 @@ from agentplanex.project_owner_agent.tools import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _Revision:
+    message_id: str
+    summary_id: str | None
+
+
 class _InMemoryContextRuntime:
     def __init__(self, snapshot: OwnerContextSnapshot) -> None:
         self.snapshot = snapshot
+        self.revision = _Revision(
+            message_id=snapshot.through_message_id,
+            summary_id=(
+                snapshot.summary.summary_id
+                if snapshot.summary is not None
+                else None
+            ),
+        )
         self.appended: list[tuple[Message, ...]] = []
         self.notices: list[ContextCompactionNotice] = []
+        self.notice_revisions: list[object] = []
         self.committed: list[SummaryDraft] = []
 
     def load_context(
         self,
         _context: ProjectRuntimeContext,
         _activation: OwnerActivation,
-    ) -> OwnerContextSnapshot:
-        return self.snapshot
+    ) -> LoadedOwnerContext:
+        return LoadedOwnerContext(snapshot=self.snapshot, revision=self.revision)
 
     def append_messages(
         self,
         _context: ProjectRuntimeContext,
         appended: tuple[Message, ...],
-    ) -> OwnerContextRevision:
+        *,
+        expected_revision: object,
+    ) -> object:
+        assert expected_revision == self.revision
         self.appended.append(appended)
-        return OwnerContextRevision(
+        self.revision = _Revision(
             message_id="message-after-append",
-            summary_id=self.snapshot.revision.summary_id,
+            summary_id=self.revision.summary_id,
         )
+        return self.revision
 
     def commit_summary(
         self,
         _context: ProjectRuntimeContext,
         _activation: OwnerActivation,
         *,
-        expected_revision: OwnerContextRevision,
+        expected_revision: object,
         query_index: int,
         draft: SummaryDraft,
-    ) -> SummaryHistory:
+    ) -> CommittedOwnerSummary:
         assert query_index == 0
+        assert expected_revision == self.revision
         self.committed.append(draft)
-        return SummaryHistory(
+        revision = self.revision
+        summary = SummaryHistory(
             project_owner_session_id=self.snapshot.project_owner_session_id,
             summary_id="summary-committed",
-            covered_through_message_id=expected_revision.message_id,
+            covered_through_message_id=revision.message_id,
             intent_summary_content=draft.intent_summary_content,
             trajectory_summary_content=draft.trajectory_summary_content,
         )
+        self.revision = _Revision(
+            message_id=revision.message_id,
+            summary_id=summary.summary_id,
+        )
+        return CommittedOwnerSummary(summary=summary, revision=self.revision)
 
     def record_compaction(
         self,
         _context: ProjectRuntimeContext,
         _activation: OwnerActivation,
         notice: ContextCompactionNotice,
+        *,
+        revision: object,
     ) -> None:
         self.notices.append(notice)
+        self.notice_revisions.append(revision)
 
 
 class _SummaryModel:
@@ -151,10 +182,6 @@ def test_manager_restores_one_model_view_and_keeps_appended_messages() -> None:
                     {"role": "user", "content": "Continue the refactor."},
                 ),
             ),
-        ),
-        revision=OwnerContextRevision(
-            message_id="message-2",
-            summary_id="summary-1",
         ),
     )
     runtime = _InMemoryContextRuntime(snapshot)
@@ -240,7 +267,6 @@ def test_manager_switches_only_after_runtime_commits_the_summary() -> None:
                 ),
             ),
         ),
-        revision=OwnerContextRevision(message_id="message-1", summary_id=None),
     )
     runtime = _InMemoryContextRuntime(snapshot)
     context = ProjectRuntimeContext(triage_id="triage-1")
