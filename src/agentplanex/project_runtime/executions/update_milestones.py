@@ -75,6 +75,12 @@ class UpdateMilestonesArguments(ToolArgumentsModel):
     milestones: list[MilestoneArguments] = Field(
         min_length=1,
         description="The complete ordered Milestone View, including completed history.",
+        json_schema_extra={
+            "contains": {
+                "properties": {"state": {"const": "pending"}},
+                "required": ["state"],
+            }
+        },
     )
 
     @model_validator(mode="after")

@@ -90,6 +90,9 @@ def test_tool_catalog_rejects_invalid_complete_milestone_views(
         project_path,
         load_settings(DEFAULT_SETTINGS_PATH).runtime,
     ).tools
+    provider_schema = next(
+        item for item in tools.provider_schemas() if item["name"] == "update_milestones"
+    )["parameters"]
     milestone = {
         "key": "m1",
         "objective": "Ship the first playable slice.",
@@ -133,6 +136,7 @@ def test_tool_catalog_rejects_invalid_complete_milestone_views(
     )
 
     for index, arguments in enumerate(invalid_arguments):
+        assert list(Draft202012Validator(provider_schema).iter_errors(arguments))
         with pytest.raises(ToolArgumentError):
             tools.create_action(
                 name="update_milestones",
