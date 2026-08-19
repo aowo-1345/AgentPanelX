@@ -270,6 +270,14 @@ Activation 的 `PENDING → RUNNING → terminal` 状态独立持久化，因此
 呈现 Owner 正在运行、具体 Tool step、最终回复或失败原因。若 Web 进程中断，下一次
 启动只把遗留未完成的 Activation 或 StageRun 归并为 `FAILED + BLOCKED`，不自动续跑。
 
+模型驱动的 Activation 在构造 Owner Agent 时调用 `OwnerContextManager.restore()`，按
+Activation 固定的 Message/Summary 检查点恢复；此后每次模型查询都先调用
+`prepare_query()` 渲染并计算完整请求 token。超限时，ContextManager 依次通知 Runtime
+记录 `CONTEXT_COMPACTION_STARTED`、生成并校验双 Summary、请求 CAS 提交，提交成功后
+才切换内存投影并记录 `COMPLETED`；失败则记录 `FAILED` 并继续使用冻结的原始上下文。
+手工 `TOOL` 驱动按设计绕过模型查询和这套压缩流程，只复用 Activation、消息持久化、
+Tool 执行与 ReAct Timeline。
+
 ## 6. 核心链路二：滚动规划与 Hard Gate
 
 Project Owner 在 Feature worktree 中维护 `requirements.md`、`architecture.md` 与 `roadmap.md`。Plan Approval 不是一个松散按钮，而是围绕精确 subject identity 的受保护转换。
