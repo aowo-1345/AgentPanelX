@@ -1208,6 +1208,66 @@ def test_in_progress_milestone_replacement_runs_hard_gate(
     assert updated["result"]["snapshot"]["previous_snapshot_id"] is not None
 
 
+def test_first_milestone_hard_gate_rejection_blocks_delivery(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    _reach_idle_in_progress(project_path, monkeypatch, capfd)
+    before = _load_context(project_path)
+    assert before.current_snapshot_id is not None
+
+    code = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "update_milestones",
+                    "arguments": {
+                        "reason": "Submit the revised delivery breakdown.",
+                        "milestones": [
+                            {
+                                "key": "milestone-1",
+                                "objective": "NEEDS_REVIEW_CHANGES",
+                                "state": "pending",
+                                "stages": [
+                                    {
+                                        "key": "stage-rejected",
+                                        "objective": "Attempt the rejected work.",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                }
+            ),
+        ]
+    )
+    rejected = json.loads(capfd.readouterr().out)
+
+    assert code == 0
+    assert rejected["result"]["accepted"] is False
+    assert rejected["result"]["status"] == "BLOCKED"
+    assert rejected["result"]["review"]["decision"] == "revise"
+    assert "snapshot" not in rejected["result"]
+
+    after = _load_context(project_path)
+    assert after.status == "BLOCKED"
+    assert after.current_snapshot_id == before.current_snapshot_id
+    assert after.current_run_id is None
+    context_events = [
+        event
+        for event in _loaded_events(project_path)
+        if event.event_type.value == "RUNTIME_CONTEXT_UPDATED"
+    ]
+    assert context_events[-1].payload["reason"] == (
+        "MILESTONE_HARD_GATE_REJECTED"
+    )
+
+
 def test_plan_approval_rejects_specs_changed_after_hard_gate(
     initialize_git_project: Callable[[], Path],
     capfd: pytest.CaptureFixture[str],

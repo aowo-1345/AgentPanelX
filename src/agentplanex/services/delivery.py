@@ -213,8 +213,13 @@ class DeliveryService:
         previous = self._assert_publishable(current, milestones)
         self._assert_approved_specs(current)
         if review is not None and review.decision == "revise":
+            blocked = self._runtime_contexts().transition(
+                current.triage_id,
+                reason=RuntimeContextChangeReason.MILESTONE_HARD_GATE_REJECTED,
+                mutate=self._block_after_milestone_hard_gate_rejection,
+            )
             return MilestonesUpdated(
-                context=current,
+                context=blocked,
                 snapshot=None,
                 accepted=False,
                 subject_digest=subject_digest,
@@ -940,6 +945,20 @@ class DeliveryService:
         failed: StageRun,
     ) -> ProjectRuntimeContext:
         DeliveryService._assert_current_stage(context, failed)
+        return replace(context, status="BLOCKED")
+
+    @staticmethod
+    def _block_after_milestone_hard_gate_rejection(
+        context: ProjectRuntimeContext,
+    ) -> ProjectRuntimeContext:
+        if context.status != "IN_PROGRESS" or context.pending_action is not None:
+            raise DeliveryError(
+                "Milestone Hard Gate rejection requires an idle IN_PROGRESS project"
+            )
+        if context.current_run_id is not None:
+            raise DeliveryError(
+                "Milestone Hard Gate rejection cannot interrupt an active Run"
+            )
         return replace(context, status="BLOCKED")
 
     @staticmethod
