@@ -2,42 +2,58 @@
 
 from dataclasses import replace
 
+from pydantic import Field
+
 from agentplanex.domains import (
+    BASH_TOOL_NAME,
     ProjectRuntimeContext,
     RuntimeContextChangeReason,
-    ToolArguments,
     ToolExecutionResult,
 )
 from agentplanex.infrastructure import run_local_shell
-from agentplanex.project_owner_agent.tools import BASH_TOOL
+from agentplanex.project_owner_agent.tools import (
+    NonBlankText,
+    ToolArgumentsModel,
+    ToolDefinition,
+)
 from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
     project_execution,
 )
 
+BASH_DESCRIPTION = (
+    "Execute a Bash command with writes confined to the current Feature worktree, "
+    "with .git and .agentplanex read-only and network access disabled. If the "
+    "sandbox denies a required capability, do not retry or attempt a bypass; "
+    "explain the required user action and return control to the user."
+)
+
+
+class BashArguments(ToolArgumentsModel):
+    command: NonBlankText = Field(
+        description="Bash command to run in the current Feature worktree."
+    )
+
+
+BASH_TOOL = ToolDefinition(
+    name=BASH_TOOL_NAME,
+    description=BASH_DESCRIPTION,
+    arguments_type=BashArguments,
+)
+
 
 @project_execution(BASH_TOOL)
-class BashExecution(ProjectExecution):
+class BashExecution(ProjectExecution[BashArguments]):
     """Execute Bash commands within the bound project and runtime limits."""
 
     def execute(
         self,
         context: ProjectRuntimeContext,
-        arguments: ToolArguments,
+        arguments: BashArguments,
     ) -> ToolExecutionResult:
-        command = arguments.get("command")
-        if not isinstance(command, str) or not command.strip():
-            return ToolExecutionResult(
-                output={
-                    "output": "",
-                    "returncode": -1,
-                    "exception_info": "Bash action has no non-empty command",
-                }
-            )
-
         settings = self.dependencies.settings.bash
         output = run_local_shell(
-            command,
+            arguments.command,
             cwd=self.dependencies.project_path,
             timeout_seconds=settings.timeout_seconds,
             output_limit=settings.output_limit,

@@ -280,10 +280,11 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
             {
                 "tool": "talk_to_agent",
                 "arguments": {
-                    "agent_id": agent_id,
-                    "kind": kind,
-                    "message": "Inspect the supplied question.",
-                    "artifacts": artifacts,
+                        "agent_id": agent_id,
+                        "kind": kind,
+                        "message": "Inspect the supplied question.",
+                        "conversation_id": None,
+                        "artifacts": artifacts,
                 },
             },
         )

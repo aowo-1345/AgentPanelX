@@ -1,6 +1,9 @@
 """Project Runtime execution for synchronous Planner/Reviewer collaboration."""
 
+from typing import Annotated, Literal
 from uuid import uuid4
+
+from pydantic import Field, StringConstraints
 
 from agentplanex.domains import (
     AgentCollaborationError,
@@ -10,25 +13,92 @@ from agentplanex.domains import (
     ExecutionEventType,
     ProjectRuntimeContext,
     TalkToAgentRequest,
-    ToolArguments,
     ToolExecutionResult,
 )
 from agentplanex.project_owner_agent.tools import (
-    TALK_TO_AGENT_TOOL,
+    NonBlankText,
+    ToolArgumentsModel,
     ToolDefinition,
-    create_talk_to_agent_tool,
 )
 from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
     project_execution,
 )
 
+TALK_TO_AGENT_TOOL_NAME = "talk_to_agent"
+type AgentId = Annotated[
+    str,
+    StringConstraints(min_length=1, pattern=r"^[a-z][a-z0-9_-]{0,63}$"),
+]
+type ConversationId = Annotated[
+    str,
+    StringConstraints(min_length=1, pattern=r"^apx1\."),
+]
+type ArtifactUri = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        pattern=r"^(project:///|artifact://local/).+",
+    ),
+]
+
+
+class ArtifactInput(ToolArgumentsModel):
+    uri: ArtifactUri = Field(
+        description="Project or local artifact URI exposed by the Runtime."
+    )
+
+
+class TalkToAgentArguments(ToolArgumentsModel):
+    agent_id: AgentId = Field(description="Configured Agent Card identifier.")
+    kind: Literal["message", "task"] = Field(
+        description="Use message for discussion or task for a role Contract document."
+    )
+    message: NonBlankText = Field(description="Instruction sent to the selected Agent.")
+    conversation_id: ConversationId | None = Field(
+        description="Use null for a new conversation; reuse an apx1.* ID for follow-up."
+    )
+    artifacts: list[ArtifactInput] = Field(
+        description="Read-only Runtime artifact inputs; use an empty array when absent."
+    )
+
+    def to_request(self) -> TalkToAgentRequest:
+        return TalkToAgentRequest(
+            agent_id=self.agent_id,
+            kind=AgentInteractionKind(self.kind),
+            message=self.message,
+            conversation_id=self.conversation_id,
+            artifacts=tuple(ArtifactRef(uri=artifact.uri) for artifact in self.artifacts),
+        )
+
+
+def create_talk_to_agent_tool(agent_cards: str) -> ToolDefinition[TalkToAgentArguments]:
+    return ToolDefinition(
+        name=TALK_TO_AGENT_TOOL_NAME,
+        description=(
+            "Synchronously send a Message or file-producing Task to a configured "
+            "Planner or Reviewer. Message is a discussion turn with no document; Task "
+            "publishes the role Contract document (Planner plan.md or Reviewer review.md). "
+            "Reuse conversation_id for follow-up work and pass returned artifact URIs as "
+            "read-only inputs. Planner output is advisory until the Owner adopts it into "
+            "canonical Specs; Reviewer output is evidence and never makes the Owner's "
+            "decision. Available Agent Cards:\n"
+            f"{agent_cards}"
+        ),
+        arguments_type=TalkToAgentArguments,
+    )
+
+
+TALK_TO_AGENT_TOOL = create_talk_to_agent_tool(
+    "- planner (planner)\n- reviewer (reviewer)"
+)
+
 
 @project_execution(TALK_TO_AGENT_TOOL)
-class TalkToAgentExecution(ProjectExecution):
+class TalkToAgentExecution(ProjectExecution[TalkToAgentArguments]):
     """Validate one Tool Action and synchronously invoke its configured Agent."""
 
-    def tool_definition(self) -> ToolDefinition:
+    def tool_definition(self) -> ToolDefinition[TalkToAgentArguments]:
         return create_talk_to_agent_tool(
             self.dependencies.collaboration.catalog.card_description()
         )
@@ -36,10 +106,10 @@ class TalkToAgentExecution(ProjectExecution):
     def execute(
         self,
         context: ProjectRuntimeContext,
-        arguments: ToolArguments,
+        arguments: TalkToAgentArguments,
     ) -> ToolExecutionResult:
+        request = arguments.to_request()
         try:
-            request = self._request(arguments)
             self.dependencies.collaboration.catalog.get(request.agent_id)
         except AgentCollaborationError as error:
             return ToolExecutionResult(
@@ -148,52 +218,4 @@ class TalkToAgentExecution(ProjectExecution):
                     "failure_type": type(error).__name__,
                 },
             )
-        )
-
-    @staticmethod
-    def _request(arguments: ToolArguments) -> TalkToAgentRequest:
-        allowed = {"agent_id", "kind", "message", "conversation_id", "artifacts"}
-        unknown = set(arguments) - allowed
-        if unknown:
-            raise AgentCollaborationError(
-                "talk_to_agent received unsupported arguments: "
-                + ", ".join(sorted(unknown))
-            )
-        agent_id = arguments.get("agent_id")
-        kind = arguments.get("kind")
-        message = arguments.get("message")
-        conversation_id = arguments.get("conversation_id")
-        artifacts = arguments.get("artifacts")
-        if not isinstance(agent_id, str) or not agent_id.strip():
-            raise AgentCollaborationError("talk_to_agent requires a non-empty agent_id")
-        if not isinstance(kind, str):
-            raise AgentCollaborationError("talk_to_agent requires kind=message or task")
-        try:
-            interaction = AgentInteractionKind(kind)
-        except ValueError as error:
-            raise AgentCollaborationError(
-                "talk_to_agent kind must be message or task"
-            ) from error
-        if not isinstance(message, str) or not message.strip():
-            raise AgentCollaborationError("talk_to_agent message must not be empty")
-        if conversation_id is not None and not isinstance(conversation_id, str):
-            raise AgentCollaborationError("conversation_id must be a string when provided")
-        if not isinstance(artifacts, list):
-            raise AgentCollaborationError("talk_to_agent artifacts must be an array")
-        refs: list[ArtifactRef] = []
-        for item in artifacts:
-            if not isinstance(item, dict) or set(item) != {"uri"}:
-                raise AgentCollaborationError(
-                    "each talk_to_agent artifact must contain only a uri"
-                )
-            uri = item.get("uri")
-            if not isinstance(uri, str) or not uri.strip():
-                raise AgentCollaborationError("artifact uri must not be empty")
-            refs.append(ArtifactRef(uri=uri))
-        return TalkToAgentRequest(
-            agent_id=agent_id,
-            kind=interaction,
-            message=message,
-            conversation_id=conversation_id,
-            artifacts=tuple(refs),
         )

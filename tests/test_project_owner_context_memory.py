@@ -146,18 +146,18 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
 
     activation = runtime.submit_message("Inspect the project before replying")
     release = project_path / "release-tool"
-    command = "while [ ! -f release-tool ]; do sleep 0.02; done; printf completed"
+    command = (
+        "OPENAI_API_KEY=input-secret; "
+        "while [ ! -f release-tool ]; do sleep 0.02; done; printf completed; # "
+        + "x" * 2_000
+    )
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
             runtime.drive_activation_tool,
             {
                 "tool": "bash",
                 "call_id": "running-tool",
-                "arguments": {
-                    "command": command,
-                    "api_key": "input-secret",
-                    "notes": "x" * 2_000,
-                },
+                "arguments": {"command": command},
             },
         )
         try:

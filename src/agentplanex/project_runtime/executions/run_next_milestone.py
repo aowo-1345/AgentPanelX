@@ -4,10 +4,9 @@ from agentplanex.domains import (
     AgentExit,
     AgentExitStatus,
     ProjectRuntimeContext,
-    ToolArguments,
     ToolExecutionResult,
 )
-from agentplanex.project_owner_agent.tools import RUN_NEXT_MILESTONE_TOOL
+from agentplanex.project_owner_agent.tools import NoToolArguments, ToolDefinition
 from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
     project_execution,
@@ -17,23 +16,29 @@ from agentplanex.services.delivery import (
     FirstRunApprovalRequested,
 )
 
+RUN_NEXT_MILESTONE_TOOL_NAME = "run_next_milestone"
+RUN_NEXT_MILESTONE_DESCRIPTION = (
+    "Request the first unfinished Milestone from the current complete View. The first "
+    "call requests explicit user Start approval; later calls queue delivery. After a "
+    "terminal Stage failure, a BLOCKED project may retry the same first unfinished "
+    "Milestone when the approved Plan and Snapshot remain valid."
+)
+RUN_NEXT_MILESTONE_TOOL = ToolDefinition(
+    name=RUN_NEXT_MILESTONE_TOOL_NAME,
+    description=RUN_NEXT_MILESTONE_DESCRIPTION,
+    arguments_type=NoToolArguments,
+)
+
 
 @project_execution(RUN_NEXT_MILESTONE_TOOL)
-class RunNextMilestoneExecution(ProjectExecution):
+class RunNextMilestoneExecution(ProjectExecution[NoToolArguments]):
     """Queue only the first pending Milestone selected by Delivery Service."""
 
     def execute(
         self,
         context: ProjectRuntimeContext,
-        arguments: ToolArguments,
+        arguments: NoToolArguments,
     ) -> ToolExecutionResult:
-        if arguments:
-            return ToolExecutionResult(
-                output={
-                    "ok": False,
-                    "error": "run_next_milestone does not accept arguments",
-                }
-            )
         try:
             result = self.dependencies.delivery.request_next_milestone(context)
         except DeliveryError as error:

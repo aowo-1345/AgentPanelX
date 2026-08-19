@@ -515,20 +515,24 @@ def test_talk_tool_renders_configured_agent_cards_with_stable_schema(
     talk_tool = next(
         tool for tool in executions.tools.tools if tool.name == "talk_to_agent"
     )
-    description = talk_tool.schema["description"]
+    talk_schema = talk_tool.provider_schema()
+    description = talk_schema["description"]
     assert isinstance(description, str)
     assert "delivery_planner (planner): Delivery Planner" in description
     assert "quality_reviewer (reviewer): Quality Reviewer" in description
-    agent_id_schema = talk_tool.schema["parameters"]["properties"]["agent_id"]
+    agent_id_schema = talk_schema["parameters"]["properties"]["agent_id"]
     assert isinstance(agent_id_schema, dict)
     assert "enum" not in agent_id_schema
     for tool in executions.tools.tools:
-        parameters = tool.schema["parameters"]
+        parameters = tool.provider_schema()["parameters"]
         assert set(parameters["required"]) == set(parameters["properties"])
-    conversation_schema = talk_tool.schema["parameters"]["properties"][
+    conversation_schema = talk_schema["parameters"]["properties"][
         "conversation_id"
     ]
-    assert conversation_schema["type"] == ["string", "null"]
+    assert {option.get("type") for option in conversation_schema["anyOf"]} == {
+        None,
+        "null",
+    }
 
 
 def test_cli_only_passes_explicit_runtime_inputs(

@@ -4,34 +4,38 @@ from agentplanex.domains import (
     AgentExit,
     AgentExitStatus,
     ProjectRuntimeContext,
-    ToolArguments,
     ToolExecutionResult,
 )
-from agentplanex.project_owner_agent.tools import REQUEST_PLAN_APPROVAL_TOOL
+from agentplanex.project_owner_agent.tools import NoToolArguments, ToolDefinition
 from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
     project_execution,
 )
 from agentplanex.services.planning import PlanningError
 
+REQUEST_PLAN_APPROVAL_TOOL_NAME = "request_plan_approval"
+REQUEST_PLAN_APPROVAL_DESCRIPTION = (
+    "Submit the exact current architecture.md, requirements.md, and roadmap.md "
+    "as one canonical Plan for explicit user approval. This never approves the "
+    "Plan on the Owner's behalf. Runtime invokes the Plan Hard Gate only while "
+    "rolling delivery is IN_PROGRESS."
+)
+REQUEST_PLAN_APPROVAL_TOOL = ToolDefinition(
+    name=REQUEST_PLAN_APPROVAL_TOOL_NAME,
+    description=REQUEST_PLAN_APPROVAL_DESCRIPTION,
+    arguments_type=NoToolArguments,
+)
+
 
 @project_execution(REQUEST_PLAN_APPROVAL_TOOL)
-class RequestPlanApprovalExecution(ProjectExecution):
+class RequestPlanApprovalExecution(ProjectExecution[NoToolArguments]):
     """Request approval for the current project specification documents."""
 
     def execute(
         self,
         context: ProjectRuntimeContext,
-        arguments: ToolArguments,
+        arguments: NoToolArguments,
     ) -> ToolExecutionResult:
-        if arguments:
-            return ToolExecutionResult(
-                output={
-                    "ok": False,
-                    "error": "request_plan_approval does not accept arguments",
-                }
-            )
-
         try:
             requested = self.dependencies.planning.request_plan_approval(context)
         except PlanningError as error:

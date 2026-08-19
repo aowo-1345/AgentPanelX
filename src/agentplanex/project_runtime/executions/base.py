@@ -4,15 +4,19 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 
 from agentplanex.domains import (
     Action,
     ProjectRuntimeContext,
-    ToolArguments,
     ToolExecutionResult,
 )
-from agentplanex.project_owner_agent.tools import ToolCatalog, ToolDefinition
+from agentplanex.project_owner_agent.tools import (
+    ToolArgumentError,
+    ToolArgumentsModel,
+    ToolCatalog,
+    ToolDefinition,
+)
 from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.delivery import DeliveryService
 from agentplanex.services.event_bus import EventBus
@@ -34,28 +38,39 @@ class ProjectExecutionDependencies:
     runtime_contexts: RuntimeContextService
 
 
-class ProjectExecution(ABC):
+class ProjectExecution[ArgumentsT: ToolArgumentsModel](ABC):
     """One model-visible tool bound to a project runtime."""
 
-    definition: ClassVar[ToolDefinition]
+    definition: ClassVar[ToolDefinition[Any]]
 
     def __init__(self, dependencies: ProjectExecutionDependencies) -> None:
         self.dependencies = dependencies
 
-    def tool_definition(self) -> ToolDefinition:
+    def tool_definition(self) -> ToolDefinition[ArgumentsT]:
         """Return this Runtime instance's model-visible tool definition."""
-        return self.definition
+        return cast(ToolDefinition[ArgumentsT], self.definition)
+
+    def execute_call(
+        self,
+        context: ProjectRuntimeContext,
+        raw_arguments: object,
+    ) -> ToolExecutionResult:
+        """Parse and execute one call through this Tool's sole argument contract."""
+        return self.execute(
+            context,
+            self.tool_definition().parse_arguments(raw_arguments),
+        )
 
     @abstractmethod
     def execute(
         self,
         context: ProjectRuntimeContext,
-        arguments: ToolArguments,
+        arguments: ArgumentsT,
     ) -> ToolExecutionResult:
         """Execute one validated tool action."""
 
 
-_execution_types: dict[str, type[ProjectExecution]] = {}
+_execution_types: dict[str, type[ProjectExecution[Any]]] = {}
 _FIXED_TOOL_ORDER = (
     "bash",
     "request_plan_approval",
@@ -67,13 +82,16 @@ _FIXED_TOOL_ORDER = (
 
 
 def project_execution(
-    definition: ToolDefinition,
-) -> Callable[[type[ProjectExecution]], type[ProjectExecution]]:
+    definition: ToolDefinition[Any],
+) -> Callable[
+    [type[ProjectExecution[Any]]],
+    type[ProjectExecution[Any]],
+]:
     """Register one project execution class for a model-visible tool."""
 
     def register(
-        execution_type: type[ProjectExecution],
-    ) -> type[ProjectExecution]:
+        execution_type: type[ProjectExecution[Any]],
+    ) -> type[ProjectExecution[Any]]:
         existing = _execution_types.get(definition.name)
         if existing is not None and existing is not execution_type:
             raise ValueError(f"Duplicate project execution: {definition.name!r}")
@@ -89,7 +107,7 @@ class ProjectExecutions:
     """Expose registered tools and dispatch their project-bound executions."""
 
     tools: ToolCatalog
-    _executions: dict[str, ProjectExecution]
+    _executions: dict[str, ProjectExecution[Any]]
     _runtime_contexts: RuntimeContextService
 
     def __init__(self, dependencies: ProjectExecutionDependencies) -> None:
@@ -147,15 +165,30 @@ class ProjectExecutions:
         execution = self._executions.get(tool_name)
         if execution is None:
             return _invalid_action(f"Unknown tool: {tool_name!r}")
-        return execution.execute(context, arguments)
+        try:
+            return execution.execute_call(context, arguments)
+        except ToolArgumentError as error:
+            return ToolExecutionResult(
+                output={
+                    "ok": False,
+                    "error": {
+                        "code": "INVALID_TOOL_ARGUMENTS",
+                        "message": str(error),
+                        "retryable": True,
+                    },
+                }
+            )
 
 
 def _invalid_action(message: str) -> ToolExecutionResult:
     return ToolExecutionResult(
         output={
-            "output": "",
-            "returncode": -1,
-            "exception_info": message,
+            "ok": False,
+            "error": {
+                "code": "INVALID_TOOL_CALL",
+                "message": message,
+                "retryable": True,
+            },
         }
     )
 

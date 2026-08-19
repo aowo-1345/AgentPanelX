@@ -170,6 +170,8 @@ SQLite/Git 事实独立读取，不参与调度。它保证：
 
 Project Owner 是长期目标的用户代理。它读取 Message History、Rolling Summary、Project Runtime Context 与当前工作区，通过 ReAct loop 选择 `bash`、`talk_to_agent`、`request_plan_approval`、`update_milestones`、`run_next_milestone` 和 `decide_milestone_candidate` 等 Tool，将一次自然语言目标逐步推进为可审查、可执行、可恢复的交付过程。
 
+每个 Runtime Tool 在对应的 `project_runtime/executions/` 模块内共同定义参数模型、模型可见说明与执行逻辑。`ToolCatalog` 从参数模型生成 provider schema，并在模型调用形成 `Action` 前执行同一份校验；`ProjectExecutions` 对调试或手工调用再次使用该 Contract 后才 dispatch。参数形状只定义一次，依赖当前 Runtime 状态的业务判断仍由 Execution 与 Service 负责。
+
 `bootstrap` 为每个 Workspace 创建一个共享的 OpenAI Responses Transport；Owner 主请求与 Rolling Summary 压缩复用其中的 OpenAI Client。超时和重试由 OpenAI SDK 负责，SDK 重试耗尽后统一抛出 `ModelGatewayError`，并沿 Runtime 现有的未处理异常路径使 Activation 进入 `FAILED`、Context 进入 `BLOCKED`。
 
 ## 4. 权威数据与读写边界
@@ -496,6 +498,7 @@ flowchart LR
 | Workspace read projection | `src/agentplanex/services/workspace/queries.py`, `services/project_workspace.py` |
 | Project Runtime 协调 | `src/agentplanex/services/project_runtime.py` |
 | Project Owner 与 Activation | `src/agentplanex/services/project_owner.py`, `owner_activation.py` |
+| Owner Tool Contract 与执行 | `src/agentplanex/project_owner_agent/tools/base.py`, `project_runtime/executions/` |
 | Context Memory / Rolling Summary | `src/agentplanex/services/owner_context_memory.py`, `owner_context.py` |
 | Planning 与 Hard Gate | `src/agentplanex/services/planning.py`, `plan_hard_gate.py` |
 | Agent Collaboration | `src/agentplanex/services/agent_collaboration.py`, `agent_contracts.py` |

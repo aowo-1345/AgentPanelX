@@ -912,10 +912,11 @@ def test_talk_task_keeps_workspace_and_publishes_document_uri(
                 {
                     "tool": "talk_to_agent",
                     "arguments": {
-                        "agent_id": "planner",
-                        "kind": "task",
-                        "message": "Create the initial Plan document.",
-                        "artifacts": [{"uri": "project:///requirements.md"}],
+                            "agent_id": "planner",
+                            "kind": "task",
+                            "message": "Create the initial Plan document.",
+                            "conversation_id": None,
+                            "artifacts": [{"uri": "project:///requirements.md"}],
                     },
                 }
             ),
@@ -1326,8 +1327,14 @@ def test_returns_unknown_tool_failure_as_json(
     assert result == 1
     assert response["tool"] == "missing"
     assert response["ok"] is False
-    assert response["result"]["returncode"] == -1
-    assert response["result"]["exception_info"] == "Unknown tool: 'missing'"
+    assert response["result"] == {
+        "ok": False,
+        "error": {
+            "code": "INVALID_TOOL_CALL",
+            "message": "Unknown tool: 'missing'",
+            "retryable": True,
+        },
+    }
 
 
 def test_invalid_json_does_not_create_runtime(
@@ -1531,10 +1538,11 @@ def test_complete_rolling_delivery_is_observable_through_debug_commands(
                 {
                     "tool": "talk_to_agent",
                     "arguments": {
-                        "agent_id": "reviewer",
-                        "kind": "task",
-                        "message": "Review the exact current Milestone Candidate.",
-                        "artifacts": [],
+                            "agent_id": "reviewer",
+                            "kind": "task",
+                            "message": "Review the exact current Milestone Candidate.",
+                            "conversation_id": None,
+                            "artifacts": [],
                     },
                 }
             ),

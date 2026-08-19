@@ -1,36 +1,116 @@
 """Project Runtime execution for publishing a complete Milestone View."""
 
+from typing import Literal, Self
+
+from pydantic import Field, model_validator
+
 from agentplanex.domains import (
     Milestone,
     MilestoneState,
     ProjectRuntimeContext,
     Stage,
-    ToolArguments,
     ToolExecutionResult,
 )
-from agentplanex.project_owner_agent.tools import UPDATE_MILESTONES_TOOL
+from agentplanex.project_owner_agent.tools import (
+    NonBlankText,
+    ToolArgumentsModel,
+    ToolDefinition,
+    ToolIdentifier,
+)
 from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
     project_execution,
 )
 from agentplanex.services.delivery import DeliveryError
 
+UPDATE_MILESTONES_TOOL_NAME = "update_milestones"
+UPDATE_MILESTONES_DESCRIPTION = (
+    "Replace the complete Milestone View derived from the approved canonical Plan. "
+    "This is a full replacement, not a patch. Use it for the initial delivery "
+    "breakdown or when remaining objectives/order must change; Candidate acceptance "
+    "alone records completion. Runtime invokes the Milestone Hard Gate only while "
+    "rolling delivery is IN_PROGRESS."
+)
+
+
+class StageArguments(ToolArgumentsModel):
+    key: ToolIdentifier = Field(description="Stable Stage identifier.")
+    objective: NonBlankText = Field(description="Observable Stage outcome.")
+
+    def to_domain(self) -> Stage:
+        return Stage(key=self.key, objective=self.objective)
+
+
+class MilestoneArguments(ToolArgumentsModel):
+    key: ToolIdentifier = Field(description="Stable Milestone identifier.")
+    objective: NonBlankText = Field(description="Observable Milestone outcome.")
+    state: Literal["pending", "completed"] = Field(
+        description="Current delivery state represented by the complete View."
+    )
+    stages: list[StageArguments] = Field(
+        min_length=1,
+        description="Ordered Stages needed to deliver this Milestone.",
+    )
+
+    @model_validator(mode="after")
+    def require_unique_stage_keys(self) -> Self:
+        keys = [stage.key for stage in self.stages]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Stage keys must be unique within a Milestone")
+        return self
+
+    def to_domain(self) -> Milestone:
+        return Milestone(
+            key=self.key,
+            objective=self.objective,
+            state=MilestoneState(self.state),
+            stages=tuple(stage.to_domain() for stage in self.stages),
+        )
+
+
+class UpdateMilestonesArguments(ToolArgumentsModel):
+    reason: NonBlankText = Field(
+        description="Why the complete Milestone View is being replaced."
+    )
+    milestones: list[MilestoneArguments] = Field(
+        min_length=1,
+        description="The complete ordered Milestone View, including completed history.",
+    )
+
+    @model_validator(mode="after")
+    def require_complete_view(self) -> Self:
+        keys = [milestone.key for milestone in self.milestones]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Milestone keys must be unique")
+        if not any(milestone.state == "pending" for milestone in self.milestones):
+            raise ValueError("Milestone View must contain a pending Milestone")
+        return self
+
+    def domain_milestones(self) -> tuple[Milestone, ...]:
+        return tuple(milestone.to_domain() for milestone in self.milestones)
+
+
+UPDATE_MILESTONES_TOOL = ToolDefinition(
+    name=UPDATE_MILESTONES_TOOL_NAME,
+    description=UPDATE_MILESTONES_DESCRIPTION,
+    arguments_type=UpdateMilestonesArguments,
+)
+
 
 @project_execution(UPDATE_MILESTONES_TOOL)
-class UpdateMilestonesExecution(ProjectExecution):
+class UpdateMilestonesExecution(ProjectExecution[UpdateMilestonesArguments]):
     """Validate a Tool Action and publish its complete Milestone View."""
 
     def execute(
         self,
         context: ProjectRuntimeContext,
-        arguments: ToolArguments,
+        arguments: UpdateMilestonesArguments,
     ) -> ToolExecutionResult:
         try:
-            reason, milestones = self._arguments(arguments)
             updated = self.dependencies.delivery.update_milestones(
                 context,
-                reason=reason,
-                milestones=milestones,
+                reason=arguments.reason,
+                milestones=arguments.domain_milestones(),
             )
         except DeliveryError as error:
             return ToolExecutionResult(output={"ok": False, "error": str(error)})
@@ -72,54 +152,3 @@ class UpdateMilestonesExecution(ProjectExecution):
                 "milestone_count": len(updated.snapshot.milestones),
             }
         return ToolExecutionResult(output=output)
-
-    @staticmethod
-    def _arguments(arguments: ToolArguments) -> tuple[str, tuple[Milestone, ...]]:
-        if set(arguments) != {"reason", "milestones"}:
-            raise DeliveryError(
-                "update_milestones requires only reason and milestones arguments"
-            )
-        reason = arguments.get("reason")
-        raw_milestones = arguments.get("milestones")
-        if not isinstance(reason, str):
-            raise DeliveryError("update_milestones reason must be a string")
-        if not isinstance(raw_milestones, list):
-            raise DeliveryError("update_milestones milestones must be an array")
-        milestones: list[Milestone] = []
-        for raw_milestone in raw_milestones:
-            if not isinstance(raw_milestone, dict):
-                raise DeliveryError("each Milestone must be an object")
-            if set(raw_milestone) != {"key", "objective", "state", "stages"}:
-                raise DeliveryError("each Milestone has unsupported fields")
-            key = raw_milestone.get("key")
-            objective = raw_milestone.get("objective")
-            state = raw_milestone.get("state")
-            raw_stages = raw_milestone.get("stages")
-            if not isinstance(key, str) or not isinstance(objective, str):
-                raise DeliveryError("Milestone key and objective must be strings")
-            if not isinstance(state, str):
-                raise DeliveryError("Milestone state must be a string")
-            if not isinstance(raw_stages, list):
-                raise DeliveryError("Milestone stages must be an array")
-            stages: list[Stage] = []
-            for raw_stage in raw_stages:
-                if not isinstance(raw_stage, dict) or set(raw_stage) != {"key", "objective"}:
-                    raise DeliveryError("each Stage must contain only key and objective")
-                stage_key = raw_stage.get("key")
-                stage_objective = raw_stage.get("objective")
-                if not isinstance(stage_key, str) or not isinstance(stage_objective, str):
-                    raise DeliveryError("Stage key and objective must be strings")
-                stages.append(Stage(key=stage_key, objective=stage_objective))
-            try:
-                milestone_state = MilestoneState(state)
-            except ValueError as error:
-                raise DeliveryError("Milestone state must be pending or completed") from error
-            milestones.append(
-                Milestone(
-                    key=key,
-                    objective=objective,
-                    state=milestone_state,
-                    stages=tuple(stages),
-                )
-            )
-        return reason, tuple(milestones)
