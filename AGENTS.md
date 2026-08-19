@@ -87,6 +87,23 @@ When the environment supports repository Skills:
 
 If Skills are unavailable, follow the same boundaries documented in `docs/skills.md`.
 
+## Agent skills
+
+### Issue tracker
+
+Implementation work is tracked as local Markdown under
+`.scratch/<feature-slug>/issues/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the canonical local triage states documented in
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This repository uses a single-context domain layout. See
+`docs/agents/domain.md`.
+
 ## Safety and repository hygiene
 
 - Never commit credentials, authorization data, private Runtime data, model transcripts,
