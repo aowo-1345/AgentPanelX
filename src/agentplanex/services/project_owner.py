@@ -580,7 +580,7 @@ class ProjectOwnerService:
         owner = context.project_owner_agent
         if owner is None:
             raise ValueError("Project Runtime Context has no Project Owner Agent")
-        restored, current_revision = _select_owner_context(
+        restored, current_revision = _load_live_owner_context(
             self.database,
             activation.message_id,
             summary_id=activation.summary_id,
@@ -614,44 +614,38 @@ def restore_owner_context(
 ) -> OwnerContextSnapshot:
     """Select raw persisted Owner facts through one immutable checkpoint."""
 
-    snapshot, _current_revision = _select_owner_context(
-        database,
-        through_message_id,
-        summary_id=summary_id,
-    )
-    return snapshot
+    with database.read_only_connection() as connection:
+        return _select_owner_context_snapshot(
+            connection,
+            through_message_id,
+            summary_id=summary_id,
+        )
 
 
-def _select_owner_context(
+def _load_live_owner_context(
     database: SQLiteDatabase,
     through_message_id: str,
     *,
     summary_id: str | None = None,
 ) -> tuple[OwnerContextSnapshot, _ProjectOwnerRevision]:
-    """Select a bounded checkpoint and separately observe the live revision."""
-
-    checkpoint_id = through_message_id.strip()
-    if not checkpoint_id:
-        raise ValueError("through_message_id must not be empty")
-    selected_summary_id = summary_id.strip() if summary_id is not None else None
-    if selected_summary_id == "":
-        raise ValueError("summary_id must not be empty")
+    """Select a checkpoint and validate the live Owner pointer in one read."""
 
     owners = SQLiteProjectOwnerAgentRepository()
     messages = SQLiteMessageHistoryRepository()
-    summaries = SQLiteSummaryHistoryRepository()
     with database.read_only_connection() as connection:
-        through = messages.get(connection, checkpoint_id)
-        if through is None:
-            raise LookupError(f"Message checkpoint not found: {checkpoint_id}")
+        snapshot = _select_owner_context_snapshot(
+            connection,
+            through_message_id,
+            summary_id=summary_id,
+        )
         owner = owners.get_by_session_id(
             connection,
-            through.project_owner_session_id,
+            snapshot.project_owner_session_id,
         )
         if owner is None:
             raise LookupError(
                 "Project Owner Agent not found for message checkpoint: "
-                f"{checkpoint_id}"
+                f"{snapshot.through_message_id}"
             )
         if owner.message_id is None:
             raise RuntimeError("Project Owner has no persisted message checkpoint")
@@ -665,37 +659,73 @@ def _select_owner_context(
                 "Project Owner Agent latest message pointer does not match "
                 "message history"
             )
+    return snapshot, _ProjectOwnerRevision(
+        message_id=owner.message_id,
+        summary_id=owner.summary_id,
+    )
 
-        summary: SummaryHistory | None = None
-        if selected_summary_id is not None:
-            summary = summaries.get(connection, selected_summary_id)
-            if summary is None:
-                raise LookupError(f"Summary not found: {selected_summary_id}")
-            if summary.project_owner_session_id != owner.project_owner_session_id:
-                raise ValueError(
-                    "Summary does not belong to Owner session: "
-                    f"{selected_summary_id}"
-                )
-        histories = messages.list_between_checkpoints(
-            connection,
-            owner.project_owner_session_id,
-            after_message_id=(
-                summary.covered_through_message_id if summary is not None else None
-            ),
-            through_message_id=checkpoint_id,
+
+def _select_owner_context_snapshot(
+    connection: sqlite3.Connection,
+    through_message_id: str,
+    *,
+    summary_id: str | None = None,
+) -> OwnerContextSnapshot:
+    """Select only facts bounded by an immutable message checkpoint."""
+
+    checkpoint_id = through_message_id.strip()
+    if not checkpoint_id:
+        raise ValueError("through_message_id must not be empty")
+    selected_summary_id = summary_id.strip() if summary_id is not None else None
+    if selected_summary_id == "":
+        raise ValueError("summary_id must not be empty")
+
+    owners = SQLiteProjectOwnerAgentRepository()
+    messages = SQLiteMessageHistoryRepository()
+    summaries = SQLiteSummaryHistoryRepository()
+    through = messages.get(connection, checkpoint_id)
+    if through is None:
+        raise LookupError(f"Message checkpoint not found: {checkpoint_id}")
+    owner = owners.get_by_session_id(
+        connection,
+        through.project_owner_session_id,
+    )
+    if owner is None:
+        raise LookupError(
+            "Project Owner Agent not found for message checkpoint: "
+            f"{checkpoint_id}"
         )
-        covered_through_sequence: int | None = None
-        if summary is not None:
-            watermark = messages.get(
-                connection,
-                summary.covered_through_message_id,
+
+    summary: SummaryHistory | None = None
+    if selected_summary_id is not None:
+        summary = summaries.get(connection, selected_summary_id)
+        if summary is None:
+            raise LookupError(f"Summary not found: {selected_summary_id}")
+        if summary.project_owner_session_id != owner.project_owner_session_id:
+            raise ValueError(
+                "Summary does not belong to Owner session: "
+                f"{selected_summary_id}"
             )
-            if watermark is None:
-                raise LookupError(
-                    "Summary watermark not found: "
-                    f"{summary.covered_through_message_id}"
-                )
-            covered_through_sequence = watermark.sequence
+    histories = messages.list_between_checkpoints(
+        connection,
+        owner.project_owner_session_id,
+        after_message_id=(
+            summary.covered_through_message_id if summary is not None else None
+        ),
+        through_message_id=checkpoint_id,
+    )
+    covered_through_sequence: int | None = None
+    if summary is not None:
+        watermark = messages.get(
+            connection,
+            summary.covered_through_message_id,
+        )
+        if watermark is None:
+            raise LookupError(
+                "Summary watermark not found: "
+                f"{summary.covered_through_message_id}"
+            )
+        covered_through_sequence = watermark.sequence
 
     snapshot = OwnerContextSnapshot(
         triage_id=owner.triage_id,
@@ -708,10 +738,7 @@ def _select_owner_context(
         covered_through_sequence=covered_through_sequence,
         message_history=histories,
     )
-    return snapshot, _ProjectOwnerRevision(
-        message_id=owner.message_id,
-        summary_id=owner.summary_id,
-    )
+    return snapshot
 
 
 def latest_owner_summary_id_through(

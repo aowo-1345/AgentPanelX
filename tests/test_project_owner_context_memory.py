@@ -504,10 +504,10 @@ def test_summary_publish_transaction_rejects_a_stale_checkpoint(
 
     with database.read_only_connection() as connection:
         owner = owners.get_by_triage_id(connection, activation.triage_id)
-        summary = summaries.get(connection, "stale-summary")
+        stored_summary = summaries.get(connection, "stale-summary")
     assert owner is not None
     assert owner.summary_id is None
-    assert summary is None
+    assert stored_summary is None
 
 
 def test_frozen_activation_cannot_replace_a_newer_summary_during_compaction(
@@ -662,8 +662,10 @@ def test_attribution_uses_the_summary_available_at_its_checkpoint(
     assert first.activation.summary_id is not None
     assert future.activation is not None
     assert future.activation.summary_id is not None
+    database = SQLiteDatabase.for_project(project_path)
+    owners = SQLiteProjectOwnerAgentRepository()
     contexts = HistoricalOwnerForkService(
-        SQLiteDatabase.for_project(project_path),
+        database,
         AgentPromptCatalog(settings.runtime.prompts),
     )
     selected_summary_id = contexts.latest_summary_id_through(checkpoint.message_id)
@@ -684,3 +686,17 @@ def test_attribution_uses_the_summary_available_at_its_checkpoint(
             checkpoint.message_id,
             summary_id=future.activation.summary_id,
         )
+
+    with database.transaction() as connection:
+        owner = owners.get_by_triage_id(connection, checkpoint.triage_id)
+        assert owner is not None
+        owners.update(
+            connection,
+            replace(owner, message_id=checkpoint.message_id),
+        )
+
+    restored_with_stale_live_pointer = contexts.restore(
+        checkpoint.message_id,
+        summary_id=selected_summary_id,
+    )
+    assert restored_with_stale_live_pointer.through_message_id == checkpoint.message_id
