@@ -9,7 +9,7 @@
 | `reject <原因>` | `pending_action=PLAN_APPROVAL` | 保留反馈并创建 `PLAN_DECISION` Activation。 |
 | `start` | `pending_action=FIRST_RUN_APPROVAL`，Owner 和 Delivery 均空闲 | 开始首次 Run，入队首个 StageRun。 |
 | `drive-delivery` | Owner 空闲，存在可 claim 的 StageRun | 执行一个 Stage；终态结果会创建 `EXECUTION_RESULT` Activation。 |
-| `view` | 无 | 返回组合后的 Runtime Context、Snapshot、StageRun、Activation、Timeline 和 Git 事实。 |
+| `view` | 无 | 返回组合后的 ProjectRuntimeState、Snapshot、StageRun、Activation、Timeline 和 Git 事实。 |
 | 裸 Tool Action JSON | 没有未完成 Activation | 独立验证一个真实 Tool；不代表一次 Owner ReAct loop。 |
 | `drive model` | 存在尚未绑定模式的待处理 Activation | 由真实 Project Owner 模型消费整个 Activation。 |
 | `drive tool <JSON>` | 存在新的或已经绑定 `TOOL` 的待处理 Activation | 原子执行一个手动 Tool step，并持久化 Action/Observation。 |
@@ -47,7 +47,7 @@ stateDiagram-v2
 
 1. 原子 claim Activation，进入 `RUNNING + TOOL`。
 2. 在 `message_history` 写入标准 `function_call`。
-3. 使用当前 Runtime Context 调用同一个 Project Execution 与 Service。
+3. 由命令侧 ProjectRuntimeContext 刷新 ProjectRuntimeState，再调用同一个 Project Execution 与 Service。
 4. 写入标准 `function_call_output`。
 5. Tool 无 `AgentExit` 时释放为 `PENDING + TOOL`；否则终结 Activation。
 

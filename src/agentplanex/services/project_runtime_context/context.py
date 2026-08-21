@@ -318,6 +318,13 @@ class ProjectRuntimeTransaction:
             task,
         )
 
+    def owner_message_id(self) -> str | None:
+        """Read the live Owner checkpoint for a transactionally linked fact."""
+        return self._context._owner().current_message_id(
+            self.connection,
+            self.state(),
+        )
+
     def _commit(self) -> None:
         if self._state is not None:
             self._context._cached_state = self._state

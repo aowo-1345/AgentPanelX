@@ -51,12 +51,11 @@ class DeliveryRunner:
 
     def drive_once(
         self,
-        triage_id: str,
         *,
         append_execution_result: ExecutionResultWriter,
     ) -> DeliveryDriveResult:
         """Claim, execute, and finalize exactly one StageRun when one is queued."""
-        active = self.delivery.active_stage_run(triage_id)
+        active = self.delivery.active_stage_run()
         if active is None:
             return DeliveryDriveResult(
                 outcome="idle",
@@ -80,10 +79,10 @@ class DeliveryRunner:
             return self._failed_result(completion)
 
         claim = self.delivery.claim_next_stage(
-            triage_id,
             started_at=now,
             lease_expires_at=now + self.lease_duration,
         )
+        triage_id = claim.state.triage_id
         invocation_id = uuid4().hex
         invocation_started = False
         try:
@@ -185,14 +184,14 @@ class DeliveryRunner:
             return DeliveryDriveResult(
                 outcome="candidate_ready",
                 stage_run=completion.stage_run,
-                context_status=completion.context.status,
+                context_status=completion.state.status,
                 candidate_commit_sha=completion.candidate_commit_sha,
                 activation=completion.activation,
             )
         return DeliveryDriveResult(
             outcome="stage_succeeded",
             stage_run=completion.stage_run,
-            context_status=completion.context.status,
+            context_status=completion.state.status,
             candidate_commit_sha=None,
             activation=None,
         )
@@ -239,7 +238,7 @@ class DeliveryRunner:
         return DeliveryDriveResult(
             outcome="stage_failed",
             stage_run=completion.stage_run,
-            context_status=completion.context.status,
+            context_status=completion.state.status,
             candidate_commit_sha=None,
             activation=completion.activation,
         )

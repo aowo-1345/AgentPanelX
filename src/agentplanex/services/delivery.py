@@ -25,17 +25,13 @@ from agentplanex.domains import (
     milestone_view_digest,
 )
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
-from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMilestoneSnapshotRepository,
-    SQLiteProjectOwnerAgentRepository,
-    SQLiteProjectRuntimeStateRepository,
     SQLiteStageRunRepository,
 )
-from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.planning import SPEC_DOCUMENT_NAMES
-from agentplanex.services.runtime_context import RuntimeContextService
+from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 
 
 class DeliveryError(ValueError):
@@ -78,7 +74,7 @@ def missing_milestone_hard_gate(_request: MilestoneReviewRequest) -> MilestoneRe
 class MilestonesUpdated:
     """Observable result of publishing one complete Milestone View."""
 
-    context: ProjectRuntimeState
+    state: ProjectRuntimeState
     snapshot: MilestoneSnapshot | None
     accepted: bool
     subject_digest: str
@@ -89,7 +85,7 @@ class MilestonesUpdated:
 class FirstRunApprovalRequested:
     """The first Run is ready but still requires an explicit user Start."""
 
-    context: ProjectRuntimeState
+    state: ProjectRuntimeState
     snapshot: MilestoneSnapshot
     milestone: Milestone
 
@@ -98,7 +94,7 @@ class FirstRunApprovalRequested:
 class MilestoneRunQueued:
     """A fixed first Stage has been durably queued for one Milestone Run."""
 
-    context: ProjectRuntimeState
+    state: ProjectRuntimeState
     snapshot: MilestoneSnapshot
     milestone: Milestone
     stage: Stage
@@ -110,7 +106,7 @@ class MilestoneRunQueued:
 class StageClaim:
     """A Driver-owned lease over the sole queued StageRun."""
 
-    context: ProjectRuntimeState
+    state: ProjectRuntimeState
     snapshot: MilestoneSnapshot
     milestone: Milestone
     stage: Stage
@@ -121,7 +117,7 @@ class StageClaim:
 class StageCompletion:
     """One terminal Stage fact and either its successor or Candidate result."""
 
-    context: ProjectRuntimeState
+    state: ProjectRuntimeState
     stage_run: StageRun
     next_stage_run: StageRun | None
     candidate_commit_sha: str | None
@@ -132,7 +128,7 @@ class StageCompletion:
 class CandidateDecision:
     """The controlled outcome of accepting or rejecting one Candidate."""
 
-    context: ProjectRuntimeState
+    state: ProjectRuntimeState
     decision: Literal["accept", "reject"]
     milestone_key: str
     candidate_commit_sha: str
@@ -146,48 +142,19 @@ class DeliveryService:
     """Own Snapshot publication now and the delivery state machine incrementally."""
 
     project_path: Path
-    database: SQLiteDatabase
+    context: ProjectRuntimeContext
+    git: GitRepository
     event_bus: EventBus = field(default_factory=EventBus)
-    runtime_contexts: RuntimeContextService | None = None
-    contexts: SQLiteProjectRuntimeStateRepository = field(
-        default_factory=SQLiteProjectRuntimeStateRepository
-    )
-    owners: SQLiteProjectOwnerAgentRepository = field(
-        default_factory=SQLiteProjectOwnerAgentRepository
-    )
     snapshots: SQLiteMilestoneSnapshotRepository = field(
         default_factory=SQLiteMilestoneSnapshotRepository
     )
     stage_runs: SQLiteStageRunRepository = field(
         default_factory=SQLiteStageRunRepository
     )
-    git: GitRepository | None = None
     review_milestones: MilestoneHardGate = missing_milestone_hard_gate
-
-    def __post_init__(self) -> None:
-        if self.runtime_contexts is None:
-            self.runtime_contexts = RuntimeContextService(
-                self.database,
-                self.event_bus,
-                self.contexts,
-            )
-
-    @classmethod
-    def for_project(cls, project_path: Path) -> "DeliveryService":
-        database = SQLiteDatabase.for_project(project_path)
-        initialize_schema(database)
-        event_bus = EventBus((SQLiteTimelineRecorder(database),))
-        return cls(
-            project_path=project_path,
-            database=database,
-            event_bus=event_bus,
-            runtime_contexts=RuntimeContextService(database, event_bus),
-            git=GitRepository(project_path),
-        )
 
     def update_milestones(
         self,
-        context: ProjectRuntimeState,
         *,
         reason: str,
         milestones: tuple[Milestone, ...],
@@ -196,7 +163,7 @@ class DeliveryService:
         normalized_reason = " ".join(reason.split())
         if not normalized_reason:
             raise DeliveryError("Milestone update reason must not be empty")
-        current = self._current_context(context.triage_id)
+        current = self.context.state()
         previous = self._assert_publishable(current, milestones)
         self._assert_approved_specs(current)
         plan_commit_sha = current.current_plan_commit_sha
@@ -213,48 +180,45 @@ class DeliveryService:
             if current.status == "IN_PROGRESS"
             else None
         )
-        current = self._current_context(context.triage_id)
+        current = self.context.state()
         previous = self._assert_publishable(current, milestones)
         self._assert_approved_specs(current)
         if review is not None and review.decision == "revise":
-            blocked = self._runtime_contexts().transition(
-                current.triage_id,
+            blocked = self.context.transition(
                 reason=RuntimeContextChangeReason.MILESTONE_HARD_GATE_REJECTED,
                 mutate=self._block_after_milestone_hard_gate_rejection,
             )
             return MilestonesUpdated(
-                context=blocked,
+                state=blocked,
                 snapshot=None,
                 accepted=False,
                 subject_digest=subject_digest,
                 review=review,
             )
 
-        message_id = self._owner_message_id(current.triage_id)
-        snapshot = MilestoneSnapshot(
-            snapshot_id=uuid4().hex,
-            triage_id=current.triage_id,
-            previous_snapshot_id=(previous.snapshot_id if previous is not None else None),
-            plan_commit_sha=current.current_plan_commit_sha or "",
-            milestones=milestones,
-            reason=normalized_reason,
-            message_id=message_id,
-            created_at=datetime.now(UTC),
-        )
-        with self.database.transaction() as connection:
-            self.snapshots.insert(connection, snapshot)
-            updated, context_event = self._runtime_contexts().transition_in_transaction(
-                connection,
-                current.triage_id,
+        with self.context.transaction() as transaction:
+            latest = transaction.state()
+            snapshot = MilestoneSnapshot(
+                snapshot_id=uuid4().hex,
+                triage_id=latest.triage_id,
+                previous_snapshot_id=(
+                    previous.snapshot_id if previous is not None else None
+                ),
+                plan_commit_sha=latest.current_plan_commit_sha or "",
+                milestones=milestones,
+                reason=normalized_reason,
+                message_id=transaction.owner_message_id(),
+                created_at=datetime.now(UTC),
+            )
+            self.snapshots.insert(transaction.connection, snapshot)
+            updated = transaction.transition(
                 reason=RuntimeContextChangeReason.MILESTONES_UPDATED,
                 mutate=lambda latest: self._publish_snapshot(
-                    connection,
+                    transaction.connection,
                     latest,
                     snapshot,
                 ),
             )
-        if context_event is not None:
-            self.event_bus.publish(context_event)
         self.event_bus.publish(
             ExecutionEvent(
                 triage_id=updated.triage_id,
@@ -270,19 +234,16 @@ class DeliveryService:
             )
         )
         return MilestonesUpdated(
-            context=updated,
+            state=updated,
             snapshot=snapshot,
             accepted=True,
             subject_digest=subject_digest,
             review=review,
         )
 
-    def request_next_milestone(
-        self,
-        context: ProjectRuntimeState,
-    ) -> FirstRunApprovalRequested | MilestoneRunQueued:
+    def request_next_milestone(self) -> FirstRunApprovalRequested | MilestoneRunQueued:
         """Request the first Start or queue the next pending Milestone Run."""
-        current = self._current_context(context.triage_id)
+        current = self.context.state()
         snapshot = self._snapshot_for_context(current)
         milestone = self._first_pending(snapshot)
         self._assert_approved_specs(current)
@@ -293,8 +254,7 @@ class DeliveryService:
                 )
             if current.current_run_id is not None:
                 raise DeliveryError("First Run already has an active Milestone Run")
-            updated = self._runtime_contexts().transition(
-                current.triage_id,
+            updated = self.context.transition(
                 reason=RuntimeContextChangeReason.FIRST_RUN_APPROVAL_REQUESTED,
                 mutate=lambda latest: self._request_first_run(latest, snapshot),
             )
@@ -309,7 +269,7 @@ class DeliveryService:
                 )
             )
             return FirstRunApprovalRequested(
-                context=updated,
+                state=updated,
                 snapshot=snapshot,
                 milestone=milestone,
             )
@@ -317,12 +277,9 @@ class DeliveryService:
             self._assert_retryable_blocked(current)
         return self._queue_next_run(current, snapshot, milestone, first_run=False)
 
-    def start_first_run(
-        self,
-        context: ProjectRuntimeState,
-    ) -> MilestoneRunQueued:
+    def start_first_run(self) -> MilestoneRunQueued:
         """Apply the user's one-time explicit Start and queue the first Stage."""
-        current = self._current_context(context.triage_id)
+        current = self.context.state()
         snapshot = self._snapshot_for_context(current)
         milestone = self._first_pending(snapshot)
         if (
@@ -333,10 +290,14 @@ class DeliveryService:
             raise DeliveryError("Project is not waiting for its first Run approval")
         return self._queue_next_run(current, snapshot, milestone, first_run=True)
 
-    def active_stage_run(self, triage_id: str) -> StageRun | None:
+    def active_stage_run(self) -> StageRun | None:
         """Read the sole active StageRun for the Driver without changing it."""
-        with self.database.connection() as connection:
-            return self.stage_runs.get_active(connection, triage_id)
+        with self.context.transaction() as transaction:
+            state = transaction.state()
+            return self.stage_runs.get_active(
+                transaction.connection,
+                state.triage_id,
+            )
 
     def fail_interrupted_stage_runs(
         self,
@@ -356,27 +317,29 @@ class DeliveryService:
 
     def claim_next_stage(
         self,
-        triage_id: str,
         *,
         started_at: datetime,
         lease_expires_at: datetime,
     ) -> StageClaim:
         """Atomically claim the next queued Stage before leaving the transaction."""
-        with self.database.transaction() as connection:
-            current = self._get_context(connection, triage_id)
-            active = self.stage_runs.get_active(connection, triage_id)
+        with self.context.transaction() as transaction:
+            current = transaction.state()
+            active = self.stage_runs.get_active(
+                transaction.connection,
+                current.triage_id,
+            )
             if active is None:
                 raise DeliveryError("Project has no queued StageRun")
             if active.status is not StageRunStatus.QUEUED:
                 raise DeliveryError("Project already has a running StageRun")
             snapshot, milestone, stage = self._stage_contract(
-                connection,
+                transaction.connection,
                 current,
                 active,
             )
             claimed = self.stage_runs.claim_next(
-                connection,
-                triage_id,
+                transaction.connection,
+                current.triage_id,
                 started_at=started_at,
                 lease_expires_at=lease_expires_at,
             )
@@ -384,7 +347,7 @@ class DeliveryService:
                 raise DeliveryError("StageRun could not be claimed")
         self.event_bus.publish(
             ExecutionEvent(
-                triage_id=triage_id,
+                triage_id=current.triage_id,
                 event_type=ExecutionEventType.STAGE_RUN_STARTED,
                 payload={
                     "stage_run_id": claimed.stage_run_id,
@@ -398,7 +361,7 @@ class DeliveryService:
             )
         )
         return StageClaim(
-            context=current,
+            state=current,
             snapshot=snapshot,
             milestone=milestone,
             stage=stage,
@@ -414,20 +377,22 @@ class DeliveryService:
         append_execution_result: ExecutionResultWriter,
     ) -> StageCompletion:
         """Record one committed Stage and queue only its ordered successor."""
-        with self.database.transaction() as connection:
-            running = self.stage_runs.get(connection, stage_run_id)
+        with self.context.transaction() as transaction:
+            running = self.stage_runs.get(transaction.connection, stage_run_id)
             if running is None:
                 raise LookupError(f"StageRun not found: {stage_run_id}")
-            current = self._get_context(connection, running.triage_id)
+            current = transaction.state()
+            if current.triage_id != running.triage_id:
+                raise DeliveryError("StageRun does not belong to this Project Runtime")
             _snapshot, milestone, stage = self._stage_contract(
-                connection,
+                transaction.connection,
                 current,
                 running,
             )
             if running.status is not StageRunStatus.RUNNING:
                 raise DeliveryError("Only a running StageRun can succeed")
             succeeded = self.stage_runs.mark_succeeded(
-                connection,
+                transaction.connection,
                 stage_run_id,
                 output_commit_sha=output_commit_sha,
                 finished_at=finished_at,
@@ -451,10 +416,8 @@ class DeliveryService:
                     failure=None,
                     created_at=finished_at,
                 )
-                self.stage_runs.insert(connection, next_stage_run)
-                updated, context_event = self._runtime_contexts().transition_in_transaction(
-                    connection,
-                    current.triage_id,
+                self.stage_runs.insert(transaction.connection, next_stage_run)
+                updated = transaction.transition(
                     reason=RuntimeContextChangeReason.STAGE_RUN_SUCCEEDED,
                     mutate=lambda latest: self._advance_stage(
                         latest,
@@ -464,9 +427,7 @@ class DeliveryService:
                 )
             else:
                 candidate_commit_sha = output_commit_sha
-                updated, context_event = self._runtime_contexts().transition_in_transaction(
-                    connection,
-                    current.triage_id,
+                updated = transaction.transition(
                     reason=RuntimeContextChangeReason.CANDIDATE_READY,
                     mutate=lambda latest: self._candidate_ready(
                         latest,
@@ -475,7 +436,7 @@ class DeliveryService:
                     ),
                 )
                 activation = append_execution_result(
-                    connection,
+                    transaction.connection,
                     updated,
                     _candidate_ready_message(
                         updated,
@@ -485,8 +446,6 @@ class DeliveryService:
                     ),
                 )
 
-        if context_event is not None:
-            self.event_bus.publish(context_event)
         self.event_bus.publish(
             ExecutionEvent(
                 triage_id=updated.triage_id,
@@ -517,7 +476,7 @@ class DeliveryService:
                 )
             )
         return StageCompletion(
-            context=updated,
+            state=updated,
             stage_run=succeeded,
             next_stage_run=next_stage_run,
             candidate_commit_sha=candidate_commit_sha,
@@ -535,28 +494,26 @@ class DeliveryService:
         normalized_failure = " ".join(failure.split())
         if not normalized_failure:
             raise ValueError("Stage failure must not be empty")
-        with self.database.transaction() as connection:
-            running = self.stage_runs.get(connection, stage_run_id)
+        with self.context.transaction() as transaction:
+            running = self.stage_runs.get(transaction.connection, stage_run_id)
             if running is None:
                 raise LookupError(f"StageRun not found: {stage_run_id}")
-            current = self._get_context(connection, running.triage_id)
-            self._stage_contract(connection, current, running)
+            current = transaction.state()
+            if current.triage_id != running.triage_id:
+                raise DeliveryError("StageRun does not belong to this Project Runtime")
+            self._stage_contract(transaction.connection, current, running)
             if running.status is not StageRunStatus.RUNNING:
                 raise DeliveryError("Only a running StageRun can fail")
             failed = self.stage_runs.mark_failed(
-                connection,
+                transaction.connection,
                 stage_run_id,
                 failure=normalized_failure,
                 finished_at=finished_at,
             )
-            updated, context_event = self._runtime_contexts().transition_in_transaction(
-                connection,
-                current.triage_id,
+            updated = transaction.transition(
                 reason=RuntimeContextChangeReason.STAGE_RUN_FAILED,
                 mutate=lambda latest: self._stage_failed(latest, running),
             )
-        if context_event is not None:
-            self.event_bus.publish(context_event)
         self.event_bus.publish(
             ExecutionEvent(
                 triage_id=updated.triage_id,
@@ -571,7 +528,7 @@ class DeliveryService:
             )
         )
         return StageCompletion(
-            context=updated,
+            state=updated,
             stage_run=failed,
             next_stage_run=None,
             candidate_commit_sha=None,
@@ -580,7 +537,6 @@ class DeliveryService:
 
     def decide_milestone_candidate(
         self,
-        context: ProjectRuntimeState,
         *,
         decision: Literal["accept", "reject"],
         reason: str,
@@ -589,7 +545,7 @@ class DeliveryService:
         normalized_reason = " ".join(reason.split())
         if not normalized_reason:
             raise DeliveryError("Candidate decision reason must not be empty")
-        current = self._current_context(context.triage_id)
+        current = self.context.state()
         snapshot, milestone, candidate_commit_sha = self._candidate_contract(current)
         self._assert_candidate_ref(current, candidate_commit_sha)
         successor: MilestoneSnapshot | None = None
@@ -597,7 +553,7 @@ class DeliveryService:
         integrated_commit_sha = candidate_commit_sha
         if decision == "accept":
             self._assert_candidate_preserves_specs(current, candidate_commit_sha)
-            git = self._git()
+            git = self.git
             try:
                 if current.git_branch is None or current.git_main_version is None:
                     raise DeliveryError("Candidate has no fixed target branch and commit")
@@ -609,11 +565,11 @@ class DeliveryService:
             except GitRepositoryError as error:
                 raise DeliveryError(str(error)) from error
 
-        with self.database.transaction() as connection:
-            latest = self._get_context(connection, current.triage_id)
+        with self.context.transaction() as transaction:
+            latest = transaction.state()
             latest_snapshot, latest_milestone, latest_candidate = self._candidate_contract(
                 latest,
-                connection=connection,
+                connection=transaction.connection,
             )
             if (
                 latest_snapshot.snapshot_id != snapshot.snapshot_id
@@ -622,22 +578,16 @@ class DeliveryService:
             ):
                 raise DeliveryError("Candidate changed while applying its decision")
             if decision == "accept":
-                message_id = self._owner_message_id(
-                    latest.triage_id,
-                    connection=connection,
-                )
                 successor = latest_snapshot.with_completed_milestone(
                     latest_milestone.key,
                     snapshot_id=uuid4().hex,
                     reason=normalized_reason,
-                    message_id=message_id,
+                    message_id=transaction.owner_message_id(),
                     created_at=datetime.now(UTC),
                 )
-                self.snapshots.insert(connection, successor)
+                self.snapshots.insert(transaction.connection, successor)
                 completed = successor.first_pending() is None
-                updated, context_event = self._runtime_contexts().transition_in_transaction(
-                    connection,
-                    latest.triage_id,
+                updated = transaction.transition(
                     reason=(
                         RuntimeContextChangeReason.TRIAGE_DEVELOPMENT_COMPLETED
                         if completed
@@ -652,17 +602,13 @@ class DeliveryService:
                     ),
                 )
             else:
-                updated, context_event = self._runtime_contexts().transition_in_transaction(
-                    connection,
-                    latest.triage_id,
+                updated = transaction.transition(
                     reason=RuntimeContextChangeReason.CANDIDATE_REJECTED,
                     mutate=lambda saved: self._reject_candidate(
                         saved,
                         candidate_commit_sha,
                     ),
                 )
-        if context_event is not None:
-            self.event_bus.publish(context_event)
         self.event_bus.publish(
             ExecutionEvent(
                 triage_id=updated.triage_id,
@@ -694,7 +640,7 @@ class DeliveryService:
             )
         next_milestone = successor.first_pending() if successor is not None else None
         return CandidateDecision(
-            context=updated,
+            state=updated,
             decision=decision,
             milestone_key=milestone.key,
             candidate_commit_sha=candidate_commit_sha,
@@ -715,7 +661,7 @@ class DeliveryService:
         *,
         first_run: bool,
     ) -> MilestoneRunQueued:
-        git = self._git()
+        git = self.git
         try:
             git.assert_clean()
             branch = git.current_branch()
@@ -757,11 +703,11 @@ class DeliveryService:
             failure=None,
             created_at=now,
         )
-        with self.database.transaction() as connection:
-            latest = self._get_context(connection, current.triage_id)
+        with self.context.transaction() as transaction:
+            latest = transaction.state()
             latest_snapshot = self._snapshot_for_context(
                 latest,
-                connection=connection,
+                connection=transaction.connection,
             )
             latest_milestone = self._first_pending(latest_snapshot)
             if (
@@ -778,7 +724,10 @@ class DeliveryService:
                     raise DeliveryError("Project is no longer waiting for first Run approval")
             else:
                 if retry_from_blocked:
-                    self._assert_retryable_blocked(latest, connection=connection)
+                    self._assert_retryable_blocked(
+                        latest,
+                        connection=transaction.connection,
+                    )
                 elif (
                     latest.status != "IN_PROGRESS"
                     or latest.pending_action is not None
@@ -791,10 +740,8 @@ class DeliveryService:
                 raise DeliveryError("Project gained an active Run or Candidate")
             if latest.current_candidate_commit_sha is not None:
                 raise DeliveryError("Project gained an active Run or Candidate")
-            self.stage_runs.insert(connection, stage_run)
-            updated, context_event = self._runtime_contexts().transition_in_transaction(
-                connection,
-                latest.triage_id,
+            self.stage_runs.insert(transaction.connection, stage_run)
+            updated = transaction.transition(
                 reason=(
                     RuntimeContextChangeReason.FIRST_RUN_STARTED
                     if first_run
@@ -815,8 +762,6 @@ class DeliveryService:
                     current_candidate_commit_sha=None,
                 ),
             )
-        if context_event is not None:
-            self.event_bus.publish(context_event)
         self.event_bus.publish(
             ExecutionEvent(
                 triage_id=updated.triage_id,
@@ -833,7 +778,7 @@ class DeliveryService:
             )
         )
         return MilestoneRunQueued(
-            context=updated,
+            state=updated,
             snapshot=snapshot,
             milestone=milestone,
             stage=stage,
@@ -873,8 +818,11 @@ class DeliveryService:
         if context.current_snapshot_id is None:
             raise DeliveryError("Milestone delivery requires a published Snapshot")
         if connection is None:
-            with self.database.connection() as opened:
-                snapshot = self.snapshots.get(opened, context.current_snapshot_id)
+            with self.context.transaction() as transaction:
+                snapshot = self.snapshots.get(
+                    transaction.connection,
+                    context.current_snapshot_id,
+                )
         else:
             snapshot = self.snapshots.get(connection, context.current_snapshot_id)
         if snapshot is None:
@@ -1026,8 +974,8 @@ class DeliveryService:
 
         if connection is not None:
             return load(connection)
-        with self.database.connection() as opened:
-            return load(opened)
+        with self.context.transaction() as transaction:
+            return load(transaction.connection)
 
     def _assert_candidate_ref(
         self,
@@ -1037,13 +985,13 @@ class DeliveryService:
         if context.current_run_id is None:
             raise DeliveryError("Candidate has no Run identity")
         try:
-            referenced = self._git().resolve_ref(
+            referenced = self.git.resolve_ref(
                 delivery_candidate_ref(context.current_run_id)
             )
         except GitRepositoryError as error:
             raise DeliveryError(str(error)) from error
         if referenced != candidate_commit_sha:
-            raise DeliveryError("Candidate Git ref does not match Runtime Context")
+            raise DeliveryError("Candidate Git ref does not match Runtime State")
 
     @staticmethod
     def _accept_candidate(
@@ -1117,8 +1065,11 @@ class DeliveryService:
                     "Initial Milestone View cannot mark a Milestone completed"
                 )
             return None
-        with self.database.connection() as connection:
-            previous = self.snapshots.get(connection, context.current_snapshot_id)
+        with self.context.transaction() as transaction:
+            previous = self.snapshots.get(
+                transaction.connection,
+                context.current_snapshot_id,
+            )
         if previous is None:
             raise LookupError(
                 "Current Milestone Snapshot not found: " f"{context.current_snapshot_id}"
@@ -1144,7 +1095,7 @@ class DeliveryService:
         if plan_commit_sha is None:
             raise DeliveryError("Delivery requires an approved Plan commit")
         try:
-            changed = self._git().paths_changed_from_commit(
+            changed = self.git.paths_changed_from_commit(
                 plan_commit_sha,
                 self._spec_documents(),
             )
@@ -1166,7 +1117,7 @@ class DeliveryService:
         if plan_commit_sha is None:
             raise DeliveryError("Candidate acceptance requires an approved Plan commit")
         try:
-            changed = self._git().paths_changed_from_commit(
+            changed = self.git.paths_changed_from_commit(
                 plan_commit_sha,
                 self._spec_documents(),
                 target_commit_sha=candidate_commit_sha,
@@ -1213,8 +1164,8 @@ class DeliveryService:
         if connection is not None:
             validate(connection)
             return
-        with self.database.connection() as opened:
-            validate(opened)
+        with self.context.transaction() as transaction:
+            validate(transaction.connection)
 
     def _run_milestone_hard_gate(
         self,
@@ -1325,44 +1276,6 @@ class DeliveryService:
             current_milestone_key=None,
             current_stage_key=None,
         )
-
-    def _current_context(self, triage_id: str) -> ProjectRuntimeState:
-        with self.database.connection() as connection:
-            return self._get_context(connection, triage_id)
-
-    def _get_context(
-        self,
-        connection: sqlite3.Connection,
-        triage_id: str,
-    ) -> ProjectRuntimeState:
-        context = self.contexts.get(connection, triage_id)
-        if context is None:
-            raise LookupError(f"Project Runtime Context not found: {triage_id}")
-        return context
-
-    def _owner_message_id(
-        self,
-        triage_id: str,
-        *,
-        connection: sqlite3.Connection | None = None,
-    ) -> str | None:
-        if connection is not None:
-            owner = self.owners.get_by_triage_id(connection, triage_id)
-            return owner.message_id if owner is not None else None
-        with self.database.connection() as current_connection:
-            owner = self.owners.get_by_triage_id(current_connection, triage_id)
-        return owner.message_id if owner is not None else None
-
-    def _runtime_contexts(self) -> RuntimeContextService:
-        if self.runtime_contexts is None:
-            raise RuntimeError("Delivery Service has no Runtime Context Service")
-        return self.runtime_contexts
-
-    def _git(self) -> GitRepository:
-        if self.git is None:
-            raise RuntimeError("Delivery Service has no Git repository")
-        return self.git
-
 
 def delivery_run_ref(run_id: str) -> str:
     """Return the durable ref for an in-progress Run's latest Stage output."""

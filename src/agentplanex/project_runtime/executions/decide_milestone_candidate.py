@@ -54,12 +54,11 @@ class DecideMilestoneCandidateExecution(
 
     def execute(
         self,
-        context: ProjectRuntimeState,
+        _context: ProjectRuntimeState,
         arguments: DecideMilestoneCandidateArguments,
     ) -> ToolExecutionResult:
         try:
             result = self.dependencies.delivery.decide_milestone_candidate(
-                context,
                 decision=arguments.decision,
                 reason=arguments.reason,
             )
@@ -69,8 +68,8 @@ class DecideMilestoneCandidateExecution(
         output: dict[str, object] = {
             "ok": True,
             "decision": result.decision,
-            "triage_id": result.context.triage_id,
-            "status": result.context.status,
+            "triage_id": result.state.triage_id,
+            "status": result.state.status,
             "milestone_key": result.milestone_key,
             "candidate_commit_sha": result.candidate_commit_sha,
             "next_milestone_key": result.next_milestone_key,

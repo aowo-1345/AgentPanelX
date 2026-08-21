@@ -36,11 +36,11 @@ class RunNextMilestoneExecution(ProjectExecution[NoToolArguments]):
 
     def execute(
         self,
-        context: ProjectRuntimeState,
+        _context: ProjectRuntimeState,
         arguments: NoToolArguments,
     ) -> ToolExecutionResult:
         try:
-            result = self.dependencies.delivery.request_next_milestone(context)
+            result = self.dependencies.delivery.request_next_milestone()
         except DeliveryError as error:
             return ToolExecutionResult(output={"ok": False, "error": str(error)})
 
@@ -49,9 +49,9 @@ class RunNextMilestoneExecution(ProjectExecution[NoToolArguments]):
                 output={
                     "ok": True,
                     "state": "FIRST_RUN_APPROVAL_REQUESTED",
-                    "triage_id": result.context.triage_id,
-                    "status": result.context.status,
-                    "pending_action": result.context.pending_action,
+                    "triage_id": result.state.triage_id,
+                    "status": result.state.status,
+                    "pending_action": result.state.pending_action,
                     "snapshot_id": result.snapshot.snapshot_id,
                     "milestone_key": result.milestone.key,
                 },
@@ -67,8 +67,8 @@ class RunNextMilestoneExecution(ProjectExecution[NoToolArguments]):
             output={
                 "ok": True,
                 "state": "MILESTONE_RUN_QUEUED",
-                "triage_id": result.context.triage_id,
-                "status": result.context.status,
+                "triage_id": result.state.triage_id,
+                "status": result.state.status,
                 "run_id": result.stage_run.run_id,
                 "stage_run_id": result.stage_run.stage_run_id,
                 "snapshot_id": result.snapshot.snapshot_id,

@@ -59,9 +59,9 @@ class PlanDocument:
 
 @dataclass(frozen=True, slots=True)
 class ProjectWorkspaceView:
-    """Panels derived from one required Runtime Context."""
+    """Panels derived from one required persisted Runtime State."""
 
-    context: ProjectRuntimeState
+    state: ProjectRuntimeState
     owner_activation: OwnerActivation | None
     activation_has_reply: bool
     runtime_error: str | None
@@ -85,7 +85,7 @@ class ProjectWorkspaceQuery:
 
     database: SQLiteDatabase
     git: GitRepository
-    contexts: SQLiteProjectRuntimeStateRepository = field(
+    states: SQLiteProjectRuntimeStateRepository = field(
         default_factory=SQLiteProjectRuntimeStateRepository
     )
     snapshots: SQLiteMilestoneSnapshotRepository = field(
@@ -103,9 +103,9 @@ class ProjectWorkspaceQuery:
     history_limit: int = 50
 
     def get(self, triage_id: str) -> ProjectWorkspaceView:
-        context = self._context(triage_id)
+        state = self._state(triage_id)
         activation, active_stage, runtime_error = self._runtime(triage_id)
-        snapshot, milestones_error = self._milestones(context)
+        snapshot, milestones_error = self._milestones(state)
         timeline, timeline_error = self._timeline(triage_id)
         conversation, conversation_error, activation_has_reply = self._conversation(
             triage_id,
@@ -114,7 +114,7 @@ class ProjectWorkspaceQuery:
         plan_documents, plan_error = _read_plan_documents(self.git)
         branch, head, git_error = _git_panel(self.git)
         return ProjectWorkspaceView(
-            context=context,
+            state=state,
             owner_activation=activation,
             activation_has_reply=activation_has_reply,
             runtime_error=runtime_error,
@@ -130,19 +130,19 @@ class ProjectWorkspaceQuery:
             git_head=head,
             git_error=git_error,
             available_actions=_human_actions(
-                context,
+                state,
                 activation,
                 active_stage,
                 runtime_error,
             ),
         )
 
-    def _context(self, triage_id: str) -> ProjectRuntimeState:
+    def _state(self, triage_id: str) -> ProjectRuntimeState:
         with self.database.read_only_connection() as connection:
-            context = self.contexts.get(connection, triage_id)
-        if context is None:
-            raise LookupError(f"Project Runtime Context not found: {triage_id}")
-        return context
+            state = self.states.get(connection, triage_id)
+        if state is None:
+            raise LookupError(f"Project Runtime State not found: {triage_id}")
+        return state
 
     def _runtime(
         self,
@@ -160,15 +160,15 @@ class ProjectWorkspaceQuery:
 
     def _milestones(
         self,
-        context: ProjectRuntimeState,
+        state: ProjectRuntimeState,
     ) -> tuple[MilestoneSnapshot | None, str | None]:
-        if context.current_snapshot_id is None:
+        if state.current_snapshot_id is None:
             return None, None
         try:
             with self.database.read_only_connection() as connection:
-                snapshot = self.snapshots.get(connection, context.current_snapshot_id)
+                snapshot = self.snapshots.get(connection, state.current_snapshot_id)
             if snapshot is None:
-                raise LookupError(f"Milestone Snapshot not found: {context.current_snapshot_id}")
+                raise LookupError(f"Milestone Snapshot not found: {state.current_snapshot_id}")
             return snapshot, None
         except (sqlite3.Error, ValueError, LookupError) as error:
             return None, str(error)
@@ -208,18 +208,18 @@ class ProjectWorkspaceQuery:
 
 
 def _human_actions(
-    context: ProjectRuntimeState,
+    state: ProjectRuntimeState,
     activation: OwnerActivation | None,
     active_stage: StageRun | None,
     runtime_error: str | None,
 ) -> tuple[FeatureAction, ...]:
     if runtime_error is not None or activation is not None or active_stage is not None:
         return ()
-    if context.status == "TRIAGE":
+    if state.status == "TRIAGE":
         return (FeatureAction.BEGIN,)
-    if context.pending_action == "PLAN_APPROVAL":
+    if state.pending_action == "PLAN_APPROVAL":
         return (FeatureAction.APPROVE_PLAN, FeatureAction.REJECT_PLAN)
-    if context.pending_action == "FIRST_RUN_APPROVAL":
+    if state.pending_action == "FIRST_RUN_APPROVAL":
         return (FeatureAction.START_DELIVERY,)
     return ()
 

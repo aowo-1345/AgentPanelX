@@ -405,15 +405,15 @@ def test_installed_cli_runs_two_isolated_features_end_to_end(
     )
     first_view = first_runtime.project_control_view()
     second_view = second_runtime.project_control_view()
-    assert first_view.context.triage_id == feature_a["triage_id"]
-    assert first_view.context.status == "TODO"
+    assert first_view.state.triage_id == feature_a["triage_id"]
+    assert first_view.state.status == "TODO"
     assert first_view.owner_activation is None
     assert len(first_view.timeline) == 1
     assert first_view.timeline[0].payload["reason"] == "FEATURE_BEGUN"
     assert first_view.snapshot is None
     assert first_view.stage_runs == ()
-    assert second_view.context.triage_id == feature_b["triage_id"]
-    assert second_view.context.status == "TRIAGE"
+    assert second_view.state.triage_id == feature_b["triage_id"]
+    assert second_view.state.status == "TRIAGE"
     assert second_view.owner_activation is None
     assert second_view.timeline == ()
     owners = SQLiteProjectOwnerAgentRepository()

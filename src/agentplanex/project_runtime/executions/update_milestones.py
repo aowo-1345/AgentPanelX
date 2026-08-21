@@ -99,12 +99,11 @@ class UpdateMilestonesExecution(ProjectExecution[UpdateMilestonesArguments]):
 
     def execute(
         self,
-        context: ProjectRuntimeState,
+        _context: ProjectRuntimeState,
         arguments: UpdateMilestonesArguments,
     ) -> ToolExecutionResult:
         try:
             updated = self.dependencies.delivery.update_milestones(
-                context,
                 reason=arguments.reason,
                 milestones=arguments.domain_milestones(),
             )
@@ -118,8 +117,8 @@ class UpdateMilestonesExecution(ProjectExecution[UpdateMilestonesArguments]):
         output: dict[str, object] = {
             "ok": True,
             "accepted": updated.accepted,
-            "triage_id": updated.context.triage_id,
-            "status": updated.context.status,
+            "triage_id": updated.state.triage_id,
+            "status": updated.state.status,
             "subject_digest": updated.subject_digest,
             "hard_gate_invoked": updated.review is not None,
             "review": None,

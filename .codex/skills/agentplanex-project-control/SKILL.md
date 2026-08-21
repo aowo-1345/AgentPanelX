@@ -47,6 +47,6 @@ uv run python scripts/debug_tool_cli.py --cwd <project> --print \
 
 ## 验证结果
 
-每一步检查结构化结果中的 `ok`、`activation_id`、`status`、`driver_mode`、`result` 和 `exit`，随后用 `view` 检查 Runtime Context、交付链路、Timeline 与 Git 指针。需要解释数据库关系或历史事实时转到 `$agentplanex-project-observe`。
+每一步检查结构化结果中的 `ok`、`activation_id`、`status`、`driver_mode`、`result` 和 `exit`，随后用 `view` 检查 ProjectRuntimeState、交付链路、Timeline 与 Git 指针。这里的 State 是 SQLite 当前状态事实，不是命令侧的 ProjectRuntimeContext 对象。需要解释数据库关系或历史事实时转到 `$agentplanex-project-observe`。
 
 开始完整介入前读取 [references/intervention.md](references/intervention.md)，确认命令前置条件、状态流与副作用。

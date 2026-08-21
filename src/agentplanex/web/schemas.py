@@ -215,7 +215,7 @@ def activation_response(activation: OwnerActivation) -> ActivationResponse:
 
 def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
     runtime_view = workspace.runtime_view
-    context = runtime_view.context
+    context = runtime_view.state
     feature = WorkspaceFeatureResponse(
         project_id=workspace.project.project_id,
         project_name=workspace.project.name,

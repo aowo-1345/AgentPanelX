@@ -40,7 +40,7 @@ class WorkspaceQueries:
 
     registry: WorkspaceRegistry
     git: WorkspaceGit
-    contexts: SQLiteProjectRuntimeStateRepository = field(
+    states: SQLiteProjectRuntimeStateRepository = field(
         default_factory=SQLiteProjectRuntimeStateRepository
     )
     stage_runs: SQLiteStageRunRepository = field(
@@ -82,20 +82,20 @@ class WorkspaceQueries:
             runtime_view=runtime_view,
         )
 
-    def context(self, binding: FeatureBinding) -> ProjectRuntimeState:
+    def state(self, binding: FeatureBinding) -> ProjectRuntimeState:
         database = SQLiteDatabase.for_project(binding.worktree_path)
         try:
             with database.read_only_connection() as connection:
-                context = self.contexts.get(connection, binding.triage_id)
+                state = self.states.get(connection, binding.triage_id)
         except sqlite3.Error as error:
             raise LookupError(
                 f"Feature Runtime database is unavailable: {binding.triage_id}"
             ) from error
-        if context is None:
+        if state is None:
             raise LookupError(
-                f"Feature Runtime Context not found: {binding.triage_id}"
+                f"Feature Runtime State not found: {binding.triage_id}"
             )
-        return context
+        return state
 
     def active_stage_run(self, binding: FeatureBinding) -> StageRun | None:
         database = SQLiteDatabase.for_project(binding.worktree_path)
@@ -108,15 +108,15 @@ class WorkspaceQueries:
             ) from error
 
     def _board_feature(self, binding: FeatureBinding) -> BoardFeature:
-        context = self.context(binding)
+        state = self.state(binding)
         return BoardFeature(
             triage_id=binding.triage_id,
             project_id=binding.project_id,
             name=binding.name,
-            status=context.status,
+            status=state.status,
             branch=self.git.current_branch(binding.worktree_path),
             worktree_path=binding.worktree_path,
-            pending_action=context.pending_action,
-            current_milestone_key=context.current_milestone_key,
-            current_stage_key=context.current_stage_key,
+            pending_action=state.pending_action,
+            current_milestone_key=state.current_milestone_key,
+            current_stage_key=state.current_stage_key,
         )

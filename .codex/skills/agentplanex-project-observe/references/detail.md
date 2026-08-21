@@ -250,7 +250,7 @@ erDiagram
 | 事件族 | 事件类型 | 含义与常用 payload |
 |---|---|---|
 | 项目负责人循环 | `REACT_LOOP_ENTERED`、`REACT_LOOP_EXITED` | 一次项目负责人 Activation 进入或离开 ReAct loop。`react_loop_id` 使用稳定的 `activation_id`；payload 标识 `driver_mode`、`task_type` 或 `agent_exit_status`。 |
-| 当前 Context | `RUNTIME_CONTEXT_UPDATED` | 一次已持久化的 Context 变化。payload 有 `reason` 和 `changes`，每个变化包含 `from` 与 `to`。 |
+| 当前 ProjectRuntimeState | `RUNTIME_CONTEXT_UPDATED` | 一次已持久化的 State 变化。payload 有 `reason` 和 `changes`，每个变化包含 `from` 与 `to`。 |
 | 外部 Agent | `AGENT_INVOCATION_STARTED`、`AGENT_INVOCATION_COMPLETED`、`AGENT_INVOCATION_FAILED` | Planner/Reviewer A2A、Hard Gate 或 Stage Executor 的调用。payload 含 `invocation_id`、`operation`、相关对象 ID，以及适用时的失败类型。 |
 | 计划 | `PLAN_APPROVAL_REQUESTED`、`PLAN_APPROVED`、`PLAN_REJECTED` | Plan 进入审批、带 `plan_commit_sha` 通过审批，或被拒绝。 |
 | 里程碑 | `MILESTONES_UPDATED`、`FIRST_RUN_APPROVAL_REQUESTED`、`MILESTONE_RUN_QUEUED` | 完整 Snapshot 被发布、首次人类启动关卡打开，或下一个有序 StageRun 入队。payload 锚定 Snapshot、Milestone、Run 与 Stage。 |
@@ -260,13 +260,13 @@ erDiagram
 
 ## 各角色的调查起点
 
-从 Runtime 提供的稳定工作对象开始。可以检查变动中的 Context 了解项目位置，但绝不能用它替换受保护的工作对象。
+从 Runtime 提供的稳定工作对象开始。可以检查变动中的 ProjectRuntimeState 了解项目位置，但绝不能用它替换受保护的工作对象。
 
 | 角色 | 起点 | 再检查 |
 |---|---|---|
 | 执行者 | `stage_run_id` | 对应 Snapshot JSON、`input_commit_sha`、前一 StageRun 输出和固定交付文档路径。 |
 | 规划者 | Spec 文件与当前 Plan/Snapshot 标识 | 只有任务确实需要 Plan 变更理由时，才读取 Owner message history。 |
-| 硬门控 | `IN_PROGRESS` 受保护操作提供的精确 Plan/完整 Milestone subject digest | 不可变 subject 和证据 artifact；不得决定或修改 Context，也不得在 `TODO`/`BLOCKED` 自行运行。 |
+| 硬门控 | `IN_PROGRESS` 受保护操作提供的精确 Plan/完整 Milestone subject digest | 不可变 subject 和证据 artifact；不得决定或修改 ProjectRuntimeState，也不得在 `TODO`/`BLOCKED` 自行运行。 |
 | 审查者 | Candidate SHA 与 `run_id` | 最终 StageRun、全部有序 Stage 输出、Snapshot、交付文档和 Git diff。 |
-| 项目负责人 | 当前 Context 与 activation `message_id` | 当前 Snapshot、Candidate/Run 事实，以及与待决策相关的 Timeline 事实。 |
+| 项目负责人 | 当前 ProjectRuntimeState 与 activation `message_id` | 当前 Snapshot、Candidate/Run 事实，以及与待决策相关的 Timeline 事实。 |
 | 调查 Agent | `triage_id`、`event_id`、Run、Snapshot 或 commit | 沿上述逻辑关系遍历，并独立验证 Git 可达性或 diff。 |

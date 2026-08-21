@@ -85,7 +85,7 @@ flowchart TB
     end
 
     subgraph Orchestration[Agent Orchestration]
-        OwnerService[Project Owner Service]
+        OwnerRuntime[Private Owner Runtime]
         Activation[Durable Owner Activation]
         Planning[Planning Service]
         HardGate[Plan / Milestone Hard Gate]
@@ -121,6 +121,7 @@ flowchart TB
     ProjectRuntime --> RuntimeService
     RuntimeService --> RuntimeContext
     RuntimeContext --> RuntimeState
+    RuntimeContext --> OwnerRuntime
     RuntimeService --> Orchestration
     ControlQuery --> Domain
     Orchestration --> Domain
@@ -128,8 +129,8 @@ flowchart TB
     Orchestration --> Git
     Collaboration --> Codex
     StageExecutor --> Codex
-    OwnerService --> ModelGateway
-    OwnerService --> Sandbox
+    OwnerRuntime --> ModelGateway
+    OwnerRuntime --> Sandbox
     API --> WorkspaceService
 ```
 
@@ -189,7 +190,7 @@ AgentPanelX 不使用单个状态对象描述整个项目。不同事实由最�
 | 事实 | 权威来源 | 主要写入方 | 前端呈现 |
 | --- | --- | --- | --- |
 | Project identity、Feature binding、worktree 路径 | Workspace Registry SQLite | Workspace Service / Registry | Project / Feature navigation |
-| 用户意图、Owner 回复、Tool activity | SQLite Message History | Project Owner Service | Conversation |
+| 用户意图、Owner 回复、Tool activity | SQLite Message History | ProjectRuntimeContext 内部 Owner Runtime | Conversation |
 | Owner 运行状态与失败 | SQLite Owner Activation | Activation Driver | Runtime / Conversation |
 | Rolling Summary 与 Owner 上下文 | SQLite Message / Summary History | Project Owner Runtime adapter | Owner ContextManager |
 | Feature 状态、pending action、Plan identity | SQLite `project_runtime_state` | Runtime / Planning / Delivery | Board / Runtime |
@@ -292,7 +293,7 @@ sequenceDiagram
     participant Planning as Planning Service
     participant Git as Git Worktree
     participant Reviewer as Isolated Reviewer
-    participant DB as Runtime Context
+    participant DB as SQLite State / Activation
     actor Human
 
     Owner->>Git: update requirements / architecture / roadmap
@@ -333,7 +334,7 @@ sequenceDiagram
     participant Owner as Project Owner
     participant Runtime as Project Runtime
     participant Delivery as Delivery Service
-    participant DB as Runtime Context
+    participant DB as SQLite State / Delivery Facts
     participant Runner as Delivery Runner
     participant Stage as Stage Executor
     participant WT as Stage Worktree
@@ -512,10 +513,11 @@ flowchart LR
 | Project / Feature Registry | `src/agentplanex/infrastructure/workspace_registry.py` |
 | Workspace commands 与准入 | `src/agentplanex/services/workspace/service.py`, `dispatcher.py` |
 | Workspace read projection | `src/agentplanex/services/workspace/queries.py`, `services/project_workspace.py` |
-| Project Runtime 协调 | `src/agentplanex/services/project_runtime.py` |
-| Project Owner 与 Activation | `src/agentplanex/services/project_owner.py`, `owner_activation.py` |
+| Project Runtime facade / composition / 协调 | `src/agentplanex/project_runtime/runtime.py`, `composition.py`, `services/project_runtime.py` |
+| Project Runtime Context 与内部 Owner Runtime | `src/agentplanex/services/project_runtime_context/` |
+| Owner Activation lifecycle | `src/agentplanex/services/owner_activation.py` |
 | Owner Tool Contract 与执行 | `src/agentplanex/project_owner_agent/tools/base.py`, `project_runtime/executions/` |
-| Context Management / Rolling Summary | `src/agentplanex/project_owner_agent/context/`, `services/project_owner.py` |
+| Owner model context / Rolling Summary | `src/agentplanex/project_owner_agent/context/`, `services/project_runtime_context/_owner.py` |
 | Planning 与 Hard Gate | `src/agentplanex/services/planning.py`, `plan_hard_gate.py` |
 | Agent Collaboration | `src/agentplanex/services/agent_collaboration.py`, `agent_contracts.py` |
 | Delivery 状态机与 Runner | `src/agentplanex/services/delivery.py`, `delivery_runner.py` |

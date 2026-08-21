@@ -49,9 +49,9 @@ class RequestPlanApprovalExecution(ProjectExecution[NoToolArguments]):
         output = {
             "ok": True,
             "accepted": requested.accepted,
-            "triage_id": requested.context.triage_id,
-            "status": requested.context.status,
-            "pending_action": requested.context.pending_action,
+            "triage_id": requested.state.triage_id,
+            "status": requested.state.status,
+            "pending_action": requested.state.pending_action,
             "subject_digest": requested.subject_digest,
             "hard_gate_invoked": requested.review is not None,
             "review": None,

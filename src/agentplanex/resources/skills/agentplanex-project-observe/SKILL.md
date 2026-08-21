@@ -48,7 +48,7 @@ sequenceDiagram
     Runtime->>Runner: 入队下一个有序 StageRun
     Runner->>Git: 从固定输入执行并创建 Stage commit/ref
     Runner->>Runtime: 回报 Stage 成功、失败或 Candidate 就绪
-    Runtime->>SQLite: 固化 StageRun、Context 与 Timeline 事实
+    Runtime->>SQLite: 固化 StageRun、ProjectRuntimeState 与 Timeline 事实
     Runtime->>Owner: 需要决策时入队 EXECUTION_RESULT
     Owner->>Runtime: 接受或拒绝 Candidate
     Runtime->>Git: 快进接受分支；Candidate ref 保持可审计
@@ -72,7 +72,7 @@ sequenceDiagram
 ├── docs/agentplanex/deliveries/
 │   └── {accepted_run_id}/ ...                  # 只包含已经进入接受分支的历史交付文档
 └── .agentplanex/                                # Runtime-owned；其中 DB/Agent artifact 不进入目标分支
-    ├── agentplanex.sqlite3                     # Context / Snapshot / StageRun / Timeline
+    ├── agentplanex.sqlite3                     # State / Snapshot / StageRun / Timeline
     ├── agent-workspaces/
     │   ├── {planner_workspace_id}/             # Planner 的持久 workspace
     │   │   ├── workspace.json
@@ -111,7 +111,7 @@ sequenceDiagram
     participant Artifacts as Agent Workspaces<br/>Plan / Review
     participant Delivery as Delivery Worktree<br/>detached
     participant Git as Git commits / refs
-    participant DB as SQLite<br/>Context / Snapshot / StageRun / Timeline
+    participant DB as SQLite<br/>State / Snapshot / StageRun / Timeline
 
     Note over Owner,DB: Plan 与 Milestone 证据
     Owner->>Artifacts: 可选委派 Planner
@@ -158,7 +158,7 @@ sequenceDiagram
 | 接受分支历史 | 通过用户批准提交的三份 Spec；接受 Candidate 后的代码和每个 Stage delivery document | Planner `plan.md`、Hard Gate `review.md` 和被拒 Candidate 不会因此进入接受分支 |
 | `refs/agentplanex/runs/<run_id>` | 某次 Run 最新成功 Stage 的 commit | 该 ref 不表示 Candidate 已被接受 |
 | `refs/agentplanex/candidates/<run_id>` | 最终 Stage Candidate；接受或拒绝后仍保持 Git 可达性 | ref 存在不表示 Candidate 位于接受分支；必须检查决策 Timeline 和分支可达性 |
-| SQLite | 当前 Context、不可变 Snapshot、StageRun 输入/输出、Activation/Message、Timeline 及 artifact descriptor | 当前指针为空不表示历史对象不存在；Timeline 也不能替代 Git 对象或当前状态表 |
+| SQLite | 当前 ProjectRuntimeState、不可变 Snapshot、StageRun 输入/输出、Activation/Message、Timeline 及 artifact descriptor | 当前指针为空不表示历史对象不存在；Timeline 也不能替代 Git 对象或当前状态表 |
 
 核心审计只要求闭合三条证据链：
 
@@ -169,6 +169,6 @@ sequenceDiagram
 | Stage / Delivery | Snapshot 与 `input_commit_sha` → Stage commit/ref → 代码 diff 与 delivery document |
 | Candidate 决策 | Candidate ref → 接受/拒绝事实 → 接受分支可达性与后继 Snapshot |
 
-先用 Context 定位“现在”，再用不可变 SQLite 行和 Git 对象解释“如何到达”。任何单个当前指针、Timeline 事件或 workspace 文件都不足以独立完成归因；若 Timeline 缺失，明确记录证据缺口，不要据此推翻已经成立的 SQLite 终态或 Git 事实。
+先用 ProjectRuntimeState 定位“现在”，再用不可变 SQLite 行和 Git 对象解释“如何到达”。ProjectRuntimeContext 是命令侧执行模块，不是 Observe 的读取对象。任何单个当前指针、Timeline 事件或 workspace 文件都不足以独立完成归因；若 Timeline 缺失，明确记录证据缺口，不要据此推翻已经成立的 SQLite 终态或 Git 事实。
 
 正常协作先使用本页的流程和角色边界。需要解释 Timeline payload、SQLite 关系、状态值或历史对象时，再阅读 [references/detail.md](references/detail.md)。只读查询 SQLite 和 Git。所有状态变化必须经过运行时的 Tool 或受控命令，禁止直接编辑 SQLite、Git ref 或证据文件。

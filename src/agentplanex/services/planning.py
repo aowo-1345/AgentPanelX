@@ -62,7 +62,7 @@ def missing_plan_hard_gate(_request: PlanReviewRequest) -> PlanReviewResult:
 
 @dataclass(frozen=True, slots=True)
 class PlanDecision:
-    context: ProjectRuntimeState
+    state: ProjectRuntimeState
     activation: OwnerActivation
     commit_sha: str | None = None
 
@@ -71,7 +71,7 @@ class PlanDecision:
 class PlanApprovalRequest:
     """The observable result of submitting one exact Plan for human approval."""
 
-    context: ProjectRuntimeState
+    state: ProjectRuntimeState
     accepted: bool
     subject_digest: str
     review: PlanReviewResult | None
@@ -103,7 +103,7 @@ class PlanningService:
             raise PlanningError("Plan specification documents changed while requesting approval")
         if review is not None and review.decision == "revise":
             return PlanApprovalRequest(
-                context=after,
+                state=after,
                 accepted=False,
                 subject_digest=subject_digest,
                 review=review,
@@ -135,7 +135,7 @@ class PlanningService:
             )
         )
         return PlanApprovalRequest(
-            context=updated,
+            state=updated,
             accepted=True,
             subject_digest=subject_digest,
             review=review,
@@ -181,7 +181,7 @@ class PlanningService:
         )
 
         return PlanDecision(
-            context=updated,
+            state=updated,
             activation=activation,
             commit_sha=commit_sha,
         )
@@ -217,7 +217,7 @@ class PlanningService:
             )
         )
 
-        return PlanDecision(context=updated, activation=activation)
+        return PlanDecision(state=updated, activation=activation)
 
     def _apply_decision(
         self,

@@ -14,7 +14,6 @@ from agentplanex.services.project_runtime import (
     ProjectRuntimeService,
     ToolActivationDriveResult,
 )
-from agentplanex.services.runtime_context import RuntimeContextService
 
 __all__ = [
     "ActivationDriveResult",
@@ -27,6 +26,5 @@ __all__ = [
     "ProjectControlQuery",
     "ProjectControlView",
     "ProjectRuntimeService",
-    "RuntimeContextService",
     "ToolActivationDriveResult",
 ]

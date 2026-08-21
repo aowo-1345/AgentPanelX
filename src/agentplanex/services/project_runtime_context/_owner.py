@@ -148,6 +148,14 @@ class _OwnerRuntime:
         message_id = self._append_messages(connection, owner, tuple(appended))
         return message_id, owner.summary_id
 
+    def current_message_id(
+        self,
+        connection: sqlite3.Connection,
+        state: ProjectRuntimeState,
+    ) -> str | None:
+        """Read the current Owner checkpoint without caching its revision."""
+        return self.restore_identity(connection, state).message_id
+
     def run_activation(
         self,
         state: ProjectRuntimeState,

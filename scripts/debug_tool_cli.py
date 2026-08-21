@@ -372,8 +372,8 @@ def _submit_plan_decision(
                 "action": action,
                 "ok": True,
                 "result": {
-                    "status": decision.context.status,
-                    "pending_action": decision.context.pending_action,
+                    "status": decision.state.status,
+                    "pending_action": decision.state.pending_action,
                     "plan_commit_sha": decision.commit_sha,
                 },
                 "activation": _activation_json(decision.activation),
@@ -557,7 +557,7 @@ def _start_first_run(
                 "action": "start",
                 "ok": True,
                 "result": {
-                    "status": queued.context.status,
+                    "status": queued.state.status,
                     "run_id": queued.stage_run.run_id,
                     "stage_run_id": queued.stage_run.stage_run_id,
                     "snapshot_id": queued.snapshot.snapshot_id,
@@ -669,7 +669,7 @@ def _activation_json(activation: OwnerActivation) -> dict[str, object]:
 
 
 def _project_control_view_json(view: ProjectControlView) -> dict[str, object]:
-    context = view.context
+    context = view.state
     snapshot = view.snapshot
     return {
         "context": {

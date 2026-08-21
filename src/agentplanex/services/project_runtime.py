@@ -32,7 +32,6 @@ from agentplanex.services.owner_activation import (
     OwnerActivationDriver,
 )
 from agentplanex.services.planning import PlanDecision, PlanningService
-from agentplanex.services.project_control import ProjectControlQuery, ProjectControlView
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 
 
@@ -53,7 +52,6 @@ class ProjectRuntimeService:
     planning: PlanningService
     delivery: DeliveryService
     delivery_runner: DeliveryRunner
-    controls: ProjectControlQuery
     event_bus: EventBus
     context: ProjectRuntimeContext
     activations: SQLiteOwnerActivationRepository
@@ -126,7 +124,7 @@ class ProjectRuntimeService:
             with self.context.transaction() as transaction:
                 state = transaction.state()
             activation = self.driver.unfinished(state.triage_id)
-            stage_run = self.delivery.active_stage_run(state.triage_id)
+            stage_run = self.delivery.active_stage_run()
 
             activation_runnable = (
                 activation is not None
@@ -270,7 +268,7 @@ class ProjectRuntimeService:
             state = transaction.state()
             self._assert_owner_idle(transaction.connection, state.triage_id)
             self._assert_delivery_idle(transaction.connection, state.triage_id)
-        return self.delivery.start_first_run(state)
+        return self.delivery.start_first_run()
 
     def drive_delivery(self) -> DeliveryDriveResult:
         """Run at most one durable Stage outside the Project Owner ReAct loop."""
@@ -278,13 +276,8 @@ class ProjectRuntimeService:
             state = transaction.state()
             self._assert_owner_idle(transaction.connection, state.triage_id)
         return self.delivery_runner.drive_once(
-            state.triage_id,
             append_execution_result=self._append_execution_result,
         )
-
-    def project_control_view(self) -> ProjectControlView:
-        """Return the one composed, read-only control projection for this project."""
-        return self.controls.get(self.context.state().triage_id)
 
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit Tool Action without starting an Owner Loop."""
@@ -344,9 +337,6 @@ class ProjectRuntimeService:
         context: ProjectRuntimeState,
         content: str,
     ) -> OwnerActivation:
-        current = self.context.state()
-        if current.triage_id != context.triage_id:
-            raise RuntimeError("Project Runtime Context changed during Stage completion")
         self._assert_owner_idle(connection, context.triage_id)
         task = ProjectOwnerTask(
             type=ProjectOwnerTaskType.EXECUTION_RESULT,
@@ -354,7 +344,7 @@ class ProjectRuntimeService:
         )
         message_id, summary_id = self.context.append_owner_task_in_transaction(
             connection,
-            current,
+            context,
             task,
         )
         activation = OwnerActivation(

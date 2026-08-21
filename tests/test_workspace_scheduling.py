@@ -106,7 +106,7 @@ class _ControlledQueries:
             project=self.registry.get_project(project_id),
             binding=binding,
             runtime_view=ProjectWorkspaceView(
-                context=ProjectRuntimeState(triage_id=triage_id, status="TODO"),
+                state=ProjectRuntimeState(triage_id=triage_id, status="TODO"),
                 owner_activation=None,
                 activation_has_reply=False,
                 runtime_error=None,

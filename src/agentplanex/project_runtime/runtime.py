@@ -54,6 +54,7 @@ class ProjectRuntime:
         self._service = components.service
         self._context = components.context
         self._workspace_query = components.workspace_query
+        self._control_query = components.control_query
         self._git = components.git
 
     def initialize(self) -> ProjectRuntimeState:
@@ -119,7 +120,7 @@ class ProjectRuntime:
 
     def project_control_view(self) -> ProjectControlView:
         """Return the stable read model used by control clients and debug tooling."""
-        return self._service.project_control_view()
+        return self._control_query.get_current()
 
     def project_workspace_view(self, triage_id: str) -> ProjectWorkspaceView:
         """Return independently degradable panels for one Web workspace."""

@@ -25,7 +25,6 @@ from agentplanex.services import (
     PlanningService,
     ProjectControlQuery,
     ProjectRuntimeService,
-    RuntimeContextService,
 )
 from agentplanex.services.agent_contracts import resolve_observation_skill
 from agentplanex.services.delivery_runner import DeliveryRunner
@@ -44,6 +43,7 @@ class _ProjectRuntimeComponents:
     context: ProjectRuntimeContext
     executions: ProjectExecutions
     workspace_query: ProjectWorkspaceQuery
+    control_query: ProjectControlQuery
     git: GitRepository
 
 
@@ -72,7 +72,6 @@ def compose_project_runtime(
         observation_skill=observation_skill,
     )
     hard_gate = CodexPlanHardGate(collaboration)
-    runtime_contexts = RuntimeContextService(database, event_bus)
     activations = SQLiteOwnerActivationRepository()
     git = GitRepository(project_path)
     planning = PlanningService(
@@ -85,10 +84,9 @@ def compose_project_runtime(
     )
     delivery = DeliveryService(
         project_path=project_path,
-        database=database,
-        event_bus=event_bus,
-        runtime_contexts=runtime_contexts,
+        context=context,
         git=git,
+        event_bus=event_bus,
         review_milestones=hard_gate.review_milestones,
     )
     delivery_runner = DeliveryRunner(
@@ -138,11 +136,11 @@ def compose_project_runtime(
         activations=activations,
         event_bus=event_bus,
     )
+    control_query = ProjectControlQuery(database=database, git=git)
     service = ProjectRuntimeService(
         planning=planning,
         delivery=delivery,
         delivery_runner=delivery_runner,
-        controls=ProjectControlQuery(database=database, git=git),
         event_bus=event_bus,
         context=context,
         activations=activations,
@@ -153,5 +151,6 @@ def compose_project_runtime(
         context=context,
         executions=executions,
         workspace_query=ProjectWorkspaceQuery(database=database, git=git),
+        control_query=control_query,
         git=git,
     )

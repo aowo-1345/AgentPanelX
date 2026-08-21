@@ -922,7 +922,7 @@ def test_sandbox_denial_blocks_until_the_user_sends_another_message(
     assert _PolicyAwareBashModel.observation is not None
     assert _PolicyAwareBashModel.observation["user_action_required"] is True
 
-    blocked = runtime.project_control_view().context
+    blocked = runtime.project_control_view().state
     assert blocked.status == "BLOCKED"
     assert blocked.blocked_capability == "network"
     assert blocked.blocked_previous_status == "TODO"
@@ -935,7 +935,7 @@ def test_sandbox_denial_blocks_until_the_user_sends_another_message(
     assert not (project_path / "should-not-exist").exists()
 
     runtime.submit_message("Continue without network access.")
-    resumed = runtime.project_control_view().context
+    resumed = runtime.project_control_view().state
     assert resumed.status == "TODO"
     assert resumed.blocked_reason is None
     assert resumed.blocked_capability is None
