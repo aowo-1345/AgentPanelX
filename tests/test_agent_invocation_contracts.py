@@ -33,12 +33,12 @@ from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.project_runtime.executions import create_project_executions
-from agentplanex.services import project_owner as project_owner_service
 from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.agent_contracts import resolve_observation_skill
 from agentplanex.services.delivery import MilestoneReviewRequest
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning import PlanReviewRequest
+from agentplanex.services.project_runtime_context import _owner as project_owner_service
 from agentplanex.services.stage_executor import CodexStageExecutor, StageExecutionRequest
 from agentplanex.settings import (
     DEFAULT_SETTINGS_PATH,
@@ -187,7 +187,7 @@ def test_runtime_uses_packaged_observation_skill_independent_of_target_project(
     skill_path = resolve_observation_skill()
 
     assert skill_path == (
-        Path(project_owner_service.__file__).parents[1]
+        Path(project_owner_service.__file__).parents[2]
         / "resources"
         / "skills"
         / "agentplanex-project-observe"

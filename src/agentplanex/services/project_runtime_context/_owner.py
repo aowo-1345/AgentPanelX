@@ -2,6 +2,7 @@
 
 import os
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import uuid4
@@ -29,7 +30,6 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
     SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
-    SQLiteProjectRuntimeStateRepository,
     SQLiteSummaryHistoryRepository,
 )
 from agentplanex.project_owner_agent.agent import AgentConfig, DefaultAgent
@@ -57,6 +57,7 @@ from agentplanex.services.agent_contracts import (
     AgentPromptCatalog,
 )
 from agentplanex.services.event_bus import EventBus
+from agentplanex.services.owner_history import select_owner_context_snapshot
 from agentplanex.settings import Settings
 
 
@@ -68,17 +69,9 @@ class _ProjectOwnerRevision:
     summary_id: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class _LoadedOwnerRuntime:
-    """A transient pairing; persisted Runtime State never owns behavior objects."""
-
-    state: ProjectRuntimeState
-    owner: ProjectOwnerAgent
-
-
 @dataclass(slots=True)
-class ProjectOwnerService:
-    """Own persistent Owner identity, native messages, and one ReAct Loop."""
+class _OwnerRuntime:
+    """Private Owner identity, history, Agent, and Tool execution environment."""
 
     database: SQLiteDatabase
     settings: Settings
@@ -89,9 +82,7 @@ class ProjectOwnerService:
     responses: ResponsesClient
     observation_skill: Path
     prompts: AgentPromptCatalog
-    contexts: SQLiteProjectRuntimeStateRepository = field(
-        default_factory=SQLiteProjectRuntimeStateRepository
-    )
+    load_state: Callable[[], ProjectRuntimeState]
     owners: SQLiteProjectOwnerAgentRepository = field(
         default_factory=SQLiteProjectOwnerAgentRepository
     )
@@ -109,25 +100,32 @@ class ProjectOwnerService:
         if self.approval_mode not in {"confirm", "yolo"}:
             raise ValueError(f"Unknown approval mode: {self.approval_mode!r}")
 
-    def restore_state(
+    def restore_identity(
         self,
         connection: sqlite3.Connection,
-    ) -> ProjectRuntimeState:
-        """Restore the initialized State and validate its persisted Owner identity."""
-        return self._restore(connection).state
-
-    def _restore(self, connection: sqlite3.Connection) -> _LoadedOwnerRuntime:
-        states = self.contexts.list_all(connection)
-        if not states:
-            raise LookupError("Project Runtime is not initialized")
-        if len(states) > 1:
-            raise ValueError("Project contains more than one Project Runtime State")
-        state = states[0]
+        state: ProjectRuntimeState,
+    ) -> ProjectOwnerAgent:
+        """Restore and validate the Owner identity for an initialized State."""
         owner = self.owners.get_by_triage_id(connection, state.triage_id)
         if owner is None:
             raise RuntimeError("Initialized Project Runtime has no Owner identity")
         self.tools.select(owner.tools)
-        return _LoadedOwnerRuntime(state=state, owner=owner)
+        return owner
+
+    def create_identity(
+        self,
+        connection: sqlite3.Connection,
+        state: ProjectRuntimeState,
+    ) -> ProjectOwnerAgent:
+        """Create the sole persistent Owner identity with the configured contract."""
+        owner = ProjectOwnerAgent(
+            triage_id=state.triage_id,
+            project_owner_session_id=uuid4().hex,
+            system_prompt=self.prompts.role_instructions(PromptRole.PROJECT_OWNER),
+            tools=tuple(tool.name for tool in self.tools.tools),
+        )
+        self.owners.insert(connection, owner)
+        return owner
 
     def append_task(
         self,
@@ -150,64 +148,51 @@ class ProjectOwnerService:
         message_id = self._append_messages(connection, owner, tuple(appended))
         return message_id, owner.summary_id
 
-    def run_activation(self, activation: OwnerActivation) -> AgentExit:
+    def run_activation(
+        self,
+        state: ProjectRuntimeState,
+        activation: OwnerActivation,
+    ) -> AgentExit:
         """Restore persisted Owner history and run exactly one activation."""
         try:
-            loaded = self._load_state_for_activation(activation)
-            state = loaded.state
-            agent = self._build_agent(state, loaded.owner, activation)
+            owner = self._load_owner_for_activation(state, activation)
+            agent = self._build_agent(state, owner, activation)
         except Exception as error:
             return _unhandled_exit(error)
 
-        react_loop_id = activation.activation_id
-        self.event_bus.publish(
-            ExecutionEvent(
-                triage_id=state.triage_id,
-                event_type=ExecutionEventType.REACT_LOOP_ENTERED,
-                react_loop_id=react_loop_id,
-                payload={
-                    "task_type": activation.task_type.value,
-                    "driver_mode": "MODEL",
-                },
-            )
-        )
         try:
             agent.run(state)
         except AgentFlowExit as error:
             result = AgentExit(status=error.status, content=error.content)
         except Exception as error:
             result = _unhandled_exit(error)
-        self.event_bus.publish(
-            ExecutionEvent(
-                triage_id=state.triage_id,
-                event_type=ExecutionEventType.REACT_LOOP_EXITED,
-                react_loop_id=react_loop_id,
-                payload={
-                    "agent_exit_status": result.status.value,
-                    "driver_mode": "MODEL",
-                },
+        else:
+            result = _unhandled_exit(
+                RuntimeError("Project Owner Agent returned without an exit")
             )
-        )
         return result
 
-    def execute_action(self, action: Action) -> ToolExecutionResult:
+    def execute_action(
+        self,
+        state: ProjectRuntimeState,
+        action: Action,
+    ) -> ToolExecutionResult:
         """Execute one explicit debug Tool Action against current persisted state."""
-        with self.database.transaction() as connection:
-            state = self.restore_state(connection)
         return self.tool_executor(state, action)
 
     def execute_activation_action(
         self,
+        state: ProjectRuntimeState,
         activation: OwnerActivation,
         action: Action,
     ) -> ToolExecutionResult:
         """Execute and persist one Tool step inside a claimed manual Owner loop."""
 
-        loaded = self._load_state_for_activation(
+        self._load_owner_for_activation(
+            state,
             activation,
             allow_advanced_checkpoint=True,
         )
-        state = loaded.state
         self.append_messages(state, (format_tool_call_message(action),))
         try:
             result = self._execute_latest_context(state, action)
@@ -233,6 +218,7 @@ class ProjectOwnerService:
 
     def reply_to_activation(
         self,
+        state: ProjectRuntimeState,
         activation: OwnerActivation,
         content: str,
     ) -> AgentExit:
@@ -241,42 +227,44 @@ class ProjectOwnerService:
         reply = content.strip()
         if not reply:
             raise ValueError("Project Owner reply must not be empty")
-        loaded = self._load_state_for_activation(
+        self._load_owner_for_activation(
+            state,
             activation,
             allow_advanced_checkpoint=True,
         )
         self.append_messages(
-            loaded.state,
+            state,
             ({"role": "assistant", "content": reply},),
         )
         return AgentExit(status=AgentExitStatus.REPLY_TO_HUMAN, content=reply)
 
-    def _load_state_for_activation(
+    def _load_owner_for_activation(
         self,
+        state: ProjectRuntimeState,
         activation: OwnerActivation,
         *,
         allow_advanced_checkpoint: bool = False,
-    ) -> _LoadedOwnerRuntime:
+    ) -> ProjectOwnerAgent:
         if activation.status is not OwnerActivationStatus.RUNNING:
             raise ValueError(
                 "Project Owner can only run a claimed activation: "
                 f"{activation.activation_id} is {activation.status.value}"
             )
         with self.database.connection() as connection:
-            loaded = self._restore(connection)
-            if loaded.state.triage_id != activation.triage_id:
+            if state.triage_id != activation.triage_id:
                 raise LookupError(
                     "Owner activation does not belong to this Project Runtime"
                 )
+            owner = self.restore_identity(connection, state)
             if (
-                loaded.owner.message_id != activation.message_id
+                owner.message_id != activation.message_id
                 and not allow_advanced_checkpoint
             ):
                 raise RuntimeError(
                     "Owner activation checkpoint is not the current message: "
-                    f"{activation.message_id} != {loaded.owner.message_id}"
+                    f"{activation.message_id} != {owner.message_id}"
                 )
-        return loaded
+        return owner
 
     def _invocation_contract(
         self,
@@ -390,14 +378,10 @@ class ProjectOwnerService:
 
     def _execute_latest_context(
         self,
-        context: ProjectRuntimeState,
+        _context: ProjectRuntimeState,
         action: Action,
     ) -> ToolExecutionResult:
-        with self.database.connection() as connection:
-            current = self.contexts.get(connection, context.triage_id)
-        if current is None:
-            raise LookupError(f"Project Runtime Context not found: {context.triage_id}")
-        return self.tool_executor(current, action)
+        return self.tool_executor(self.load_state(), action)
 
     def append_messages(
         self,
@@ -584,22 +568,6 @@ class ProjectOwnerService:
         )
 
 
-def restore_owner_context(
-    database: SQLiteDatabase,
-    through_message_id: str,
-    *,
-    summary_id: str | None = None,
-) -> OwnerContextSnapshot:
-    """Select raw persisted Owner facts through one immutable checkpoint."""
-
-    with database.read_only_connection() as connection:
-        return _select_owner_context_snapshot(
-            connection,
-            through_message_id,
-            summary_id=summary_id,
-        )
-
-
 def _load_live_owner_context(
     database: SQLiteDatabase,
     through_message_id: str,
@@ -611,7 +579,7 @@ def _load_live_owner_context(
     owners = SQLiteProjectOwnerAgentRepository()
     messages = SQLiteMessageHistoryRepository()
     with database.read_only_connection() as connection:
-        snapshot = _select_owner_context_snapshot(
+        snapshot = select_owner_context_snapshot(
             connection,
             through_message_id,
             summary_id=summary_id,
@@ -641,105 +609,6 @@ def _load_live_owner_context(
         message_id=owner.message_id,
         summary_id=owner.summary_id,
     )
-
-
-def _select_owner_context_snapshot(
-    connection: sqlite3.Connection,
-    through_message_id: str,
-    *,
-    summary_id: str | None = None,
-) -> OwnerContextSnapshot:
-    """Select only facts bounded by an immutable message checkpoint."""
-
-    checkpoint_id = through_message_id.strip()
-    if not checkpoint_id:
-        raise ValueError("through_message_id must not be empty")
-    selected_summary_id = summary_id.strip() if summary_id is not None else None
-    if selected_summary_id == "":
-        raise ValueError("summary_id must not be empty")
-
-    owners = SQLiteProjectOwnerAgentRepository()
-    messages = SQLiteMessageHistoryRepository()
-    summaries = SQLiteSummaryHistoryRepository()
-    through = messages.get(connection, checkpoint_id)
-    if through is None:
-        raise LookupError(f"Message checkpoint not found: {checkpoint_id}")
-    owner = owners.get_by_session_id(
-        connection,
-        through.project_owner_session_id,
-    )
-    if owner is None:
-        raise LookupError(
-            "Project Owner Agent not found for message checkpoint: "
-            f"{checkpoint_id}"
-        )
-
-    summary: SummaryHistory | None = None
-    if selected_summary_id is not None:
-        summary = summaries.get(connection, selected_summary_id)
-        if summary is None:
-            raise LookupError(f"Summary not found: {selected_summary_id}")
-        if summary.project_owner_session_id != owner.project_owner_session_id:
-            raise ValueError(
-                "Summary does not belong to Owner session: "
-                f"{selected_summary_id}"
-            )
-    histories = messages.list_between_checkpoints(
-        connection,
-        owner.project_owner_session_id,
-        after_message_id=(
-            summary.covered_through_message_id if summary is not None else None
-        ),
-        through_message_id=checkpoint_id,
-    )
-    covered_through_sequence: int | None = None
-    if summary is not None:
-        watermark = messages.get(
-            connection,
-            summary.covered_through_message_id,
-        )
-        if watermark is None:
-            raise LookupError(
-                "Summary watermark not found: "
-                f"{summary.covered_through_message_id}"
-            )
-        covered_through_sequence = watermark.sequence
-
-    snapshot = OwnerContextSnapshot(
-        triage_id=owner.triage_id,
-        project_owner_session_id=owner.project_owner_session_id,
-        through_message_id=through.message_id,
-        through_sequence=through.sequence,
-        system_prompt=owner.system_prompt,
-        tools=owner.tools,
-        summary=summary,
-        covered_through_sequence=covered_through_sequence,
-        message_history=histories,
-    )
-    return snapshot
-
-
-def latest_owner_summary_id_through(
-    database: SQLiteDatabase,
-    through_message_id: str,
-) -> str | None:
-    """Resolve the newest Summary whose watermark does not pass a checkpoint."""
-
-    checkpoint_id = through_message_id.strip()
-    if not checkpoint_id:
-        raise ValueError("through_message_id must not be empty")
-    messages = SQLiteMessageHistoryRepository()
-    summaries = SQLiteSummaryHistoryRepository()
-    with database.read_only_connection() as connection:
-        through = messages.get(connection, checkpoint_id)
-        if through is None:
-            raise LookupError(f"Message checkpoint not found: {checkpoint_id}")
-        summary = summaries.latest_through_message(
-            connection,
-            through.project_owner_session_id,
-            through.sequence,
-        )
-    return summary.summary_id if summary is not None else None
 
 
 def _unhandled_exit(error: Exception) -> AgentExit:

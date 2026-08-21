@@ -23,7 +23,6 @@ from agentplanex.domains import (
     StageRunStatus,
     ToolExecutionResult,
 )
-from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteOwnerActivationRepository,
 )
@@ -36,9 +35,7 @@ from agentplanex.services.owner_activation import (
 )
 from agentplanex.services.planning import PlanDecision, PlanningService
 from agentplanex.services.project_control import ProjectControlQuery, ProjectControlView
-from agentplanex.services.project_owner import ProjectOwnerService
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
-from agentplanex.services.runtime_context import RuntimeContextService
 
 type PlanDecisionAction = Literal["approve", "reject"]
 
@@ -57,15 +54,12 @@ class ToolActivationDriveResult:
 class ProjectRuntimeService:
     """Coordinate explicit project commands without hiding Owner activations."""
 
-    database: SQLiteDatabase
-    owner: ProjectOwnerService
     planning: PlanningService
     delivery: DeliveryService
     delivery_runner: DeliveryRunner
     controls: ProjectControlQuery
     event_bus: EventBus
     context: ProjectRuntimeContext
-    runtime_contexts: RuntimeContextService
     activations: SQLiteOwnerActivationRepository
     driver: OwnerActivationDriver
 
@@ -90,18 +84,12 @@ class ProjectRuntimeService:
             type=ProjectOwnerTaskType.USER_INPUT,
             content=content,
         )
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
-            self._assert_delivery_idle(connection, context.triage_id)
-            self._assert_owner_idle(connection, context.triage_id)
-            message_id, summary_id = self.owner.append_task(
-                connection,
-                context,
-                task,
-            )
-            updated, context_event = self.runtime_contexts.transition_in_transaction(
-                connection,
-                context.triage_id,
+        with self.context.transaction() as transaction:
+            state = transaction.state()
+            self._assert_delivery_idle(transaction.connection, state.triage_id)
+            self._assert_owner_idle(transaction.connection, state.triage_id)
+            message_id, summary_id = transaction.append_owner_task(task)
+            updated = transaction.transition(
                 reason=RuntimeContextChangeReason.CONVERSATION_STARTED,
                 mutate=_start_conversation,
             )
@@ -112,10 +100,7 @@ class ProjectRuntimeService:
                 message_id=message_id,
                 summary_id=summary_id,
             )
-            self.activations.insert(connection, activation)
-
-        if context_event is not None:
-            self.event_bus.publish(context_event)
+            self.activations.insert(transaction.connection, activation)
         return activation
 
     def approve_plan(self) -> PlanDecision:
@@ -126,9 +111,7 @@ class ProjectRuntimeService:
 
     def drive_next_activation(self) -> ActivationDriveResult:
         """Claim and consume one activation for this project."""
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
-        result = self.driver.drive_next(context.triage_id)
+        result = self.driver.drive_next(self.context.state().triage_id)
         if (
             result.activation is not None
             and result.activation.status is OwnerActivationStatus.FAILED
@@ -138,15 +121,14 @@ class ProjectRuntimeService:
 
     def drive_until_waiting(self) -> ProjectRuntimeState:
         """Drive durable automatic work until control returns to a human."""
-        with self.context.operation():
-            return self._drive_until_waiting()
+        return self._drive_until_waiting()
 
     def _drive_until_waiting(self) -> ProjectRuntimeState:
         while True:
-            with self.database.transaction() as connection:
-                context = self.owner.restore_state(connection)
-            activation = self.driver.unfinished(context.triage_id)
-            stage_run = self.delivery.active_stage_run(context.triage_id)
+            with self.context.transaction() as transaction:
+                state = transaction.state()
+            activation = self.driver.unfinished(state.triage_id)
+            stage_run = self.delivery.active_stage_run(state.triage_id)
 
             activation_runnable = (
                 activation is not None
@@ -162,45 +144,43 @@ class ProjectRuntimeService:
                     "Project Runtime invariant violated: Owner activation and "
                     "StageRun are both runnable"
                 )
-            if context.status in {"BLOCKED", "DONE"}:
-                return context
-            if context.pending_action is not None:
-                return context
+            if state.status in {"BLOCKED", "DONE"}:
+                return state
+            if state.pending_action is not None:
+                return state
             if activation is not None:
                 if not activation_runnable or stage_run is not None:
-                    return context
+                    return state
                 self.drive_next_activation()
                 continue
             if stage_run is not None:
                 if not stage_runnable:
-                    return context
+                    return state
                 self.drive_delivery()
                 continue
-            return context
+            return state
 
     def fail_interrupted_work(self) -> bool:
         """Terminalize unfinished automatic work left by a stopped process."""
         finished_at = datetime.now(UTC)
         failure = "Project Runtime process was interrupted before work completed."
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
+        with self.context.transaction() as transaction:
+            state = transaction.state()
             failed_activations = self.driver.fail_interrupted(
-                connection,
-                context.triage_id,
+                transaction.connection,
+                state.triage_id,
                 finished_at=finished_at,
                 failure=failure,
             )
             failed_stages = self.delivery.fail_interrupted_stage_runs(
-                connection,
-                context.triage_id,
+                transaction.connection,
+                state.triage_id,
                 finished_at=finished_at,
                 failure=failure,
             )
             if not failed_activations and not failed_stages:
                 return False
-            _, context_event = self.runtime_contexts.transition_in_transaction(
-                connection,
-                context.triage_id,
+            transaction.transition(
                 reason=RuntimeContextChangeReason.INTERRUPTED_WORK_FAILED,
                 mutate=_block_runtime_execution,
             )
@@ -208,21 +188,15 @@ class ProjectRuntimeService:
             self.event_bus.publish(_interrupted_activation_event(activation))
         for stage_run in failed_stages:
             self.event_bus.publish(_interrupted_stage_event(stage_run))
-        if context_event is not None:
-            self.event_bus.publish(context_event)
         return True
 
     def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult:
         """Drive one activation step with a supplied Tool Action, without a model."""
 
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
-        claim = self.driver.claim_for_tool(context.triage_id)
-        if claim.started:
-            self._publish_tool_loop_entered(claim.activation)
+        claim = self.driver.claim_for_tool(self.context.state().triage_id)
 
         try:
-            tool_result = self.owner.execute_activation_action(
+            tool_result = self.context.execute_owner_activation_action(
                 claim.activation,
                 action,
             )
@@ -237,7 +211,6 @@ class ProjectRuntimeService:
         activation = claim.activation
         if result_exit is not None:
             activation = self.driver.finish(activation, result_exit)
-            self._publish_tool_loop_exited(activation, result_exit)
             if activation.status is OwnerActivationStatus.FAILED:
                 self._block_failed_activation(activation)
         else:
@@ -255,17 +228,12 @@ class ProjectRuntimeService:
         failure = reason.strip()
         if not failure:
             raise ValueError("Project Owner failure reason must not be empty")
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
-        claim = self.driver.claim_for_tool_failure(context.triage_id)
-        if claim.started:
-            self._publish_tool_loop_entered(claim.activation)
+        claim = self.driver.claim_for_tool_failure(self.context.state().triage_id)
         result_exit = AgentExit(
             status=AgentExitStatus.MANUAL_DRIVE_FAILED,
             content=failure,
         )
         activation = self.driver.finish(claim.activation, result_exit)
-        self._publish_tool_loop_exited(activation, result_exit)
         self._block_failed_activation(activation)
         return ToolActivationDriveResult(
             activation=activation,
@@ -277,13 +245,9 @@ class ProjectRuntimeService:
     def reply_to_activation(self, content: str) -> ToolActivationDriveResult:
         """Finish a Tool-driven activation with a persisted Owner reply."""
 
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
-        claim = self.driver.claim_for_tool(context.triage_id)
-        if claim.started:
-            self._publish_tool_loop_entered(claim.activation)
+        claim = self.driver.claim_for_tool(self.context.state().triage_id)
         try:
-            result_exit = self.owner.reply_to_activation(
+            result_exit = self.context.reply_to_owner_activation(
                 claim.activation,
                 content,
             )
@@ -295,7 +259,6 @@ class ProjectRuntimeService:
             )
 
         activation = self.driver.finish(claim.activation, result_exit)
-        self._publish_tool_loop_exited(activation, result_exit)
         return ToolActivationDriveResult(
             activation=activation,
             started=claim.started,
@@ -305,43 +268,41 @@ class ProjectRuntimeService:
 
     def start_first_run(self) -> MilestoneRunQueued:
         """Apply the explicit first-Run command through the real Delivery Service."""
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
-            self._assert_owner_idle(connection, context.triage_id)
-            self._assert_delivery_idle(connection, context.triage_id)
-        return self.delivery.start_first_run(context)
+        with self.context.transaction() as transaction:
+            state = transaction.state()
+            self._assert_owner_idle(transaction.connection, state.triage_id)
+            self._assert_delivery_idle(transaction.connection, state.triage_id)
+        return self.delivery.start_first_run(state)
 
     def drive_delivery(self) -> DeliveryDriveResult:
         """Run at most one durable Stage outside the Project Owner ReAct loop."""
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
-            self._assert_owner_idle(connection, context.triage_id)
+        with self.context.transaction() as transaction:
+            state = transaction.state()
+            self._assert_owner_idle(transaction.connection, state.triage_id)
         return self.delivery_runner.drive_once(
-            context.triage_id,
+            state.triage_id,
             append_execution_result=self._append_execution_result,
         )
 
     def project_control_view(self) -> ProjectControlView:
         """Return the one composed, read-only control projection for this project."""
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
-        return self.controls.get(context.triage_id)
+        return self.controls.get(self.context.state().triage_id)
 
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit Tool Action without starting an Owner Loop."""
 
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
+        with self.context.transaction() as transaction:
+            state = transaction.state()
             unfinished = self.activations.get_unfinished(
-                connection,
-                context.triage_id,
+                transaction.connection,
+                state.triage_id,
             )
         if unfinished is not None:
             raise ValueError(
                 "Project Owner has an unfinished activation; use drive tool so "
                 f"the Action is bound to {unfinished.activation_id}"
             )
-        return self.owner.execute_action(action)
+        return self.context.execute_tool(action)
 
     def _fail_tool_activation(
         self,
@@ -354,7 +315,6 @@ class ProjectRuntimeService:
             content=f"{type(error).__name__}: {error}",
         )
         failed = self.driver.finish(activation, result_exit)
-        self._publish_tool_loop_exited(failed, result_exit)
         self._block_failed_activation(failed)
         return ToolActivationDriveResult(
             activation=failed,
@@ -366,40 +326,12 @@ class ProjectRuntimeService:
     def _block_failed_activation(self, activation: OwnerActivation) -> None:
         if activation.status is not OwnerActivationStatus.FAILED:
             raise ValueError("Only a failed Owner activation can block the Runtime")
-        self.runtime_contexts.transition(
-            activation.triage_id,
+        state = self.context.state()
+        if state.triage_id != activation.triage_id:
+            raise ValueError("Owner activation does not belong to this Runtime")
+        self.context.transition(
             reason=RuntimeContextChangeReason.OWNER_ACTIVATION_FAILED,
             mutate=_block_runtime_execution,
-        )
-
-    def _publish_tool_loop_entered(self, activation: OwnerActivation) -> None:
-        self.event_bus.publish(
-            ExecutionEvent(
-                triage_id=activation.triage_id,
-                event_type=ExecutionEventType.REACT_LOOP_ENTERED,
-                react_loop_id=activation.activation_id,
-                payload={
-                    "task_type": activation.task_type.value,
-                    "driver_mode": "TOOL",
-                },
-            )
-        )
-
-    def _publish_tool_loop_exited(
-        self,
-        activation: OwnerActivation,
-        result: AgentExit,
-    ) -> None:
-        self.event_bus.publish(
-            ExecutionEvent(
-                triage_id=activation.triage_id,
-                event_type=ExecutionEventType.REACT_LOOP_EXITED,
-                react_loop_id=activation.activation_id,
-                payload={
-                    "agent_exit_status": result.status.value,
-                    "driver_mode": "TOOL",
-                },
-            )
         )
 
     def _submit_plan_decision(
@@ -407,36 +339,37 @@ class ProjectRuntimeService:
         action: PlanDecisionAction,
         feedback: str,
     ) -> PlanDecision:
-        with self.database.transaction() as connection:
-            context = self.owner.restore_state(connection)
-            self._assert_delivery_idle(connection, context.triage_id)
-            self._assert_owner_idle(connection, context.triage_id)
+        with self.context.transaction() as transaction:
+            state = transaction.state()
+            self._assert_delivery_idle(transaction.connection, state.triage_id)
+            self._assert_owner_idle(transaction.connection, state.triage_id)
         task = ProjectOwnerTask(
             type=ProjectOwnerTaskType.PLAN_DECISION,
             content=_plan_decision_message(
                 action,
                 feedback,
-                context.pending_plan_subject_digest,
+                state.pending_plan_subject_digest,
             ),
         )
 
         def append_message(
             connection: sqlite3.Connection,
         ) -> tuple[str, str | None]:
-            current = self.owner.restore_state(connection)
-            if current.triage_id != context.triage_id:
-                raise RuntimeError("Project Runtime Context changed during command")
-            self._assert_delivery_idle(connection, current.triage_id)
-            self._assert_owner_idle(connection, current.triage_id)
-            return self.owner.append_task(connection, current, task)
+            self._assert_delivery_idle(connection, state.triage_id)
+            self._assert_owner_idle(connection, state.triage_id)
+            return self.context.append_owner_task_in_transaction(
+                connection,
+                state,
+                task,
+            )
 
         if action == "approve":
             return self.planning.approve_plan(
-                context.triage_id,
+                state.triage_id,
                 append_message=append_message,
             )
         return self.planning.reject_plan(
-            context.triage_id,
+            state.triage_id,
             append_message=append_message,
         )
 
@@ -446,17 +379,17 @@ class ProjectRuntimeService:
         context: ProjectRuntimeState,
         content: str,
     ) -> OwnerActivation:
-        owner_context = self.owner.restore_state(connection)
-        if owner_context.triage_id != context.triage_id:
+        current = self.context.state()
+        if current.triage_id != context.triage_id:
             raise RuntimeError("Project Runtime Context changed during Stage completion")
         self._assert_owner_idle(connection, context.triage_id)
         task = ProjectOwnerTask(
             type=ProjectOwnerTaskType.EXECUTION_RESULT,
             content=content,
         )
-        message_id, summary_id = self.owner.append_task(
+        message_id, summary_id = self.context.append_owner_task_in_transaction(
             connection,
-            owner_context,
+            current,
             task,
         )
         activation = OwnerActivation(

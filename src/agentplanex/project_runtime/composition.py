@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from agentplanex.agent_contracts import PromptRole
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
 from agentplanex.infrastructure.sqlite.repositories import (
@@ -22,7 +21,6 @@ from agentplanex.services import (
     EventBus,
     PlanningService,
     ProjectControlQuery,
-    ProjectOwnerService,
     ProjectRuntimeService,
     RuntimeContextService,
 )
@@ -31,6 +29,7 @@ from agentplanex.services.delivery_runner import DeliveryRunner
 from agentplanex.services.owner_activation import OwnerActivationDriver
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
+from agentplanex.services.project_runtime_context._owner import _OwnerRuntime
 from agentplanex.services.project_workspace import ProjectWorkspaceQuery
 from agentplanex.services.stage_executor import CodexStageExecutor, StageExecutor
 from agentplanex.settings import Settings
@@ -110,14 +109,8 @@ def compose_project_runtime(
         collaboration,
         event_bus,
     )
-    context._bind_owner_identity(
-        system_prompt=collaboration.prompts.role_instructions(PromptRole.PROJECT_OWNER),
-        tools=tuple(tool.name for tool in executions.tools.tools),
-    )
-    context._seal()
-
     model_settings = settings.project_owner_agent.selected_model
-    owner = ProjectOwnerService(
+    owner = _OwnerRuntime(
         database=database,
         settings=settings,
         approval_mode=approval_mode,
@@ -130,22 +123,23 @@ def compose_project_runtime(
         ),
         observation_skill=collaboration.observation_skill,
         prompts=collaboration.prompts,
+        load_state=context._reload_state,
     )
+    context._bind_owner_runtime(owner)
+    context._seal()
     driver = OwnerActivationDriver(
         database=database,
-        run_owner=owner.run_activation,
+        run_owner=context.run_owner_activation,
         activations=activations,
+        event_bus=event_bus,
     )
     service = ProjectRuntimeService(
-        database=database,
-        owner=owner,
         planning=planning,
         delivery=delivery,
         delivery_runner=delivery_runner,
         controls=ProjectControlQuery(database=database, git=git),
         event_bus=event_bus,
         context=context,
-        runtime_contexts=runtime_contexts,
         activations=activations,
         driver=driver,
     )

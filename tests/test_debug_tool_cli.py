@@ -35,8 +35,8 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services import PlanningService
-from agentplanex.services import project_owner as project_owner_service
 from agentplanex.services.planning import PlanReviewRequest, PlanReviewResult
+from agentplanex.services.project_runtime_context import _owner as project_owner_service
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 from scripts import debug_tool_cli
 

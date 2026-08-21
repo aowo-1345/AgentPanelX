@@ -11,17 +11,22 @@ from typing import BinaryIO
 from uuid import uuid4
 
 from agentplanex.domains import (
+    Action,
+    AgentExit,
+    AgentExitStatus,
     ExecutionEvent,
-    ProjectOwnerAgent,
+    OwnerActivation,
+    ProjectOwnerTask,
     ProjectRuntimeState,
     RuntimeContextChangeReason,
+    ToolExecutionResult,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
-    SQLiteProjectOwnerAgentRepository,
     SQLiteProjectRuntimeStateRepository,
 )
 from agentplanex.services.event_bus import EventBus
+from agentplanex.services.project_runtime_context._owner import _OwnerRuntime
 from agentplanex.services.project_runtime_context._state import (
     StateMutation,
     apply_state_transition,
@@ -39,9 +44,6 @@ class ProjectRuntimeContext:
     _states: SQLiteProjectRuntimeStateRepository = field(
         default_factory=SQLiteProjectRuntimeStateRepository
     )
-    _owners: SQLiteProjectOwnerAgentRepository = field(
-        default_factory=SQLiteProjectOwnerAgentRepository
-    )
     _lock: RLock = field(default_factory=RLock, init=False, repr=False)
     _operation_owner: int | None = field(default=None, init=False, repr=False)
     _operation_depth: int = field(default=0, init=False, repr=False)
@@ -51,8 +53,7 @@ class ProjectRuntimeContext:
         init=False,
         repr=False,
     )
-    _owner_system_prompt: str | None = field(default=None, init=False, repr=False)
-    _owner_tools: tuple[str, ...] | None = field(default=None, init=False, repr=False)
+    _owner_runtime: _OwnerRuntime | None = field(default=None, init=False, repr=False)
     _sealed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -61,23 +62,17 @@ class ProjectRuntimeContext:
         if database_project_path != self.project_path:
             raise ValueError("Runtime Context database does not belong to project path")
 
-    def _bind_owner_identity(
+    def _bind_owner_runtime(
         self,
-        *,
-        system_prompt: str,
-        tools: tuple[str, ...],
+        owner_runtime: _OwnerRuntime,
     ) -> None:
-        """Bind the immutable Owner identity template during composition only."""
-        if self._sealed or self._owner_system_prompt is not None:
+        """Bind the private Owner runtime during composition only."""
+        if self._sealed or self._owner_runtime is not None:
             raise RuntimeError("Project Runtime Context dependencies are already bound")
-        prompt = system_prompt.strip()
-        if not prompt:
-            raise ValueError("Project Owner system prompt must not be empty")
-        self._owner_system_prompt = prompt
-        self._owner_tools = tools
+        self._owner_runtime = owner_runtime
 
     def _seal(self) -> None:
-        if self._owner_system_prompt is None or self._owner_tools is None:
+        if self._owner_runtime is None:
             raise RuntimeError("Project Runtime Context composition is incomplete")
         self._sealed = True
 
@@ -127,15 +122,7 @@ class ProjectRuntimeContext:
                 raise RuntimeError("Project contains more than one Runtime State")
             if states:
                 state = states[0]
-                owner = self._owners.get_by_triage_id(connection, state.triage_id)
-                if owner is None:
-                    raise RuntimeError("Initialized Project Runtime has no Owner identity")
-                available_tools = set(self._owner_tools or ())
-                missing_tools = tuple(
-                    tool for tool in owner.tools if tool not in available_tools
-                )
-                if missing_tools:
-                    raise ValueError(f"Unknown tool: {missing_tools[0]!r}")
+                self._owner().restore_identity(connection, state)
             else:
                 owner_count = connection.execute(
                     "SELECT COUNT(*) FROM project_owner_agent"
@@ -145,14 +132,8 @@ class ProjectRuntimeContext:
                         "Project Owner identity exists without Runtime State"
                     )
                 state = ProjectRuntimeState(triage_id=uuid4().hex)
-                owner = ProjectOwnerAgent(
-                    triage_id=state.triage_id,
-                    project_owner_session_id=uuid4().hex,
-                    system_prompt=self._owner_system_prompt or "",
-                    tools=self._owner_tools or (),
-                )
                 self._states.insert(connection, state)
-                self._owners.insert(connection, owner)
+                self._owner().create_identity(connection, state)
         return state
 
     def state(self) -> ProjectRuntimeState:
@@ -169,6 +150,61 @@ class ProjectRuntimeContext:
         """Commit one State transition and publish its evidence afterwards."""
         with self.operation(), self.transaction() as transaction:
             return transaction.transition(reason=reason, mutate=mutate)
+
+    def run_owner_activation(self, activation: OwnerActivation) -> AgentExit:
+        """Run one already-claimed model Activation against a fresh State snapshot."""
+        try:
+            with self.operation():
+                return self._owner().run_activation(
+                    self._reload_state(),
+                    activation,
+                )
+        except Exception as error:
+            return AgentExit(
+                status=AgentExitStatus.UNHANDLED_EXCEPTION,
+                content=f"{type(error).__name__}: {error}",
+            )
+
+    def execute_owner_activation_action(
+        self,
+        activation: OwnerActivation,
+        action: Action,
+    ) -> ToolExecutionResult:
+        """Persist and execute one Tool step in an already-claimed Activation."""
+        with self.operation():
+            return self._owner().execute_activation_action(
+                self._reload_state(),
+                activation,
+                action,
+            )
+
+    def reply_to_owner_activation(
+        self,
+        activation: OwnerActivation,
+        content: str,
+    ) -> AgentExit:
+        """Persist a manual Owner reply before the Driver finalizes Activation."""
+        with self.operation():
+            return self._owner().reply_to_activation(
+                self._reload_state(),
+                activation,
+                content,
+            )
+
+    def execute_tool(self, action: Action) -> ToolExecutionResult:
+        """Execute a naked Tool action without changing Owner history."""
+        with self.operation():
+            return self._owner().execute_action(self._reload_state(), action)
+
+    def append_owner_task_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        state: ProjectRuntimeState,
+        task: ProjectOwnerTask,
+    ) -> tuple[str, str | None]:
+        """Append external Owner input inside an existing business transaction."""
+        self._require_operation()
+        return self._owner().append_task(connection, state, task)
 
     @contextmanager
     def transaction(self) -> Iterator["ProjectRuntimeTransaction"]:
@@ -190,12 +226,31 @@ class ProjectRuntimeContext:
             return self._cached_state
         with self.database.connection() as connection:
             states = self._states.list_all(connection)
-        if not states:
-            raise LookupError("Project Runtime is not initialized")
-        if len(states) > 1:
-            raise RuntimeError("Project contains more than one Runtime State")
+            if not states:
+                raise LookupError("Project Runtime is not initialized")
+            if len(states) > 1:
+                raise RuntimeError("Project contains more than one Runtime State")
+            self._owner().restore_identity(connection, states[0])
         self._cached_state = states[0]
         return states[0]
+
+    def _reload_state(self) -> ProjectRuntimeState:
+        """Bypass the operation cache at Tool and Activation execution boundaries."""
+        self._require_operation()
+        with self.database.connection() as connection:
+            states = self._states.list_all(connection)
+            if not states:
+                raise LookupError("Project Runtime is not initialized")
+            if len(states) > 1:
+                raise RuntimeError("Project contains more than one Runtime State")
+            self._owner().restore_identity(connection, states[0])
+        self._cached_state = states[0]
+        return states[0]
+
+    def _owner(self) -> _OwnerRuntime:
+        if self._owner_runtime is None:
+            raise RuntimeError("Project Runtime Context Owner is not bound")
+        return self._owner_runtime
 
     def _require_operation(self) -> None:
         if self._operation_depth == 0 or self._operation_owner != get_ident():
@@ -229,6 +284,7 @@ class ProjectRuntimeTransaction:
             raise LookupError("Project Runtime is not initialized")
         if len(states) > 1:
             raise RuntimeError("Project contains more than one Runtime State")
+        self._context._owner().restore_identity(self.connection, states[0])
         self._state = states[0]
         return states[0]
 
@@ -250,6 +306,17 @@ class ProjectRuntimeTransaction:
         if event is not None:
             self._events.append(event)
         return updated
+
+    def append_owner_task(
+        self,
+        task: ProjectOwnerTask,
+    ) -> tuple[str, str | None]:
+        """Append one external Owner input in this same atomic transaction."""
+        return self._context._owner().append_task(
+            self.connection,
+            self.state(),
+            task,
+        )
 
     def _commit(self) -> None:
         if self._state is not None:

@@ -14,7 +14,7 @@ from agentplanex.project_owner_agent.context.rendering import render_checkpoint
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.base import Model
 from agentplanex.services.agent_contracts import AgentPromptCatalog
-from agentplanex.services.project_owner import (
+from agentplanex.services.owner_history import (
     latest_owner_summary_id_through,
     restore_owner_context,
 )

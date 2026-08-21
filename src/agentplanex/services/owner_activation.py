@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from agentplanex.domains import (
     AgentExit,
     AgentExitStatus,
+    ExecutionEvent,
+    ExecutionEventType,
     OwnerActivation,
     OwnerActivationMode,
     OwnerActivationStatus,
@@ -16,6 +18,7 @@ from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteOwnerActivationRepository,
 )
+from agentplanex.services.event_bus import EventBus
 
 type OwnerActivationRunner = Callable[[OwnerActivation], AgentExit]
 
@@ -52,11 +55,13 @@ class OwnerActivationDriver:
     activations: SQLiteOwnerActivationRepository = field(
         default_factory=SQLiteOwnerActivationRepository
     )
+    event_bus: EventBus = field(default_factory=EventBus)
 
     def drive_next(self, triage_id: str) -> ActivationDriveResult:
         activation = self._claim_for_model(triage_id)
         if activation is None:
             return ActivationDriveResult(activation=None, exit=None)
+        self._publish_entered(activation)
 
         try:
             result = self.run_owner(activation)
@@ -119,7 +124,10 @@ class OwnerActivationDriver:
             )
             if activation is None:
                 raise RuntimeError("Pending Owner activation could not be claimed")
-            return ActivationClaim(activation=activation, started=started)
+        claim = ActivationClaim(activation=activation, started=started)
+        if claim.started:
+            self._publish_entered(claim.activation)
+        return claim
 
     def claim_for_tool_failure(self, triage_id: str) -> ActivationClaim:
         """Claim a waiting Tool loop or select its stuck running step for failure."""
@@ -145,7 +153,10 @@ class OwnerActivationDriver:
             )
             if activation is None:
                 raise RuntimeError("Pending Owner activation could not be claimed")
-            return ActivationClaim(activation=activation, started=started)
+        claim = ActivationClaim(activation=activation, started=started)
+        if claim.started:
+            self._publish_entered(claim.activation)
+        return claim
 
     def release_tool(self, activation: OwnerActivation) -> OwnerActivation:
         """Return a non-terminal Tool loop to its durable waiting state."""
@@ -164,7 +175,7 @@ class OwnerActivationDriver:
         """Finalize one claimed activation from either supported driver."""
 
         with self.database.transaction() as connection:
-            return (
+            finalized = (
                 self.activations.mark_failed(
                     connection,
                     activation.activation_id,
@@ -178,6 +189,8 @@ class OwnerActivationDriver:
                     datetime.now(UTC),
                 )
             )
+        self._publish_exited(finalized, result)
+        return finalized
 
     def _claim_for_model(self, triage_id: str) -> OwnerActivation | None:
         with self.database.transaction() as connection:
@@ -210,3 +223,37 @@ class OwnerActivationDriver:
                 datetime.now(UTC),
                 OwnerActivationMode.MODEL,
             )
+
+    def _publish_entered(self, activation: OwnerActivation) -> None:
+        if activation.driver_mode is None:
+            raise RuntimeError("Claimed Owner activation has no driver mode")
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=activation.triage_id,
+                event_type=ExecutionEventType.REACT_LOOP_ENTERED,
+                react_loop_id=activation.activation_id,
+                payload={
+                    "task_type": activation.task_type.value,
+                    "driver_mode": activation.driver_mode.value,
+                },
+            )
+        )
+
+    def _publish_exited(
+        self,
+        activation: OwnerActivation,
+        result: AgentExit,
+    ) -> None:
+        if activation.driver_mode is None:
+            raise RuntimeError("Finalized Owner activation has no driver mode")
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=activation.triage_id,
+                event_type=ExecutionEventType.REACT_LOOP_EXITED,
+                react_loop_id=activation.activation_id,
+                payload={
+                    "agent_exit_status": result.status.value,
+                    "driver_mode": activation.driver_mode.value,
+                },
+            )
+        )
