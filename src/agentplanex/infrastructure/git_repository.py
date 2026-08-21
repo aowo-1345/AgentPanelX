@@ -121,6 +121,47 @@ class GitRepository:
         self._run("commit", "-m", message, "--", *relative_paths)
         return self.head_sha()
 
+    def read_path_at_commit(self, commit_sha: str, path: Path) -> bytes:
+        """Read one project-relative file exactly as stored by Git."""
+        relative_path = self._relative_path(path)
+        arguments = ("show", f"{commit_sha}:{relative_path}")
+        result = subprocess.run(
+            ["git", "-C", str(self.project_path), *arguments],
+            check=False,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).decode(
+                "utf-8",
+                errors="replace",
+            ).strip()
+            raise GitRepositoryError(
+                f"git {' '.join(arguments)} failed: {detail}"
+            )
+        return result.stdout
+
+    def commit_parent(self, commit_sha: str) -> str:
+        """Return the sole first parent of one commit."""
+        return self._run("rev-parse", f"{commit_sha}^").stdout.strip()
+
+    def changed_paths_between(
+        self,
+        base_commit_sha: str,
+        target_commit_sha: str,
+    ) -> tuple[str, ...]:
+        """Return every project path changed between two commits."""
+        return tuple(
+            path
+            for path in self._run(
+                "diff",
+                "--name-only",
+                base_commit_sha,
+                target_commit_sha,
+                "--",
+            ).stdout.splitlines()
+            if path
+        )
+
     def prepare_delivery_worktree(self, run_id: str, input_commit_sha: str) -> Path:
         """Create or restore one clean detached worktree at the Stage input commit."""
         path = self.delivery_worktree_path(run_id)

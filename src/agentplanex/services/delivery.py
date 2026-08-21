@@ -10,6 +10,7 @@ from typing import Literal
 from uuid import uuid4
 
 from agentplanex.domains import (
+    PLAN_DOCUMENT_NAMES,
     ArtifactDescriptor,
     ExecutionEvent,
     ExecutionEventType,
@@ -32,7 +33,6 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteStageRunRepository,
 )
 from agentplanex.services.event_bus import EventBus
-from agentplanex.services.planning import SPEC_DOCUMENT_NAMES
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 
 
@@ -1232,7 +1232,7 @@ class DeliveryService:
         return review
 
     def _spec_documents(self) -> tuple[Path, ...]:
-        return tuple(self.project_path / name for name in SPEC_DOCUMENT_NAMES)
+        return tuple(self.project_path / name for name in PLAN_DOCUMENT_NAMES)
 
     @staticmethod
     def _validate_review(

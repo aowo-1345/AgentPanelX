@@ -17,7 +17,7 @@ from agentplanex.services.delivery import (
     MilestoneReviewRequest,
     MilestoneReviewResult,
 )
-from agentplanex.services.planning import (
+from agentplanex.services.planning.contracts import (
     PlanningError,
     PlanReviewRequest,
     PlanReviewResult,
@@ -66,18 +66,27 @@ class CodexPlanHardGate:
 
     def review(self, request: PlanReviewRequest) -> PlanReviewResult:
         """Run and validate one isolated Reviewer workspace fail closed."""
+        subject = request.subject
+
+        def mentions(workspace: Path) -> tuple[tuple[str, Path], ...]:
+            inputs = workspace / "inputs"
+            inputs.mkdir(parents=True, exist_ok=True)
+            materialized: list[tuple[str, Path]] = []
+            for index, document in enumerate(subject.documents):
+                path = inputs / document.name
+                path.write_bytes(document.content)
+                materialized.append((f"plan-{index + 1}-{document.name}", path))
+            return tuple(materialized)
+
         review = self._review_exact_subject(
             triage_id=request.triage_id,
             role=PromptRole.PLAN_HARD_GATE,
-            subject_digest=request.subject_digest,
+            subject_digest=subject.digest,
             fixed_work_object={
-                "subject_digest": request.subject_digest,
-                "spec_documents": [str(path) for path in request.spec_documents],
+                "subject_digest": subject.digest,
+                "spec_documents": [document.name for document in subject.documents],
             },
-            mentions=lambda _workspace: tuple(
-                (f"plan-{index + 1}-{document.name}", document)
-                for index, document in enumerate(request.spec_documents)
-            ),
+            mentions=mentions,
             error_type=PlanningError,
             subject_name="Plan",
         )

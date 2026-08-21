@@ -15,6 +15,8 @@ from agentplanex.domains import (
     Message,
     Milestone,
     MilestoneState,
+    PlanDocument,
+    PlanSubject,
     RuntimeContextChangeReason,
     Stage,
     StageRun,
@@ -36,7 +38,7 @@ from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.agent_contracts import resolve_observation_skill
 from agentplanex.services.delivery import MilestoneReviewRequest
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
-from agentplanex.services.planning import PlanReviewRequest
+from agentplanex.services.planning.contracts import PlanReviewRequest
 from agentplanex.services.project_runtime_context import _owner as project_owner_service
 from agentplanex.services.stage_executor import CodexStageExecutor, StageExecutionRequest
 from agentplanex.settings import (
@@ -425,12 +427,14 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
     for spec in specs:
         spec.write_text(f"# {spec.stem}\n", encoding="utf-8")
 
-    gate.review(
-        PlanReviewRequest(
-            triage_id="triage-gate",
-            spec_documents=specs,
-            subject_digest="plan-digest",
+    plan_subject = PlanSubject(
+        tuple(
+            PlanDocument(name=spec.name, content=spec.read_bytes())
+            for spec in specs
         )
+    )
+    gate.review(
+        PlanReviewRequest(triage_id="triage-gate", subject=plan_subject)
     )
     gate.review_milestones(
         MilestoneReviewRequest(
@@ -452,7 +456,7 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
     assert plan_gate.thread_id is None
     assert milestone_gate.thread_id is None
     assert '"role": "plan_hard_gate"' in plan_gate.message
-    assert '"subject_digest": "plan-digest"' in plan_gate.message
+    assert f'"subject_digest": "{plan_subject.digest}"' in plan_gate.message
     assert '"role": "milestone_hard_gate"' in milestone_gate.message
     assert '"subject_digest": "milestone-digest"' in milestone_gate.message
     assert '"plan_commit_sha": "approved-plan"' in milestone_gate.message
@@ -468,6 +472,9 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
         assert f'"observation_skill": "{skill_path}"' in request.message
         assert len(request.mentions) == (3 if request is plan_gate else 1)
         assert request.output_schema is not None
+    assert tuple(path.read_bytes() for _, path in plan_gate.mentions) == tuple(
+        document.content for document in plan_subject.documents
+    )
 
 
 def test_stage_executor_records_one_fixed_stage_and_observation_boundary(

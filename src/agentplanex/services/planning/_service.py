@@ -1,6 +1,5 @@
-"""Plan approval workflow over project Specs, Git, and Runtime state."""
+"""Plan approval workflow over immutable subjects, Git, and Runtime Context."""
 
-import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -9,10 +8,11 @@ from typing import Literal
 from uuid import uuid4
 
 from agentplanex.domains import (
-    ArtifactDescriptor,
+    PLAN_DOCUMENT_NAMES,
     ExecutionEvent,
     ExecutionEventType,
     OwnerActivation,
+    PlanSubject,
     ProjectOwnerTask,
     ProjectOwnerTaskType,
     ProjectRuntimeState,
@@ -20,62 +20,29 @@ from agentplanex.domains import (
 )
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.services.event_bus import EventBus
+from agentplanex.services.planning._subject import (
+    freeze_commit_subject,
+    freeze_worktree_subject,
+    plan_document_paths,
+)
+from agentplanex.services.planning.contracts import (
+    PlanApprovalRequest,
+    PlanDecision,
+    PlanHardGate,
+    PlanningError,
+    PlanReviewRequest,
+    PlanReviewResult,
+    missing_plan_hard_gate,
+)
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 
-SPEC_DOCUMENT_NAMES = ("architecture.md", "requirements.md", "roadmap.md")
-
-
-class PlanningError(ValueError):
-    """An expected planning error that the Project Owner can correct."""
-
-
-@dataclass(frozen=True, slots=True)
-class PlanReviewRequest:
-    """The exact Plan subject supplied to a protected external review."""
-
-    triage_id: str
-    spec_documents: tuple[Path, ...]
-    subject_digest: str
-
-
-@dataclass(frozen=True, slots=True)
-class PlanReviewResult:
-    """The validated result required from the Plan Hard Gate Contract."""
-
-    subject_digest: str
-    decision: Literal["pass", "revise"]
-    summary: str
-    required_changes: tuple[str, ...]
-    audit_artifact: ArtifactDescriptor
-
-
-type PlanHardGate = Callable[[PlanReviewRequest], PlanReviewResult]
-
-
-def missing_plan_hard_gate(_request: PlanReviewRequest) -> PlanReviewResult:
-    """Fail closed when a Planning Service has no configured gate."""
-    raise PlanningError("Plan Hard Gate is not configured")
-
-
-@dataclass(frozen=True, slots=True)
-class PlanDecision:
-    state: ProjectRuntimeState
-    activation: OwnerActivation
-    commit_sha: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class PlanApprovalRequest:
-    """The observable result of submitting one exact Plan for human approval."""
-
-    state: ProjectRuntimeState
-    accepted: bool
-    subject_digest: str
-    review: PlanReviewResult | None
+_PLAN_CHECKPOINT_MESSAGE = "plan: checkpoint specifications"
 
 
 @dataclass(slots=True)
 class PlanningService:
+    """Own the complete decision loop for one exact Plan subject."""
+
     project_path: Path
     context: ProjectRuntimeContext
     git: GitRepository
@@ -85,36 +52,29 @@ class PlanningService:
     def request_plan_approval(self) -> PlanApprovalRequest:
         before = self.context.state()
         self._assert_requestable(before)
-        spec_documents = self._spec_documents()
-        subject_digest = self._subject_digest(spec_documents)
-        review = (
-            self._run_hard_gate(before, spec_documents, subject_digest)
-            if before.status == "IN_PROGRESS"
-            else None
-        )
+        subject = freeze_worktree_subject(self.project_path)
+        review = self._run_hard_gate(before, subject) if before.status == "IN_PROGRESS" else None
 
         after = self.context.state()
         self._assert_requestable(after)
-        if self._subject_digest(spec_documents) != subject_digest:
+        if freeze_worktree_subject(self.project_path).digest != subject.digest:
             raise PlanningError("Plan specification documents changed while requesting approval")
         if review is not None and review.decision == "revise":
             return PlanApprovalRequest(
                 state=after,
                 accepted=False,
-                subject_digest=subject_digest,
+                subject_digest=subject.digest,
                 review=review,
             )
 
         def request(current: ProjectRuntimeState) -> ProjectRuntimeState:
             self._assert_requestable(current)
-
-            updated = replace(
+            return replace(
                 current,
                 status=("TODO" if current.status == "TRIAGE" else current.status),
                 pending_action="PLAN_APPROVAL",
-                pending_plan_subject_digest=subject_digest,
+                pending_plan_subject_digest=subject.digest,
             )
-            return updated
 
         updated = self.context.transition(
             reason=RuntimeContextChangeReason.PLAN_APPROVAL_REQUESTED,
@@ -125,7 +85,7 @@ class PlanningService:
                 triage_id=updated.triage_id,
                 event_type=ExecutionEventType.PLAN_APPROVAL_REQUESTED,
                 payload={
-                    "subject_digest": subject_digest,
+                    "subject_digest": subject.digest,
                     "hard_gate_invoked": review is not None,
                 },
             )
@@ -133,35 +93,46 @@ class PlanningService:
         return PlanApprovalRequest(
             state=updated,
             accepted=True,
-            subject_digest=subject_digest,
+            subject_digest=subject.digest,
             review=review,
         )
 
     def approve_plan(self) -> PlanDecision:
-        spec_documents = self._spec_documents()
         pending = self._assert_plan_pending()
         expected_digest = pending.pending_plan_subject_digest
         if expected_digest is None:
             raise PlanningError("Plan approval has no reviewed subject identity")
-        if self._subject_digest(spec_documents) != expected_digest:
+        if freeze_worktree_subject(self.project_path).digest != expected_digest:
             raise PlanningError("Plan specification documents changed after approval was requested")
-        commit_sha = self.git.commit_paths(
-            spec_documents,
-            message="plan: approve specifications",
-        )
+
+        commit_sha = self._checkpoint_plan(pending, expected_digest)
+        if freeze_commit_subject(self.project_path, self.git, commit_sha).digest != expected_digest:
+            raise PlanningError("Plan checkpoint does not match the reviewed Plan")
+        if freeze_worktree_subject(self.project_path).digest != expected_digest:
+            raise PlanningError("Plan specification documents changed while approval was committed")
 
         def approve(current: ProjectRuntimeState) -> ProjectRuntimeState:
-            self._assert_pending_action(current)
+            self._assert_same_pending_plan(current, expected_digest)
             return replace(
                 current,
                 pending_action=None,
                 pending_plan_subject_digest=None,
                 current_plan_commit_sha=commit_sha,
+                git_main_version=(
+                    commit_sha
+                    if current.rolling_started_at is not None
+                    else current.git_main_version
+                ),
             )
 
         task = ProjectOwnerTask(
             type=ProjectOwnerTaskType.PLAN_DECISION,
-            content=_plan_decision_message("approve", "", expected_digest),
+            content=_plan_decision_message(
+                "approve",
+                "",
+                expected_digest,
+                commit_sha,
+            ),
         )
         updated, activation = self._apply_decision(
             task,
@@ -175,18 +146,16 @@ class PlanningService:
                 payload={"plan_commit_sha": commit_sha},
             )
         )
-
-        return PlanDecision(
-            state=updated,
-            activation=activation,
-            commit_sha=commit_sha,
-        )
+        return PlanDecision(state=updated, activation=activation, commit_sha=commit_sha)
 
     def reject_plan(self, feedback: str = "") -> PlanDecision:
         pending = self._assert_plan_pending()
+        expected_digest = pending.pending_plan_subject_digest
+        if expected_digest is None:
+            raise PlanningError("Plan approval has no reviewed subject identity")
 
         def reject(current: ProjectRuntimeState) -> ProjectRuntimeState:
-            self._assert_pending_action(current)
+            self._assert_same_pending_plan(current, expected_digest)
             return replace(
                 current,
                 pending_action=None,
@@ -198,7 +167,8 @@ class PlanningService:
             content=_plan_decision_message(
                 "reject",
                 feedback,
-                pending.pending_plan_subject_digest,
+                expected_digest,
+                pending.current_plan_commit_sha,
             ),
         )
         updated, activation = self._apply_decision(
@@ -212,8 +182,40 @@ class PlanningService:
                 event_type=ExecutionEventType.PLAN_REJECTED,
             )
         )
-
         return PlanDecision(state=updated, activation=activation)
+
+    def _checkpoint_plan(
+        self,
+        state: ProjectRuntimeState,
+        expected_digest: str,
+    ) -> str:
+        paths = plan_document_paths(self.project_path)
+        changed_specs = set(self.git.changed_paths()).intersection(PLAN_DOCUMENT_NAMES)
+        baseline = state.git_main_version if state.rolling_started_at is not None else None
+        head = self.git.head_sha()
+
+        if baseline is not None:
+            if state.git_branch is None:
+                raise PlanningError("Rolling delivery has no target Git branch")
+            if self.git.current_branch() != state.git_branch:
+                raise PlanningError("Project target branch changed during Plan approval")
+            if head != baseline:
+                if changed_specs or not self._is_reusable_checkpoint(baseline, head):
+                    raise PlanningError("Project Git HEAD changed outside Plan approval")
+                committed = freeze_commit_subject(self.project_path, self.git, head)
+                if committed.digest != expected_digest:
+                    raise PlanningError("Existing Plan checkpoint does not match the reviewed Plan")
+                return head
+
+        if not changed_specs:
+            return head
+        return self.git.commit_paths(paths, message=_PLAN_CHECKPOINT_MESSAGE)
+
+    def _is_reusable_checkpoint(self, baseline: str, head: str) -> bool:
+        if self.git.commit_parent(head) != baseline:
+            return False
+        changed = set(self.git.changed_paths_between(baseline, head))
+        return bool(changed) and changed.issubset(PLAN_DOCUMENT_NAMES)
 
     def _apply_decision(
         self,
@@ -223,42 +225,14 @@ class PlanningService:
         mutate: Callable[[ProjectRuntimeState], ProjectRuntimeState],
     ) -> tuple[ProjectRuntimeState, OwnerActivation]:
         with self.context.transaction() as transaction:
-            updated = transaction.transition(
-                reason=reason,
-                mutate=mutate,
-            )
+            updated = transaction.transition(reason=reason, mutate=mutate)
             activation = transaction.submit_owner_input(task)
         return updated, activation
-
-    def _spec_documents(self) -> tuple[Path, ...]:
-        paths = tuple(self.project_path / name for name in SPEC_DOCUMENT_NAMES)
-        missing = tuple(path.name for path in paths if not path.is_file())
-        if missing:
-            raise PlanningError("Missing Plan specification documents: " + ", ".join(missing))
-        return paths
-
-    @staticmethod
-    def _subject_digest(spec_documents: tuple[Path, ...]) -> str:
-        digest = hashlib.sha256()
-        for document in spec_documents:
-            try:
-                content = document.read_bytes()
-            except OSError as error:
-                raise PlanningError(
-                    f"Cannot read Plan specification document: {document.name}"
-                ) from error
-            name = document.name.encode("utf-8")
-            digest.update(len(name).to_bytes(4, "big"))
-            digest.update(name)
-            digest.update(len(content).to_bytes(8, "big"))
-            digest.update(content)
-        return digest.hexdigest()
 
     def _run_hard_gate(
         self,
         context: ProjectRuntimeState,
-        spec_documents: tuple[Path, ...],
-        subject_digest: str,
+        subject: PlanSubject,
     ) -> PlanReviewResult:
         invocation_id = uuid4().hex
         self.event_bus.publish(
@@ -268,19 +242,15 @@ class PlanningService:
                 payload={
                     "invocation_id": invocation_id,
                     "operation": "plan_hard_gate",
-                    "subject_digest": subject_digest,
+                    "subject_digest": subject.digest,
                 },
             )
         )
         try:
             review = self.review_plan(
-                PlanReviewRequest(
-                    triage_id=context.triage_id,
-                    spec_documents=spec_documents,
-                    subject_digest=subject_digest,
-                )
+                PlanReviewRequest(triage_id=context.triage_id, subject=subject)
             )
-            self._validate_review(review, subject_digest)
+            self._validate_review(review, subject.digest)
         except Exception as error:
             self.event_bus.publish(
                 ExecutionEvent(
@@ -289,7 +259,7 @@ class PlanningService:
                     payload={
                         "invocation_id": invocation_id,
                         "operation": "plan_hard_gate",
-                        "subject_digest": subject_digest,
+                        "subject_digest": subject.digest,
                         "failure_type": type(error).__name__,
                     },
                 )
@@ -307,7 +277,7 @@ class PlanningService:
                     "required_change_count": len(review.required_changes),
                     "review_artifact": {
                         "uri": review.audit_artifact.uri,
-                        "project_relative_path": (review.audit_artifact.project_relative_path),
+                        "project_relative_path": review.audit_artifact.project_relative_path,
                         "media_type": review.audit_artifact.media_type,
                         "size": review.audit_artifact.size,
                         "sha256": review.audit_artifact.sha256,
@@ -345,11 +315,22 @@ class PlanningService:
         if context.pending_action != "PLAN_APPROVAL":
             raise PlanningError("Project is not waiting for Plan approval")
 
+    @classmethod
+    def _assert_same_pending_plan(
+        cls,
+        context: ProjectRuntimeState,
+        expected_digest: str,
+    ) -> None:
+        cls._assert_pending_action(context)
+        if context.pending_plan_subject_digest != expected_digest:
+            raise PlanningError("Pending Plan changed while its decision was being applied")
+
 
 def _plan_decision_message(
     action: Literal["approve", "reject"],
     feedback: str,
-    subject_digest: str | None,
+    subject_digest: str,
+    commit_sha: str | None,
 ) -> str:
     approved = action == "approve"
     return json.dumps(
@@ -357,6 +338,7 @@ def _plan_decision_message(
             "event": "PLAN_DECISION_RECEIVED",
             "decision": "APPROVED" if approved else "REJECTED",
             "plan_subject_digest": subject_digest,
+            "plan_commit_sha": commit_sha,
             "feedback": feedback.strip() or None,
             "required_response": (
                 "Reconcile the complete Milestone View with the approved Plan, then "

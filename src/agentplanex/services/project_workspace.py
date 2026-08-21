@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from agentplanex.domains import (
+    PLAN_DOCUMENT_NAMES,
     ExecutionEvent,
     FeatureAction,
     Message,
@@ -30,7 +31,6 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectRuntimeStateRepository,
     SQLiteStageRunRepository,
 )
-from agentplanex.services.planning import SPEC_DOCUMENT_NAMES
 
 type ToolActivityStatus = Literal["running", "completed", "failed"]
 
@@ -241,7 +241,7 @@ def _read_plan_documents(
                     name=name,
                     content=_read_optional_document(git.project_path / name),
                 )
-                for name in SPEC_DOCUMENT_NAMES
+                for name in PLAN_DOCUMENT_NAMES
             ),
             None,
         )

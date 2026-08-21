@@ -43,6 +43,7 @@ from agentplanex.domains.owner_activation import (
     OwnerActivationMode,
     OwnerActivationStatus,
 )
+from agentplanex.domains.plan import PLAN_DOCUMENT_NAMES, PlanDocument, PlanSubject
 from agentplanex.domains.project_owner_agent import ProjectOwnerAgent
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.domains.summary_history import SummaryHistory
@@ -67,6 +68,7 @@ from agentplanex.domains.workspace import (
 
 __all__ = [
     "BASH_TOOL_NAME",
+    "PLAN_DOCUMENT_NAMES",
     "Action",
     "ActionOutput",
     "AgentCard",
@@ -96,6 +98,8 @@ __all__ = [
     "OwnerActivation",
     "OwnerActivationMode",
     "OwnerActivationStatus",
+    "PlanDocument",
+    "PlanSubject",
     "ProjectBoard",
     "ProjectOwnerAgent",
     "ProjectOwnerTask",

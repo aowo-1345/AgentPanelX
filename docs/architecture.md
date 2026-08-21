@@ -321,7 +321,7 @@ sequenceDiagram
     end
 ```
 
-Subject digest 将“人批准的内容”“Reviewer 审查的内容”和“最终提交的内容”绑定为同一个对象。文档在等待批准期间发生变化、Reviewer 输出不完整、subject 不匹配或审查执行失败时，Hard Gate 拒绝继续推进。
+Planning 先把文档字节冻结为不可变 subject，再复制到 Reviewer 的隔离 workspace；批准时还会从 Git commit 重新读取同一 subject。Subject digest 因而将“人批准的内容”“Reviewer 审查的内容”和“最终提交的内容”绑定为同一个对象。文档在等待批准期间发生变化、Reviewer 输出不完整、subject 不匹配或审查执行失败时，Hard Gate 拒绝继续推进。Plan State 转换与 `PLAN_DECISION` Owner Input 在同一个 Context transaction 中提交。
 
 Milestone View 使用相同设计：完整 Milestone 集合与当前 Plan commit 形成固定审查对象，Reviewer 在隔离 workspace 中返回结构化 manifest 和审计 artifact。
 
@@ -518,7 +518,7 @@ flowchart LR
 | Owner Activation lifecycle | `src/agentplanex/services/project_runtime_context/_activation.py` |
 | Owner Tool Contract 与执行 | `src/agentplanex/project_owner_agent/tools/base.py`, `project_runtime/executions/` |
 | Owner model context / Rolling Summary | `src/agentplanex/project_owner_agent/context/`, `services/project_runtime_context/_owner.py` |
-| Planning 与 Hard Gate | `src/agentplanex/services/planning.py`, `plan_hard_gate.py` |
+| Planning、Plan identity 与 Hard Gate | `src/agentplanex/services/planning/`, `domains/plan.py`, `plan_hard_gate.py` |
 | Agent Collaboration | `src/agentplanex/services/agent_collaboration.py`, `agent_contracts.py` |
 | Delivery 状态机与 Runner | `src/agentplanex/services/delivery.py`, `delivery_runner.py` |
 | Coding Agent Stage 执行 | `src/agentplanex/services/stage_executor.py` |
