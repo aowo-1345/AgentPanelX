@@ -33,11 +33,11 @@ class RequestPlanApprovalExecution(ProjectExecution[NoToolArguments]):
 
     def execute(
         self,
-        context: ProjectRuntimeState,
+        _context: ProjectRuntimeState,
         arguments: NoToolArguments,
     ) -> ToolExecutionResult:
         try:
-            requested = self.dependencies.planning.request_plan_approval(context)
+            requested = self.dependencies.planning.request_plan_approval()
         except PlanningError as error:
             return ToolExecutionResult(
                 output={

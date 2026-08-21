@@ -5,6 +5,7 @@ import shlex
 import subprocess
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar
 
@@ -16,7 +17,7 @@ from agentplanex.domains import (
     Message,
     MessageHistory,
     OwnerActivationStatus,
-    ProjectRuntimeState,
+    RuntimeContextChangeReason,
 )
 from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.codex import (
@@ -33,12 +34,11 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectRuntimeStateRepository,
 )
 from agentplanex.project_owner_agent.exception import ReplyToHuman
-from agentplanex.project_runtime.executions import create_project_executions
-from agentplanex.services import PlanningService
 from agentplanex.services.planning import PlanReviewRequest, PlanReviewResult
 from agentplanex.services.project_runtime_context import _owner as project_owner_service
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 from scripts import debug_tool_cli
+from tests.runtime_support import compose_test_executions
 
 
 def _initialize_runtime(project_path: Path) -> None:
@@ -1413,28 +1413,21 @@ def test_unexpected_gate_failure_is_not_converted_to_tool_observation(
     project_path = initialize_git_project()
     _initialize_runtime(project_path)
     _write_specs(project_path)
-    database = SQLiteDatabase.for_project(project_path)
-    context = ProjectRuntimeState("triage-unexpected", status="IN_PROGRESS")
-    contexts = SQLiteProjectRuntimeStateRepository()
-    with database.transaction() as connection:
-        contexts.insert(connection, context)
-
     def fail_unexpectedly(_request: PlanReviewRequest) -> PlanReviewResult:
         raise RuntimeError("reviewer transport failed")
 
-    planning = PlanningService(
-        project_path=project_path,
-        database=database,
-        review_plan=fail_unexpectedly,
-    )
-    executions = create_project_executions(
+    composed = compose_test_executions(
         project_path,
         load_settings(DEFAULT_SETTINGS_PATH).runtime,
-        planning,
+    )
+    composed.planning.review_plan = fail_unexpectedly
+    context = composed.context.transition(
+        reason=RuntimeContextChangeReason.MILESTONES_UPDATED,
+        mutate=lambda current: replace(current, status="IN_PROGRESS"),
     )
 
     with pytest.raises(RuntimeError, match="reviewer transport failed"):
-        executions.execute(
+        composed.executions.execute(
             context,
             {"tool": "request_plan_approval", "arguments": {}},
         )

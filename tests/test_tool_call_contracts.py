@@ -7,26 +7,28 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from agentplanex.domains import ProjectRuntimeState
+from agentplanex.infrastructure.sqlite import SQLiteDatabase
+from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteExecutionEventRepository,
+)
 from agentplanex.project_owner_agent.models.responses import (
     ProjectOwnerModel,
     ResponsesClient,
     ResponsesRequest,
 )
 from agentplanex.project_owner_agent.tools import ToolArgumentError
-from agentplanex.project_runtime.executions import create_project_executions
-from agentplanex.services.event_bus import EventBus
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
+from tests.runtime_support import compose_test_executions
 
 
 def test_tool_catalog_treats_empty_conversation_id_as_a_new_conversation(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    executions = create_project_executions(
+    executions = compose_test_executions(
         project_path,
         load_settings(DEFAULT_SETTINGS_PATH).runtime,
-    )
+    ).executions
     arguments = {
         "agent_id": "planner",
         "kind": "task",
@@ -52,10 +54,10 @@ def test_provider_schema_and_runtime_share_the_conversation_id_contract(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    tools = create_project_executions(
+    tools = compose_test_executions(
         project_path,
         load_settings(DEFAULT_SETTINGS_PATH).runtime,
-    ).tools
+    ).executions.tools
     schema = next(
         item for item in tools.provider_schemas() if item["name"] == "talk_to_agent"
     )["parameters"]
@@ -77,10 +79,10 @@ def test_tool_catalog_rejects_invalid_complete_milestone_views(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    tools = create_project_executions(
+    tools = compose_test_executions(
         project_path,
         load_settings(DEFAULT_SETTINGS_PATH).runtime,
-    ).tools
+    ).executions.tools
     provider_schema = next(
         item for item in tools.provider_schemas() if item["name"] == "update_milestones"
     )["parameters"]
@@ -150,10 +152,10 @@ def test_every_tool_uses_the_shared_argument_contract(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    tools = create_project_executions(
+    tools = compose_test_executions(
         project_path,
         load_settings(DEFAULT_SETTINGS_PATH).runtime,
-    ).tools
+    ).executions.tools
     invalid_calls = (
         ("bash", {"command": " "}),
         (
@@ -216,13 +218,14 @@ def test_direct_execution_uses_the_same_argument_contract(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    executions = create_project_executions(
+    composed = compose_test_executions(
         project_path,
         load_settings(DEFAULT_SETTINGS_PATH).runtime,
     )
+    executions = composed.executions
 
     result = executions.execute(
-        ProjectRuntimeState(triage_id="triage-tool-contract"),
+        composed.state,
         {
             "tool": "talk_to_agent",
             "call_id": "call-1",
@@ -246,15 +249,13 @@ def test_unknown_agent_is_rejected_before_an_invocation_event(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    events: list[object] = []
-    executions = create_project_executions(
+    composed = compose_test_executions(
         project_path,
         load_settings(DEFAULT_SETTINGS_PATH).runtime,
-        event_bus=EventBus(handlers=(events.append,)),
     )
 
-    result = executions.execute(
-        ProjectRuntimeState(triage_id="triage-tool-contract"),
+    result = composed.executions.execute(
+        composed.state,
         {
             "tool": "talk_to_agent",
             "call_id": "call-unknown-agent",
@@ -270,17 +271,23 @@ def test_unknown_agent_is_rejected_before_an_invocation_event(
 
     assert result.output["ok"] is False
     assert "Unknown Agent" in result.output["error"]
-    assert events == []
+    database = SQLiteDatabase.for_project(project_path)
+    with database.read_only_connection() as connection:
+        events = SQLiteExecutionEventRepository().list_by_triage_id(
+            connection,
+            composed.state.triage_id,
+        )
+    assert events == ()
 
 
 def test_model_tool_call_normalizes_empty_conversation_id_before_action(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    tools = create_project_executions(
+    tools = compose_test_executions(
         project_path,
         load_settings(DEFAULT_SETTINGS_PATH).runtime,
-    ).tools
+    ).executions.tools
 
     class InvalidToolCallTransport:
         def create(self, _request: ResponsesRequest) -> object:

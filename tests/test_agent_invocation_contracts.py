@@ -15,7 +15,7 @@ from agentplanex.domains import (
     Message,
     Milestone,
     MilestoneState,
-    ProjectRuntimeState,
+    RuntimeContextChangeReason,
     Stage,
     StageRun,
     StageRunStatus,
@@ -32,7 +32,6 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.project_runtime import ProjectRuntime
-from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.agent_contracts import resolve_observation_skill
 from agentplanex.services.delivery import MilestoneReviewRequest
@@ -47,6 +46,7 @@ from agentplanex.settings import (
     Settings,
     load_settings,
 )
+from tests.runtime_support import compose_test_executions
 
 
 class _RecordingOwnerModel:
@@ -261,15 +261,19 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
         )
 
     monkeypatch.setattr(CodexTurnTransport, "run", record)
-    executions = create_project_executions(project_path, _settings().runtime)
-    context = ProjectRuntimeState(
-        triage_id="triage-contract",
-        status="IN_PROGRESS",
-        current_plan_commit_sha="plan-commit",
-        current_snapshot_id="snapshot-1",
-        current_run_id="run-1",
-        current_milestone_key="milestone-1",
-        current_stage_key="stage-1",
+    composed = compose_test_executions(project_path, _settings().runtime)
+    executions = composed.executions
+    context = composed.context.transition(
+        reason=RuntimeContextChangeReason.MILESTONES_UPDATED,
+        mutate=lambda current: replace(
+            current,
+            status="IN_PROGRESS",
+            current_plan_commit_sha="plan-commit",
+            current_snapshot_id="snapshot-1",
+            current_run_id="run-1",
+            current_milestone_key="milestone-1",
+            current_stage_key="stage-1",
+        ),
     )
 
     results = []
@@ -293,12 +297,16 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
         assert result.output["ok"] is True
         results.append(result)
 
-    resumed = executions.execute(
-        replace(
-            context,
+    context = composed.context.transition(
+        reason=RuntimeContextChangeReason.MILESTONES_UPDATED,
+        mutate=lambda current: replace(
+            current,
             current_snapshot_id="snapshot-2",
             current_stage_key="stage-2",
         ),
+    )
+    resumed = executions.execute(
+        context,
         {
             "tool": "talk_to_agent",
             "arguments": {
@@ -329,7 +337,7 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
         assert "agentplanex-project-observe" in request.message
         assert f'"observation_skill": "{skill_path}"' in request.message
         assert f'"project_root": "{project_path.resolve()}"' in request.message
-        assert '"triage_id": "triage-contract"' in request.message
+        assert f'"triage_id": "{context.triage_id}"' in request.message
         assert f'"role": "{role}"' in request.message
         assert '"delegated_request_sha256":' in request.message
         assert f'"delegated_request_sha256": "{request_sha}"' in request.message

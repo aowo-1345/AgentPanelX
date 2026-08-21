@@ -21,7 +21,7 @@ from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.delivery import DeliveryService
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.planning import PlanningService
-from agentplanex.services.runtime_context import RuntimeContextService
+from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 from agentplanex.settings import RuntimeSettings
 
 
@@ -35,7 +35,7 @@ class ProjectExecutionDependencies:
     delivery: DeliveryService
     collaboration: AgentCollaborationService
     event_bus: EventBus
-    runtime_contexts: RuntimeContextService
+    context: ProjectRuntimeContext
 
 
 class ProjectExecution[ArgumentsT: ToolArgumentsModel](ABC):
@@ -108,7 +108,7 @@ class ProjectExecutions:
 
     tools: ToolCatalog
     _executions: dict[str, ProjectExecution[Any]]
-    _runtime_contexts: RuntimeContextService
+    _context: ProjectRuntimeContext
 
     def __init__(self, dependencies: ProjectExecutionDependencies) -> None:
         executions = tuple(
@@ -131,7 +131,7 @@ class ProjectExecutions:
                 for execution in executions
             },
         )
-        object.__setattr__(self, "_runtime_contexts", dependencies.runtime_contexts)
+        object.__setattr__(self, "_context", dependencies.context)
 
     def execute(
         self,
@@ -142,8 +142,10 @@ class ProjectExecutions:
         if not isinstance(tool_name, str) or not tool_name:
             return _invalid_action("Tool action has no tool name")
 
-        current = self._runtime_contexts.get(context.triage_id)
-        if current is not None and current.blocked_reason is not None:
+        current = self._context.state()
+        if current.triage_id != context.triage_id:
+            raise ValueError("Tool State does not belong to this Project Runtime")
+        if current.blocked_reason is not None:
             return ToolExecutionResult(
                 output={
                     "ok": False,
@@ -166,7 +168,7 @@ class ProjectExecutions:
         if execution is None:
             return _invalid_action(f"Unknown tool: {tool_name!r}")
         try:
-            return execution.execute_call(context, arguments)
+            return execution.execute_call(current, arguments)
         except ToolArgumentError as error:
             return ToolExecutionResult(
                 output={

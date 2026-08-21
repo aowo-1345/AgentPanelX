@@ -1,7 +1,7 @@
 """Plan approval workflow over project Specs, Git, and Runtime state."""
 
 import hashlib
-import sqlite3
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -13,27 +13,19 @@ from agentplanex.domains import (
     ExecutionEvent,
     ExecutionEventType,
     OwnerActivation,
+    ProjectOwnerTask,
     ProjectOwnerTaskType,
     ProjectRuntimeState,
     RuntimeContextChangeReason,
 )
 from agentplanex.infrastructure.git_repository import GitRepository
-from agentplanex.infrastructure.sqlite import (
-    SQLiteDatabase,
-    initialize_schema,
-)
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteOwnerActivationRepository,
-    SQLiteProjectRuntimeStateRepository,
 )
-from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.services.event_bus import EventBus
-from agentplanex.services.runtime_context import RuntimeContextService
+from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 
 SPEC_DOCUMENT_NAMES = ("architecture.md", "requirements.md", "roadmap.md")
-type PlanDecisionMessageWriter = Callable[
-    [sqlite3.Connection], tuple[str, str | None]
-]
 
 
 class PlanningError(ValueError):
@@ -88,45 +80,14 @@ class PlanApprovalRequest:
 @dataclass(slots=True)
 class PlanningService:
     project_path: Path
-    database: SQLiteDatabase
-    contexts: SQLiteProjectRuntimeStateRepository = field(
-        default_factory=SQLiteProjectRuntimeStateRepository
-    )
-    activations: SQLiteOwnerActivationRepository = field(
-        default_factory=SQLiteOwnerActivationRepository
-    )
-    git: GitRepository | None = None
+    context: ProjectRuntimeContext
+    activations: SQLiteOwnerActivationRepository
+    git: GitRepository
     review_plan: PlanHardGate = missing_plan_hard_gate
     event_bus: EventBus = field(default_factory=EventBus)
-    runtime_contexts: RuntimeContextService | None = None
 
-    def __post_init__(self) -> None:
-        if self.git is None:
-            self.git = GitRepository(self.project_path)
-        if self.runtime_contexts is None:
-            self.runtime_contexts = RuntimeContextService(
-                self.database,
-                self.event_bus,
-                self.contexts,
-            )
-
-    @classmethod
-    def for_project(cls, project_path: Path) -> "PlanningService":
-        database = SQLiteDatabase.for_project(project_path)
-        initialize_schema(database)
-        event_bus = EventBus((SQLiteTimelineRecorder(database),))
-        return cls(
-            project_path=project_path,
-            database=database,
-            event_bus=event_bus,
-            runtime_contexts=RuntimeContextService(database, event_bus),
-        )
-
-    def request_plan_approval(
-        self,
-        context: ProjectRuntimeState,
-    ) -> PlanApprovalRequest:
-        before = self._current_context(context.triage_id)
+    def request_plan_approval(self) -> PlanApprovalRequest:
+        before = self.context.state()
         self._assert_requestable(before)
         spec_documents = self._spec_documents()
         subject_digest = self._subject_digest(spec_documents)
@@ -136,12 +97,10 @@ class PlanningService:
             else None
         )
 
-        after = self._current_context(context.triage_id)
+        after = self.context.state()
         self._assert_requestable(after)
         if self._subject_digest(spec_documents) != subject_digest:
-            raise PlanningError(
-                "Plan specification documents changed while requesting approval"
-            )
+            raise PlanningError("Plan specification documents changed while requesting approval")
         if review is not None and review.decision == "revise":
             return PlanApprovalRequest(
                 context=after,
@@ -149,8 +108,6 @@ class PlanningService:
                 subject_digest=subject_digest,
                 review=review,
             )
-
-        runtime_contexts = self._runtime_contexts()
 
         def request(current: ProjectRuntimeState) -> ProjectRuntimeState:
             self._assert_requestable(current)
@@ -163,14 +120,13 @@ class PlanningService:
             )
             return updated
 
-        updated = runtime_contexts.transition(
-            context.triage_id,
+        updated = self.context.transition(
             reason=RuntimeContextChangeReason.PLAN_APPROVAL_REQUESTED,
             mutate=request,
         )
         self.event_bus.publish(
             ExecutionEvent(
-                triage_id=context.triage_id,
+                triage_id=updated.triage_id,
                 event_type=ExecutionEventType.PLAN_APPROVAL_REQUESTED,
                 payload={
                     "subject_digest": subject_digest,
@@ -185,25 +141,15 @@ class PlanningService:
             review=review,
         )
 
-    def approve_plan(
-        self,
-        triage_id: str,
-        *,
-        append_message: PlanDecisionMessageWriter,
-    ) -> PlanDecision:
+    def approve_plan(self) -> PlanDecision:
         spec_documents = self._spec_documents()
-        pending = self._assert_plan_pending(triage_id)
+        pending = self._assert_plan_pending()
         expected_digest = pending.pending_plan_subject_digest
         if expected_digest is None:
             raise PlanningError("Plan approval has no reviewed subject identity")
         if self._subject_digest(spec_documents) != expected_digest:
-            raise PlanningError(
-                "Plan specification documents changed after approval was requested"
-            )
-        git = self.git
-        if git is None:
-            raise RuntimeError("Planning Service has no Git repository")
-        commit_sha = git.commit_paths(
+            raise PlanningError("Plan specification documents changed after approval was requested")
+        commit_sha = self.git.commit_paths(
             spec_documents,
             message="plan: approve specifications",
         )
@@ -217,15 +163,18 @@ class PlanningService:
                 current_plan_commit_sha=commit_sha,
             )
 
+        task = ProjectOwnerTask(
+            type=ProjectOwnerTaskType.PLAN_DECISION,
+            content=_plan_decision_message("approve", "", expected_digest),
+        )
         updated, activation = self._apply_decision(
-            triage_id,
-            append_message=append_message,
+            task,
             reason=RuntimeContextChangeReason.PLAN_APPROVED,
             mutate=approve,
         )
         self.event_bus.publish(
             ExecutionEvent(
-                triage_id=triage_id,
+                triage_id=updated.triage_id,
                 event_type=ExecutionEventType.PLAN_APPROVED,
                 payload={"plan_commit_sha": commit_sha},
             )
@@ -237,12 +186,9 @@ class PlanningService:
             commit_sha=commit_sha,
         )
 
-    def reject_plan(
-        self,
-        triage_id: str,
-        *,
-        append_message: PlanDecisionMessageWriter,
-    ) -> PlanDecision:
+    def reject_plan(self, feedback: str = "") -> PlanDecision:
+        pending = self._assert_plan_pending()
+
         def reject(current: ProjectRuntimeState) -> ProjectRuntimeState:
             self._assert_pending_action(current)
             return replace(
@@ -251,15 +197,22 @@ class PlanningService:
                 pending_plan_subject_digest=None,
             )
 
+        task = ProjectOwnerTask(
+            type=ProjectOwnerTaskType.PLAN_DECISION,
+            content=_plan_decision_message(
+                "reject",
+                feedback,
+                pending.pending_plan_subject_digest,
+            ),
+        )
         updated, activation = self._apply_decision(
-            triage_id,
-            append_message=append_message,
+            task,
             reason=RuntimeContextChangeReason.PLAN_REJECTED,
             mutate=reject,
         )
         self.event_bus.publish(
             ExecutionEvent(
-                triage_id=triage_id,
+                triage_id=updated.triage_id,
                 event_type=ExecutionEventType.PLAN_REJECTED,
             )
         )
@@ -268,39 +221,32 @@ class PlanningService:
 
     def _apply_decision(
         self,
-        triage_id: str,
+        task: ProjectOwnerTask,
         *,
-        append_message: PlanDecisionMessageWriter,
         reason: RuntimeContextChangeReason,
         mutate: Callable[[ProjectRuntimeState], ProjectRuntimeState],
     ) -> tuple[ProjectRuntimeState, OwnerActivation]:
-        with self.database.transaction() as connection:
-            updated, context_event = self._runtime_contexts().transition_in_transaction(
-                connection,
-                triage_id,
+        with self.context.transaction() as transaction:
+            updated = transaction.transition(
                 reason=reason,
                 mutate=mutate,
             )
-            message_id, summary_id = append_message(connection)
+            message_id, summary_id = transaction.append_owner_task(task)
             activation = OwnerActivation(
                 activation_id=uuid4().hex,
-                triage_id=triage_id,
+                triage_id=updated.triage_id,
                 task_type=ProjectOwnerTaskType.PLAN_DECISION,
                 message_id=message_id,
                 summary_id=summary_id,
             )
-            self.activations.insert(connection, activation)
-        if context_event is not None:
-            self.event_bus.publish(context_event)
+            self.activations.insert(transaction.connection, activation)
         return updated, activation
 
     def _spec_documents(self) -> tuple[Path, ...]:
         paths = tuple(self.project_path / name for name in SPEC_DOCUMENT_NAMES)
         missing = tuple(path.name for path in paths if not path.is_file())
         if missing:
-            raise PlanningError(
-                "Missing Plan specification documents: " + ", ".join(missing)
-            )
+            raise PlanningError("Missing Plan specification documents: " + ", ".join(missing))
         return paths
 
     @staticmethod
@@ -373,9 +319,7 @@ class PlanningService:
                     "required_change_count": len(review.required_changes),
                     "review_artifact": {
                         "uri": review.audit_artifact.uri,
-                        "project_relative_path": (
-                            review.audit_artifact.project_relative_path
-                        ),
+                        "project_relative_path": (review.audit_artifact.project_relative_path),
                         "media_type": review.audit_artifact.media_type,
                         "size": review.audit_artifact.size,
                         "sha256": review.audit_artifact.sha256,
@@ -396,24 +340,15 @@ class PlanningService:
         if review.decision == "revise" and not review.required_changes:
             raise PlanningError("Plan Hard Gate revise must contain required changes")
 
-    def _current_context(self, triage_id: str) -> ProjectRuntimeState:
-        with self.database.connection() as connection:
-            return self._get_context(connection, triage_id)
-
     @staticmethod
     def _assert_requestable(context: ProjectRuntimeState) -> None:
         if context.pending_action is not None:
-            raise PlanningError(
-                "Project already has a pending action: " f"{context.pending_action}"
-            )
+            raise PlanningError(f"Project already has a pending action: {context.pending_action}")
         if context.status not in {"TRIAGE", "TODO", "IN_PROGRESS", "BLOCKED"}:
-            raise PlanningError(
-                "Plan approval cannot be requested from status " f"{context.status}"
-            )
+            raise PlanningError(f"Plan approval cannot be requested from status {context.status}")
 
-    def _assert_plan_pending(self, triage_id: str) -> ProjectRuntimeState:
-        with self.database.connection() as connection:
-            current = self._get_context(connection, triage_id)
+    def _assert_plan_pending(self) -> ProjectRuntimeState:
+        current = self.context.state()
         self._assert_pending_action(current)
         return current
 
@@ -422,17 +357,27 @@ class PlanningService:
         if context.pending_action != "PLAN_APPROVAL":
             raise PlanningError("Project is not waiting for Plan approval")
 
-    def _get_context(
-        self,
-        connection: sqlite3.Connection,
-        triage_id: str,
-    ) -> ProjectRuntimeState:
-        context = self.contexts.get(connection, triage_id)
-        if context is None:
-            raise LookupError(f"Project Runtime Context not found: {triage_id}")
-        return context
 
-    def _runtime_contexts(self) -> RuntimeContextService:
-        if self.runtime_contexts is None:
-            raise RuntimeError("Planning Service has no Runtime Context Service")
-        return self.runtime_contexts
+def _plan_decision_message(
+    action: Literal["approve", "reject"],
+    feedback: str,
+    subject_digest: str | None,
+) -> str:
+    approved = action == "approve"
+    return json.dumps(
+        {
+            "event": "PLAN_DECISION_RECEIVED",
+            "decision": "APPROVED" if approved else "REJECTED",
+            "plan_subject_digest": subject_digest,
+            "feedback": feedback.strip() or None,
+            "required_response": (
+                "Reconcile the complete Milestone View with the approved Plan, then "
+                "request the first or next unfinished Milestone when delivery is ready."
+                if approved
+                else "Revise the canonical Specs with the user, then request approval "
+                "again only when the complete Plan is ready."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )

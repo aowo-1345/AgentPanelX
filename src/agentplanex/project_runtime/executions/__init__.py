@@ -21,37 +21,24 @@ from agentplanex.project_runtime.executions.base import (
     ProjectExecutions,
 )
 from agentplanex.services.agent_collaboration import AgentCollaborationService
-from agentplanex.services.agent_contracts import resolve_observation_skill
 from agentplanex.services.delivery import DeliveryService
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.planning import PlanningService
+from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 from agentplanex.settings import RuntimeSettings
 
 
 def create_project_executions(
     project_path: Path,
     settings: RuntimeSettings,
-    planning: PlanningService | None = None,
-    delivery: DeliveryService | None = None,
-    collaboration: AgentCollaborationService | None = None,
-    event_bus: EventBus | None = None,
+    *,
+    context: ProjectRuntimeContext,
+    planning: PlanningService,
+    delivery: DeliveryService,
+    collaboration: AgentCollaborationService,
+    event_bus: EventBus,
 ) -> ProjectExecutions:
-    """Create all registered executions for one project."""
-    observation_skill = (
-        collaboration.observation_skill
-        if collaboration is not None
-        else resolve_observation_skill()
-    )
-    planning = planning or PlanningService.for_project(project_path)
-    if planning.runtime_contexts is None:
-        raise RuntimeError("Planning Service has no Runtime Context Service")
-    delivery = delivery or DeliveryService.for_project(project_path)
-    collaboration = collaboration or AgentCollaborationService.from_settings(
-        project_path,
-        settings,
-        observation_skill=observation_skill,
-    )
-    event_bus = event_bus or planning.event_bus
+    """Create the Tool catalog inside one explicit Runtime composition graph."""
     return ProjectExecutions(
         ProjectExecutionDependencies(
             project_path=project_path,
@@ -60,7 +47,7 @@ def create_project_executions(
             delivery=delivery,
             collaboration=collaboration,
             event_bus=event_bus,
-            runtime_contexts=planning.runtime_contexts,
+            context=context,
         )
     )
 

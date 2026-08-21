@@ -1,10 +1,8 @@
 """Project-level command coordination over Owner, Planning, and Activations."""
 
-import json
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Literal
 from uuid import uuid4
 
 from agentplanex.domains import (
@@ -36,8 +34,6 @@ from agentplanex.services.owner_activation import (
 from agentplanex.services.planning import PlanDecision, PlanningService
 from agentplanex.services.project_control import ProjectControlQuery, ProjectControlView
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
-
-type PlanDecisionAction = Literal["approve", "reject"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,10 +100,12 @@ class ProjectRuntimeService:
         return activation
 
     def approve_plan(self) -> PlanDecision:
-        return self._submit_plan_decision("approve", "")
+        self._assert_plan_command_idle()
+        return self.planning.approve_plan()
 
     def reject_plan(self, feedback: str = "") -> PlanDecision:
-        return self._submit_plan_decision("reject", feedback)
+        self._assert_plan_command_idle()
+        return self.planning.reject_plan(feedback)
 
     def drive_next_activation(self) -> ActivationDriveResult:
         """Claim and consume one activation for this project."""
@@ -334,44 +332,11 @@ class ProjectRuntimeService:
             mutate=_block_runtime_execution,
         )
 
-    def _submit_plan_decision(
-        self,
-        action: PlanDecisionAction,
-        feedback: str,
-    ) -> PlanDecision:
+    def _assert_plan_command_idle(self) -> None:
         with self.context.transaction() as transaction:
             state = transaction.state()
             self._assert_delivery_idle(transaction.connection, state.triage_id)
             self._assert_owner_idle(transaction.connection, state.triage_id)
-        task = ProjectOwnerTask(
-            type=ProjectOwnerTaskType.PLAN_DECISION,
-            content=_plan_decision_message(
-                action,
-                feedback,
-                state.pending_plan_subject_digest,
-            ),
-        )
-
-        def append_message(
-            connection: sqlite3.Connection,
-        ) -> tuple[str, str | None]:
-            self._assert_delivery_idle(connection, state.triage_id)
-            self._assert_owner_idle(connection, state.triage_id)
-            return self.context.append_owner_task_in_transaction(
-                connection,
-                state,
-                task,
-            )
-
-        if action == "approve":
-            return self.planning.approve_plan(
-                state.triage_id,
-                append_message=append_message,
-            )
-        return self.planning.reject_plan(
-            state.triage_id,
-            append_message=append_message,
-        )
 
     def _append_execution_result(
         self,
@@ -485,7 +450,6 @@ def _interrupted_activation_event(activation: OwnerActivation) -> ExecutionEvent
         },
     )
 
-
 def _interrupted_stage_event(stage_run: StageRun) -> ExecutionEvent:
     if stage_run.status is not StageRunStatus.FAILED or stage_run.failure is None:
         raise ValueError("Interrupted Stage event requires a failed StageRun")
@@ -503,29 +467,4 @@ def _interrupted_stage_event(stage_run: StageRun) -> ExecutionEvent:
             "interrupted": True,
             "started": stage_run.started_at is not None,
         },
-    )
-
-
-def _plan_decision_message(
-    action: PlanDecisionAction,
-    feedback: str,
-    subject_digest: str | None,
-) -> str:
-    approved = action == "approve"
-    return json.dumps(
-        {
-            "event": "PLAN_DECISION_RECEIVED",
-            "decision": "APPROVED" if approved else "REJECTED",
-            "plan_subject_digest": subject_digest,
-            "feedback": feedback.strip() or None,
-            "required_response": (
-                "Reconcile the complete Milestone View with the approved Plan, then "
-                "request the first or next unfinished Milestone when delivery is ready."
-                if approved
-                else "Revise the canonical Specs with the user, then request approval "
-                "again only when the complete Plan is ready."
-            ),
-        },
-        ensure_ascii=False,
-        indent=2,
     )

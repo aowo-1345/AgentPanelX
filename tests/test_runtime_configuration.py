@@ -35,7 +35,6 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
 )
 from agentplanex.project_runtime import ProjectRuntime
-from agentplanex.project_runtime.executions import create_project_executions
 from agentplanex.services.owner_activation import ActivationDriveResult
 from agentplanex.services.project_runtime_context import _owner as project_owner_service
 from agentplanex.settings import (
@@ -48,6 +47,7 @@ from agentplanex.settings import (
     Settings,
     load_settings,
 )
+from tests.runtime_support import compose_test_executions
 
 
 class _ReplyingModel:
@@ -462,17 +462,17 @@ def test_project_executions_expose_and_dispatch_bash(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    executions = create_project_executions(
+    composed = compose_test_executions(
         project_path,
         _settings().runtime,
     )
 
-    result = executions.execute(
-        ProjectRuntimeState("test-runtime"),
+    result = composed.executions.execute(
+        composed.state,
         {"tool": "bash", "arguments": {"command": "pwd"}},
     )
 
-    assert [tool.name for tool in executions.tools.tools] == [
+    assert [tool.name for tool in composed.executions.tools.tools] == [
         "bash",
         "request_plan_approval",
         "talk_to_agent",
@@ -511,7 +511,7 @@ def test_talk_tool_renders_configured_agent_cards_with_stable_schema(
         }
     )
 
-    executions = create_project_executions(project_path, settings)
+    executions = compose_test_executions(project_path, settings).executions
     talk_tool = next(
         tool for tool in executions.tools.tools if tool.name == "talk_to_agent"
     )

@@ -48,7 +48,7 @@ class BashExecution(ProjectExecution[BashArguments]):
 
     def execute(
         self,
-        context: ProjectRuntimeState,
+        _context: ProjectRuntimeState,
         arguments: BashArguments,
     ) -> ToolExecutionResult:
         settings = self.dependencies.settings.bash
@@ -76,8 +76,7 @@ class BashExecution(ProjectExecution[BashArguments]):
                     blocked_previous_status=current.status,
                 )
 
-            blocked = self.dependencies.runtime_contexts.transition(
-                context.triage_id,
+            blocked = self.dependencies.context.transition(
                 reason=RuntimeContextChangeReason.USER_INTERVENTION_REQUIRED,
                 mutate=block,
             )

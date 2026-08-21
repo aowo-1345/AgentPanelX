@@ -14,7 +14,10 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesClient,
     ResponsesTransport,
 )
-from agentplanex.project_runtime.executions import create_project_executions
+from agentplanex.project_runtime.executions import (
+    ProjectExecutions,
+    create_project_executions,
+)
 from agentplanex.services import (
     AgentCollaborationService,
     DeliveryService,
@@ -39,6 +42,7 @@ from agentplanex.settings import Settings
 class _ProjectRuntimeComponents:
     service: ProjectRuntimeService
     context: ProjectRuntimeContext
+    executions: ProjectExecutions
     workspace_query: ProjectWorkspaceQuery
     git: GitRepository
 
@@ -70,15 +74,15 @@ def compose_project_runtime(
     hard_gate = CodexPlanHardGate(collaboration)
     runtime_contexts = RuntimeContextService(database, event_bus)
     activations = SQLiteOwnerActivationRepository()
+    git = GitRepository(project_path)
     planning = PlanningService(
         project_path=project_path,
-        database=database,
+        context=context,
+        git=git,
         event_bus=event_bus,
-        runtime_contexts=runtime_contexts,
         activations=activations,
         review_plan=hard_gate.review,
     )
-    git = GitRepository(project_path)
     delivery = DeliveryService(
         project_path=project_path,
         database=database,
@@ -104,10 +108,11 @@ def compose_project_runtime(
     executions = create_project_executions(
         project_path,
         settings.runtime,
-        planning,
-        delivery,
-        collaboration,
-        event_bus,
+        context=context,
+        planning=planning,
+        delivery=delivery,
+        collaboration=collaboration,
+        event_bus=event_bus,
     )
     model_settings = settings.project_owner_agent.selected_model
     owner = _OwnerRuntime(
@@ -146,6 +151,7 @@ def compose_project_runtime(
     return _ProjectRuntimeComponents(
         service=service,
         context=context,
+        executions=executions,
         workspace_query=ProjectWorkspaceQuery(database=database, git=git),
         git=git,
     )
