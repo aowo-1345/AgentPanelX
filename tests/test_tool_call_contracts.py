@@ -245,6 +245,37 @@ def test_direct_execution_uses_the_same_argument_contract(
     assert result.output["error"]["retryable"] is True
 
 
+def test_candidate_identity_is_rejected_by_tool_contract_before_delivery(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    composed = compose_test_executions(
+        project_path,
+        load_settings(DEFAULT_SETTINGS_PATH).runtime,
+    )
+
+    result = composed.executions.execute(
+        composed.state,
+        {
+            "tool": "decide_milestone_candidate",
+            "call_id": "invalid-candidate-identity",
+            "arguments": {
+                "snapshot_id": "snapshot-1",
+                "run_id": "bad/run",
+                "milestone_key": "milestone-1",
+                "candidate_commit_sha": "abc123",
+                "decision": "accept",
+                "reason": "This must not reach Delivery.",
+            },
+        },
+    )
+
+    assert result.output["ok"] is False
+    assert result.output["error"]["code"] == "INVALID_TOOL_ARGUMENTS"
+    assert result.output["error"]["retryable"] is True
+    assert composed.context.state() == composed.state
+
+
 def test_unknown_agent_is_rejected_before_an_invocation_event(
     initialize_git_project: Callable[[], Path],
 ) -> None:

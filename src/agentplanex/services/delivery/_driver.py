@@ -5,10 +5,12 @@ import sqlite3
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from uuid import uuid4
 
 from agentplanex.domains import (
+    CandidateIdentity,
     ExecutionEvent,
     ExecutionEventType,
     Milestone,
@@ -70,9 +72,7 @@ class _StageDriver:
     snapshots: SQLiteMilestoneSnapshotRepository
     executor: StageExecutor
     lease_duration: timedelta = timedelta(minutes=30)
-    stage_runs: SQLiteStageRunRepository = field(
-        default_factory=SQLiteStageRunRepository
-    )
+    stage_runs: SQLiteStageRunRepository = field(default_factory=SQLiteStageRunRepository)
 
     def __post_init__(self) -> None:
         if self.lease_duration <= timedelta(0):
@@ -106,9 +106,7 @@ class _StageDriver:
             raise DeliveryError(str(error)) from error
         retry_from_blocked = not first_run and current.status == "BLOCKED"
         if first_run and current.current_plan_commit_sha != input_commit_sha:
-            raise DeliveryError(
-                "Project target Git state changed after Plan approval"
-            )
+            raise DeliveryError("Project target Git state changed after Plan approval")
         if retry_from_blocked:
             self.assert_retryable_blocked(current)
         if not first_run:
@@ -189,9 +187,7 @@ class _StageDriver:
                     status="IN_PROGRESS",
                     pending_action=None,
                     git_branch=(branch if first_run else saved.git_branch),
-                    git_main_version=(
-                        input_commit_sha if first_run else saved.git_main_version
-                    ),
+                    git_main_version=(input_commit_sha if first_run else saved.git_main_version),
                     rolling_started_at=(now if first_run else saved.rolling_started_at),
                     current_run_id=run_id,
                     current_milestone_key=milestone.key,
@@ -297,9 +293,7 @@ class _StageDriver:
             )
             output_commit_sha = worktree_git.commit_all(
                 message=(
-                    "stage: "
-                    f"{claim.milestone.key}/{claim.stage.key} "
-                    f"({claim.stage_run.run_id})"
+                    f"stage: {claim.milestone.key}/{claim.stage.key} ({claim.stage_run.run_id})"
                 )
             )
             first_stage = claim.milestone.stages[0].key == claim.stage.key
@@ -367,35 +361,53 @@ class _StageDriver:
     def candidate_contract(
         self,
         context: ProjectRuntimeState,
+        expected: CandidateIdentity,
         *,
         connection: sqlite3.Connection | None = None,
     ) -> tuple[MilestoneSnapshot, Milestone, str]:
         """Validate the complete successful Stage chain for one Candidate."""
-        if context.status != "IN_PROGRESS" or context.pending_action is not None:
-            raise DeliveryError("Candidate decision requires an IN_PROGRESS project")
+        if context.status not in {"IN_PROGRESS", "BLOCKED"} or context.pending_action is not None:
+            raise DeliveryError("Candidate decision requires an active delivery project")
         if (
-            context.current_run_id is None
-            or context.current_milestone_key is None
-            or context.current_candidate_commit_sha is None
+            context.current_snapshot_id != expected.snapshot_id
+            or context.current_run_id != expected.run_id
+            or context.current_milestone_key != expected.milestone_key
+            or context.current_candidate_commit_sha != expected.candidate_commit_sha
         ):
-            raise DeliveryError("Project has no unresolved Milestone Candidate")
+            raise DeliveryError("Candidate decision identity is stale")
+        if context.git_main_version is None:
+            raise DeliveryError("Candidate has no fixed Git baseline")
 
         def load(opened: sqlite3.Connection) -> tuple[MilestoneSnapshot, Milestone, str]:
             snapshot = self._snapshot_for_context(context, connection=opened)
             milestone = self._first_pending(snapshot)
             if milestone.key != context.current_milestone_key:
                 raise DeliveryError("Candidate is not for the first pending Milestone")
-            stage_runs = self.stage_runs.list_by_run_id(opened, context.current_run_id or "")
+            if context.current_stage_key != milestone.stages[-1].key:
+                raise DeliveryError("Candidate cursor is not at the final Stage")
+            stage_runs = self.stage_runs.list_by_run_id(opened, expected.run_id)
+            if any(
+                stage_run.triage_id != context.triage_id
+                or stage_run.snapshot_id != expected.snapshot_id
+                or stage_run.run_id != expected.run_id
+                or stage_run.milestone_key != expected.milestone_key
+                for stage_run in stage_runs
+            ):
+                raise DeliveryError("Candidate Run provenance is inconsistent")
             if tuple(stage_run.stage_key for stage_run in stage_runs) != tuple(
                 stage.key for stage in milestone.stages
             ):
                 raise DeliveryError("Candidate Run does not contain every ordered Stage")
-            if any(
-                stage_run.status is not StageRunStatus.SUCCEEDED
-                for stage_run in stage_runs
-            ):
+            if any(stage_run.status is not StageRunStatus.SUCCEEDED for stage_run in stage_runs):
                 raise DeliveryError("Candidate Run contains a non-succeeded Stage")
-            candidate = context.current_candidate_commit_sha or ""
+            if stage_runs and stage_runs[0].input_commit_sha != context.git_main_version:
+                raise DeliveryError("Candidate Run does not start at the Git baseline")
+            if any(
+                current.input_commit_sha != previous.output_commit_sha
+                for previous, current in pairwise(stage_runs)
+            ):
+                raise DeliveryError("Candidate Run commit chain is discontinuous")
+            candidate = expected.candidate_commit_sha
             if not stage_runs or stage_runs[-1].output_commit_sha != candidate:
                 raise DeliveryError("Candidate does not match the final Stage output")
             return snapshot, milestone, candidate
@@ -432,9 +444,7 @@ class _StageDriver:
                 or failed.milestone_key != context.current_milestone_key
                 or failed.snapshot_id != context.current_snapshot_id
             ):
-                raise DeliveryError(
-                    "BLOCKED delivery does not point to a terminal failed Stage"
-                )
+                raise DeliveryError("BLOCKED delivery does not point to a terminal failed Stage")
 
         if connection is not None:
             validate(connection)
@@ -890,14 +900,7 @@ def _interrupted_stage_event(stage_run: StageRun) -> ExecutionEvent:
 
 
 def _delivery_document_path(worktree: Path, run_id: str, stage_key: str) -> Path:
-    return (
-        worktree
-        / "docs"
-        / "agentplanex"
-        / "deliveries"
-        / run_id
-        / f"{stage_key}.md"
-    )
+    return worktree / "docs" / "agentplanex" / "deliveries" / run_id / f"{stage_key}.md"
 
 
 def _is_final_stage(milestone: Milestone, stage_key: str) -> bool:

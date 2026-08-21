@@ -7,6 +7,7 @@ from typing import Literal
 
 from agentplanex.domains import (
     ArtifactDescriptor,
+    CandidateIdentity,
     Milestone,
     MilestoneSnapshot,
     ProjectRuntimeState,
@@ -108,9 +109,8 @@ class CandidateDecision:
     """The controlled outcome of accepting or rejecting one Candidate."""
 
     state: ProjectRuntimeState
+    identity: CandidateIdentity
     decision: Literal["accept", "reject"]
-    milestone_key: str
-    candidate_commit_sha: str
-    snapshot: MilestoneSnapshot | None
+    result_snapshot_id: str
     next_milestone_key: str | None
     completed: bool

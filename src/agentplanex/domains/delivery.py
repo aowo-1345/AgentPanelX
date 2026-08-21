@@ -25,6 +25,22 @@ class StageRunStatus(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class CandidateIdentity:
+    """The exact Milestone Candidate subject an Owner may decide."""
+
+    snapshot_id: str
+    run_id: str
+    milestone_key: str
+    candidate_commit_sha: str
+
+    def __post_init__(self) -> None:
+        _require_identifier("snapshot_id", self.snapshot_id)
+        _require_identifier("run_id", self.run_id)
+        _require_identifier("milestone_key", self.milestone_key)
+        _require_text("candidate_commit_sha", self.candidate_commit_sha)
+
+
+@dataclass(frozen=True, slots=True)
 class Stage:
     """One ordered implementation unit inside a Milestone."""
 

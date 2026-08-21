@@ -360,12 +360,12 @@ sequenceDiagram
             Driver->>Git: CAS refs/agentplanex/candidates/run-id
             Driver->>DB: atomic Candidate State + EXECUTION_RESULT Activation
             Runtime->>Owner: drive candidate Activation
-            Owner->>Delivery: accept or reject candidate
+            Owner->>Delivery: decide exact snapshot/run/milestone/commit identity
             alt Accepted
-                Delivery->>Git: integrate candidate into Feature branch
-                Delivery->>DB: advance Milestone / Feature
+                Delivery->>Git: clean-branch fast-forward (commit point)
+                Delivery->>DB: record successor Snapshot and advance Milestone / Feature
             else Rejected
-                Delivery->>DB: record rejection and return to planning
+                Delivery->>DB: record same-content successor Snapshot with reason
             end
         end
         opt Stage fails
@@ -381,6 +381,16 @@ Run ref 表示该 Run 最近一次已物化的输出；Candidate 只有在最终
 Owner Activation 后才成为权威业务事实。若该事务失败，Stage 先进入 `FAILED + BLOCKED`，
 Candidate ref 再按期望 SHA 尝试清理；清理失败只留下可审计的孤立 ref，不会伪造成功。
 若进程中断，下一次启动会把遗留工作终结为 `FAILED + BLOCKED`，不会跨进程自动续跑。
+
+Candidate 决策必须携带完整的 `snapshot_id + run_id + milestone_key +
+candidate_commit_sha` 身份，并同时匹配 Runtime State、Snapshot、完整 StageRun 链和
+Candidate ref。接受和拒绝都要求受控 Feature 分支且工作树干净；拒绝还要求 HEAD 仍在
+固定 baseline。接受时 Git fast-forward 是跨 Git/SQLite 流程的提交点：若随后 SQLite
+提交失败，Runtime 进入 `BLOCKED`，保留 Candidate 事实，并允许使用同一身份重复接受来
+完成状态滚动，而不能改为拒绝。拒绝只提交 SQLite，并创建一个内容相同、携带拒绝原因与
+Owner message checkpoint 的后继 Snapshot。决策结果只返回业务收据和 Snapshot id，
+不会把持久化 Snapshot 实体泄漏到 Runtime 编排层。Run/Candidate refs 在决策后作为历史
+证据保留；回收属于独立的未来策略。这里不声称 Git 与 SQLite 具有跨存储原子性。
 
 ## 8. Feature 生命周期
 

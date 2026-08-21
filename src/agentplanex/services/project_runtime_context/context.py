@@ -574,5 +574,5 @@ def _block_after_owner_failure(
     if state.status == "BLOCKED":
         return state
     if state.status == "DONE":
-        raise ValueError("Completed Project Runtime cannot contain failed Owner work")
+        return state
     return replace(state, status="BLOCKED")

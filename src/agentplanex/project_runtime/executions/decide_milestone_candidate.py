@@ -7,6 +7,7 @@ from pydantic import Field
 from agentplanex.domains import (
     AgentExit,
     AgentExitStatus,
+    CandidateIdentity,
     ProjectRuntimeState,
     ToolExecutionResult,
 )
@@ -14,6 +15,7 @@ from agentplanex.project_owner_agent.tools import (
     NonBlankText,
     ToolArgumentsModel,
     ToolDefinition,
+    ToolIdentifier,
 )
 from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
@@ -31,6 +33,10 @@ DECIDE_MILESTONE_CANDIDATE_DESCRIPTION = (
 
 
 class DecideMilestoneCandidateArguments(ToolArgumentsModel):
+    snapshot_id: ToolIdentifier
+    run_id: ToolIdentifier
+    milestone_key: ToolIdentifier
+    candidate_commit_sha: ToolIdentifier
     decision: Literal["accept", "reject"] = Field(
         description="Whether to accept or reject the exact current Candidate."
     )
@@ -59,6 +65,12 @@ class DecideMilestoneCandidateExecution(
     ) -> ToolExecutionResult:
         try:
             result = self.dependencies.delivery.decide_milestone_candidate(
+                expected=CandidateIdentity(
+                    snapshot_id=arguments.snapshot_id,
+                    run_id=arguments.run_id,
+                    milestone_key=arguments.milestone_key,
+                    candidate_commit_sha=arguments.candidate_commit_sha,
+                ),
                 decision=arguments.decision,
                 reason=arguments.reason,
             )
@@ -70,16 +82,14 @@ class DecideMilestoneCandidateExecution(
             "decision": result.decision,
             "triage_id": result.state.triage_id,
             "status": result.state.status,
-            "milestone_key": result.milestone_key,
-            "candidate_commit_sha": result.candidate_commit_sha,
+            "snapshot_id": result.identity.snapshot_id,
+            "run_id": result.identity.run_id,
+            "milestone_key": result.identity.milestone_key,
+            "candidate_commit_sha": result.identity.candidate_commit_sha,
+            "result_snapshot_id": result.result_snapshot_id,
             "next_milestone_key": result.next_milestone_key,
             "completed": result.completed,
         }
-        if result.snapshot is not None:
-            output["snapshot"] = {
-                "snapshot_id": result.snapshot.snapshot_id,
-                "previous_snapshot_id": result.snapshot.previous_snapshot_id,
-            }
         if not result.completed:
             return ToolExecutionResult(output=output)
         return ToolExecutionResult(

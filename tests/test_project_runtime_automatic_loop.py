@@ -1,6 +1,7 @@
 """Single-Feature ProjectRuntime automatic-loop behavior."""
 
 import json
+import sqlite3
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -164,11 +165,7 @@ def _settings(
     if not updates:
         return configured
     return configured.model_copy(
-        update={
-            "project_owner_agent": configured.project_owner_agent.model_copy(
-                update=updates
-            )
-        }
+        update={"project_owner_agent": configured.project_owner_agent.model_copy(update=updates)}
     )
 
 
@@ -177,7 +174,12 @@ def _write_plan(project_path: Path) -> None:
         (project_path / name).write_text(f"# {name}\n", encoding="utf-8")
 
 
-def _request_first_run(runtime: ProjectRuntime, project_path: Path) -> None:
+def _request_first_run(
+    runtime: ProjectRuntime,
+    project_path: Path,
+    *,
+    milestones: list[dict[str, object]] | None = None,
+) -> None:
     _write_plan(project_path)
     requested = runtime.execute_action(
         {
@@ -196,7 +198,8 @@ def _request_first_run(runtime: ProjectRuntime, project_path: Path) -> None:
             "call_id": "publish-milestones",
             "arguments": {
                 "reason": "Exercise the complete automatic Stage loop.",
-                "milestones": [
+                "milestones": milestones
+                or [
                     {
                         "key": "milestone-1",
                         "objective": "Produce one reviewable Candidate.",
@@ -225,6 +228,27 @@ def _request_first_run(runtime: ProjectRuntime, project_path: Path) -> None:
 def _queue_first_run(runtime: ProjectRuntime, project_path: Path) -> None:
     _request_first_run(runtime, project_path)
     runtime.start_first_run()
+
+
+def _candidate_decision_arguments(
+    runtime: ProjectRuntime,
+    *,
+    decision: str,
+    reason: str,
+) -> dict[str, str]:
+    state = runtime.state()
+    assert state.current_snapshot_id is not None
+    assert state.current_run_id is not None
+    assert state.current_milestone_key is not None
+    assert state.current_candidate_commit_sha is not None
+    return {
+        "snapshot_id": state.current_snapshot_id,
+        "run_id": state.current_run_id,
+        "milestone_key": state.current_milestone_key,
+        "candidate_commit_sha": state.current_candidate_commit_sha,
+        "decision": decision,
+        "reason": reason,
+    }
 
 
 def test_drive_until_waiting_consumes_message_and_returns_owner_reply(
@@ -480,8 +504,7 @@ def test_first_run_rejects_git_identity_changed_after_plan_approval(
         encoding="utf-8",
     )
     changed_commit = GitRepository(project_path).commit_paths(
-        (project_path / "architecture.md",),
-        message="test: change approved plan identity"
+        (project_path / "architecture.md",), message="test: change approved plan identity"
     )
     assert changed_commit != approved_plan_commit
 
@@ -532,9 +555,7 @@ def test_feature_runs_from_user_message_through_owner_tools_to_done(
                         "key": "milestone-1",
                         "objective": "Produce the complete Feature Candidate.",
                         "state": "pending",
-                        "stages": [
-                            {"key": "stage-1", "objective": "Implement the Feature."}
-                        ],
+                        "stages": [{"key": "stage-1", "objective": "Implement the Feature."}],
                     }
                 ],
             },
@@ -559,10 +580,11 @@ def test_feature_runs_from_user_message_through_owner_tools_to_done(
         {
             "tool": "decide_milestone_candidate",
             "call_id": "owner-accept-candidate",
-            "arguments": {
-                "decision": "accept",
-                "reason": "Git and Stage evidence match the approved Milestone.",
-            },
+            "arguments": _candidate_decision_arguments(
+                runtime,
+                decision="accept",
+                reason="Git and Stage evidence match the approved Milestone.",
+            ),
         }
     )
 
@@ -603,20 +625,164 @@ def test_feature_runs_from_user_message_through_owner_tools_to_done(
         ProjectOwnerTaskType.EXECUTION_RESULT,
     ]
     assert all(activation.status.value == "COMPLETED" for activation in activations)
-    persisted_messages = tuple(
-        message for history in messages for message in history.message
-    )
+    persisted_messages = tuple(message for history in messages for message in history.message)
     assert any(
-        message.get("role") == "user"
-        and message.get("content") == "Deliver the complete Feature."
+        message.get("role") == "user" and message.get("content") == "Deliver the complete Feature."
         for message in persisted_messages
     )
     assert any(message.get("type") == "function_call" for message in persisted_messages)
     event_types = [event.event_type.value for event in control.timeline]
-    assert event_types.index("CANDIDATE_READY") < event_types.index(
-        "TRIAGE_DEVELOPMENT_COMPLETED"
-    )
+    assert event_types.index("CANDIDATE_READY") < event_types.index("TRIAGE_DEVELOPMENT_COMPLETED")
     assert "CANDIDATE_ACCEPTED" in event_types
+
+
+def test_accept_rolls_forward_to_next_milestone_then_done(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=_SuccessfulStageExecutor(),
+    )
+    runtime.initialize()
+    runtime.begin_feature()
+    _request_first_run(
+        runtime,
+        project_path,
+        milestones=[
+            {
+                "key": "m1",
+                "objective": "First.",
+                "state": "pending",
+                "stages": [{"key": "s1", "objective": "First."}],
+            },
+            {
+                "key": "m2",
+                "objective": "Second.",
+                "state": "pending",
+                "stages": [{"key": "s2", "objective": "Second."}],
+            },
+        ],
+    )
+    runtime.start_first_run()
+    runtime.drive_until_waiting()
+    first = runtime.execute_action(
+        {
+            "tool": "decide_milestone_candidate",
+            "arguments": _candidate_decision_arguments(
+                runtime, decision="accept", reason="Accept first."
+            ),
+        }
+    )
+    assert first.output["completed"] is False
+    view = runtime.project_control_view()
+    assert view.snapshot is not None
+    assert [item.state.value for item in view.snapshot.milestones] == ["completed", "pending"]
+    queued = runtime.execute_action({"tool": "run_next_milestone", "arguments": {}})
+    assert queued.output["milestone_key"] == "m2"
+    runtime.drive_until_waiting()
+    final = runtime.execute_action(
+        {
+            "tool": "decide_milestone_candidate",
+            "arguments": _candidate_decision_arguments(
+                runtime, decision="accept", reason="Accept final."
+            ),
+        }
+    )
+    assert final.output["completed"] is True
+    assert runtime.state().status == "DONE"
+
+
+def test_accept_sqlite_failure_rolls_forward_same_candidate_from_blocked(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=_SuccessfulStageExecutor(),
+    )
+    runtime.initialize()
+    runtime.begin_feature()
+    _queue_first_run(runtime, project_path)
+    assert runtime.drive_delivery() == "stage_succeeded"
+    assert runtime.drive_delivery() == "candidate_ready"
+    arguments = _candidate_decision_arguments(runtime, decision="accept", reason="Retry accept.")
+    database = SQLiteDatabase.for_project(project_path)
+    with database.transaction() as connection:
+        connection.execute(
+            """CREATE TRIGGER fail_candidate_decision
+            BEFORE INSERT ON milestone_snapshot
+            BEGIN SELECT RAISE(ABORT, 'forced'); END"""
+        )
+    failed = runtime.drive_activation_tool(
+        {
+            "tool": "decide_milestone_candidate",
+            "call_id": "accept-with-sqlite-fault",
+            "arguments": arguments,
+        }
+    )
+    assert failed.activation.status.value == "FAILED"
+    assert runtime.state().status == "BLOCKED"
+    assert GitRepository(project_path).head_sha() == arguments["candidate_commit_sha"]
+    with database.transaction() as connection:
+        connection.execute("DROP TRIGGER fail_candidate_decision")
+    rejected = runtime.execute_action(
+        {"tool": "decide_milestone_candidate", "arguments": {**arguments, "decision": "reject"}}
+    )
+    assert rejected.output["ok"] is False
+    retried = runtime.execute_action({"tool": "decide_milestone_candidate", "arguments": arguments})
+    assert retried.output["ok"] is True
+    assert runtime.state().status == "DONE"
+
+
+def test_reject_sqlite_failure_keeps_candidate_retryable(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=_SuccessfulStageExecutor(),
+    )
+    runtime.initialize()
+    runtime.begin_feature()
+    _queue_first_run(runtime, project_path)
+    runtime.drive_until_waiting()
+    arguments = _candidate_decision_arguments(runtime, decision="reject", reason="Needs revision.")
+    before = runtime.state()
+    stale = runtime.execute_action(
+        {
+            "tool": "decide_milestone_candidate",
+            "arguments": {**arguments, "run_id": "stale-run"},
+        }
+    )
+    assert stale.output["ok"] is False
+    assert runtime.state() == before
+    database = SQLiteDatabase.for_project(project_path)
+    with database.transaction() as connection:
+        connection.execute(
+            """CREATE TRIGGER fail_candidate_reject
+            BEFORE INSERT ON milestone_snapshot
+            BEGIN SELECT RAISE(ABORT, 'forced'); END"""
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        runtime.execute_action({"tool": "decide_milestone_candidate", "arguments": arguments})
+    assert runtime.state() == before
+    with database.transaction() as connection:
+        connection.execute("DROP TRIGGER fail_candidate_reject")
+    retried = runtime.execute_action({"tool": "decide_milestone_candidate", "arguments": arguments})
+    assert retried.output["ok"] is True
+    view = runtime.project_control_view()
+    assert view.snapshot is not None
+    assert view.snapshot.reason == "Needs revision."
 
 
 def test_drive_until_waiting_returns_immediately_when_runtime_is_done(
@@ -639,10 +805,11 @@ def test_drive_until_waiting_returns_immediately_when_runtime_is_done(
         {
             "tool": "decide_milestone_candidate",
             "call_id": "accept-only-candidate",
-            "arguments": {
-                "decision": "accept",
-                "reason": "The deterministic Candidate satisfies the Milestone.",
-            },
+            "arguments": _candidate_decision_arguments(
+                runtime,
+                decision="accept",
+                reason="The deterministic Candidate satisfies the Milestone.",
+            ),
         }
     )
     assert decision.exit is not None
@@ -653,6 +820,50 @@ def test_drive_until_waiting_returns_immediately_when_runtime_is_done(
 
     assert context.status == "DONE"
     assert executor.executed_stage_keys == executed_before_wait
+
+
+def test_interrupted_owner_work_cannot_demote_completed_feature(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=_SuccessfulStageExecutor(),
+    )
+    runtime.initialize()
+    runtime.begin_feature()
+    _queue_first_run(runtime, project_path)
+    runtime.drive_until_waiting()
+    runtime.execute_action(
+        {
+            "tool": "decide_milestone_candidate",
+            "call_id": "complete-before-interruption",
+            "arguments": _candidate_decision_arguments(
+                runtime,
+                decision="accept",
+                reason="Complete the Feature before recovery runs.",
+            ),
+        }
+    )
+    state = runtime.state()
+    assert state.status == "DONE"
+    database = SQLiteDatabase.for_project(project_path)
+    with database.transaction() as connection:
+        SQLiteOwnerActivationRepository().insert(
+            connection,
+            OwnerActivation(
+                activation_id="late-interrupted-activation",
+                triage_id=state.triage_id,
+                task_type=ProjectOwnerTaskType.EXECUTION_RESULT,
+                message_id="late-result-message",
+            ),
+        )
+
+    assert runtime.fail_interrupted_work() is True
+    assert runtime.state().status == "DONE"
 
 
 def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
@@ -762,16 +973,12 @@ def test_final_stage_handoff_failure_rolls_back_candidate_and_timeline(
         "SUCCEEDED",
         "FAILED",
     ]
-    assert "CANDIDATE_READY" not in {
-        event.event_type.value for event in control.timeline
-    }
+    assert "CANDIDATE_READY" not in {event.event_type.value for event in control.timeline}
     run_id = control.stage_runs[-1].run_id
     with pytest.raises(GitRepositoryError):
         GitRepository(project_path).resolve_ref(delivery_candidate_ref(run_id))
     with database.read_only_connection() as connection:
-        activation_count = connection.execute(
-            "SELECT COUNT(*) FROM owner_activation"
-        ).fetchone()[0]
+        activation_count = connection.execute("SELECT COUNT(*) FROM owner_activation").fetchone()[0]
     assert activation_count == activation_count_before
 
 
@@ -820,9 +1027,7 @@ def test_candidate_cleanup_failure_preserves_failed_state_and_orphan_ref(
     assert control.state.current_candidate_commit_sha is None
     assert control.stage_runs[-1].status.value == "FAILED"
     run_id = control.stage_runs[-1].run_id
-    orphan_commit = GitRepository(project_path).resolve_ref(
-        delivery_candidate_ref(run_id)
-    )
+    orphan_commit = GitRepository(project_path).resolve_ref(delivery_candidate_ref(run_id))
     assert orphan_commit != control.state.current_candidate_commit_sha
 
 
@@ -868,9 +1073,7 @@ def test_fail_interrupted_work_terminalizes_pending_activation_without_model(
     )
     runtime.initialize()
     runtime.begin_feature()
-    pending = runtime.submit_message(
-        "This accepted work was interrupted before claim."
-    )
+    pending = runtime.submit_message("This accepted work was interrupted before claim.")
 
     assert runtime.fail_interrupted_work() is True
     assert runtime.fail_interrupted_work() is False
@@ -988,8 +1191,7 @@ def test_fail_interrupted_work_terminalizes_queued_stage_and_preserves_cursor(
     event = next(
         event
         for event in control.timeline
-        if event.event_type.value == "STAGE_RUN_FAILED"
-        and event.payload.get("interrupted") is True
+        if event.event_type.value == "STAGE_RUN_FAILED" and event.payload.get("interrupted") is True
     )
     assert event.payload["stage_run_id"] == control.stage_runs[0].stage_run_id
     assert event.payload["started"] is False

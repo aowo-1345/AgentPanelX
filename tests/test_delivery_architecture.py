@@ -3,7 +3,7 @@
 from dataclasses import fields
 
 from agentplanex.services import delivery
-from agentplanex.services.delivery import MilestoneRunQueued
+from agentplanex.services.delivery import CandidateDecision, MilestoneRunQueued
 from agentplanex.services.project_runtime import ProjectRuntimeService
 
 
@@ -36,3 +36,16 @@ def test_run_receipt_does_not_expose_stage_run_entity() -> None:
         "stage_key",
         "input_commit_sha",
     }.issubset(receipt_fields)
+
+
+def test_candidate_decision_receipt_does_not_expose_snapshot_entity() -> None:
+    receipt_fields = {field.name for field in fields(CandidateDecision)}
+    assert "snapshot" not in receipt_fields
+    assert {
+        "state",
+        "identity",
+        "decision",
+        "result_snapshot_id",
+        "next_milestone_key",
+        "completed",
+    } == receipt_fields

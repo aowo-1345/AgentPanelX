@@ -243,6 +243,30 @@ def _load_context(project_path: Path):
     return contexts[0]
 
 
+def _candidate_decision_action(
+    project_path: Path,
+    *,
+    decision: str,
+    reason: str,
+) -> dict[str, object]:
+    state = _load_context(project_path)
+    assert state.current_snapshot_id is not None
+    assert state.current_run_id is not None
+    assert state.current_milestone_key is not None
+    assert state.current_candidate_commit_sha is not None
+    return {
+        "tool": "decide_milestone_candidate",
+        "arguments": {
+            "snapshot_id": state.current_snapshot_id,
+            "run_id": state.current_run_id,
+            "milestone_key": state.current_milestone_key,
+            "candidate_commit_sha": state.current_candidate_commit_sha,
+            "decision": decision,
+            "reason": reason,
+        },
+    }
+
+
 def _loaded_message_contents(project_path: Path) -> list[str]:
     histories = _loaded_message_histories(project_path)
     return [
@@ -414,8 +438,13 @@ def _reach_idle_in_progress(
             "--cwd",
             str(project_path),
             "--print",
-            '{"tool":"decide_milestone_candidate","arguments":'
-            '{"decision":"reject","reason":"Exercise rolling replanning."}}',
+            json.dumps(
+                _candidate_decision_action(
+                    project_path,
+                    decision="reject",
+                    reason="Exercise rolling replanning.",
+                )
+            ),
         ]
     ) == 0
     capfd.readouterr()
@@ -1585,13 +1614,11 @@ def test_complete_rolling_delivery_is_observable_through_debug_commands(
             "drive",
             "tool",
             json.dumps(
-                {
-                    "tool": "decide_milestone_candidate",
-                    "arguments": {
-                        "decision": "accept",
-                        "reason": "The Candidate satisfies the Milestone.",
-                    },
-                }
+                _candidate_decision_action(
+                    project_path,
+                    decision="accept",
+                    reason="The Candidate satisfies the Milestone.",
+                )
             ),
         ]
     )
@@ -1668,13 +1695,11 @@ def test_rejected_candidate_stays_reachable_and_next_run_skips_first_approval(
             str(project_path),
             "--print",
             json.dumps(
-                {
-                    "tool": "decide_milestone_candidate",
-                    "arguments": {
-                        "decision": "reject",
-                        "reason": "The Candidate needs a different implementation.",
-                    },
-                }
+                _candidate_decision_action(
+                    project_path,
+                    decision="reject",
+                    reason="The Candidate needs a different implementation.",
+                )
             ),
         ]
     )
@@ -1741,8 +1766,13 @@ def test_candidate_that_changes_canonical_specs_cannot_be_accepted(
             "--cwd",
             str(project_path),
             "--print",
-            '{"tool":"decide_milestone_candidate","arguments":'
-            '{"decision":"accept","reason":"Attempt integration."}}',
+            json.dumps(
+                _candidate_decision_action(
+                    project_path,
+                    decision="accept",
+                    reason="Attempt integration.",
+                )
+            ),
         ]
     )
     decision = json.loads(capfd.readouterr().out)

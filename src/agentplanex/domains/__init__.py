@@ -17,6 +17,7 @@ from agentplanex.domains.agent_exit import (
     AgentExitStatus,
 )
 from agentplanex.domains.delivery import (
+    CandidateIdentity,
     Milestone,
     MilestoneSnapshot,
     MilestoneState,
@@ -82,6 +83,7 @@ __all__ = [
     "ArtifactDescriptor",
     "ArtifactRef",
     "BoardFeature",
+    "CandidateIdentity",
     "ConversationReference",
     "ExecutionEvent",
     "ExecutionEventType",

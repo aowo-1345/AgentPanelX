@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from agentplanex.domains import (
     PLAN_DOCUMENT_NAMES,
+    CandidateIdentity,
     ExecutionEvent,
     ExecutionEventType,
     Milestone,
@@ -115,9 +116,7 @@ class DeliveryService:
             snapshot = MilestoneSnapshot(
                 snapshot_id=uuid4().hex,
                 triage_id=latest.triage_id,
-                previous_snapshot_id=(
-                    previous.snapshot_id if previous is not None else None
-                ),
+                previous_snapshot_id=(previous.snapshot_id if previous is not None else None),
                 plan_commit_sha=latest.current_plan_commit_sha or "",
                 milestones=milestones,
                 reason=normalized_reason,
@@ -228,6 +227,7 @@ class DeliveryService:
     def decide_milestone_candidate(
         self,
         *,
+        expected: CandidateIdentity,
         decision: Literal["accept", "reject"],
         reason: str,
     ) -> CandidateDecision:
@@ -235,30 +235,26 @@ class DeliveryService:
         normalized_reason = " ".join(reason.split())
         if not normalized_reason:
             raise DeliveryError("Candidate decision reason must not be empty")
+        if decision not in {"accept", "reject"}:
+            raise DeliveryError("Candidate decision must be accept or reject")
         current = self.context.state()
-        snapshot, milestone, candidate_commit_sha = self._candidate_contract(current)
-        self._assert_candidate_ref(current, candidate_commit_sha)
-        successor: MilestoneSnapshot | None = None
+        snapshot, milestone, candidate_commit_sha = self._candidate_contract(
+            current,
+            expected,
+        )
+        self._assert_candidate_ref(expected)
         completed = False
-        integrated_commit_sha = candidate_commit_sha
         if decision == "accept":
             self._assert_candidate_preserves_specs(current, candidate_commit_sha)
-            git = self.git
-            try:
-                if current.git_branch is None or current.git_main_version is None:
-                    raise DeliveryError("Candidate has no fixed target branch and commit")
-                integrated_commit_sha = git.integrate_fast_forward(
-                    candidate_commit_sha,
-                    expected_branch=current.git_branch,
-                    expected_head=current.git_main_version,
-                )
-            except GitRepositoryError as error:
-                raise DeliveryError(str(error)) from error
+            integrated_commit_sha = self._integrate_candidate(current, expected)
+        else:
+            self._assert_candidate_target(current, expected, accepted=False)
 
         with self.context.transaction() as transaction:
             latest = transaction.state()
             latest_snapshot, latest_milestone, latest_candidate = self._candidate_contract(
                 latest,
+                expected,
                 connection=transaction.connection,
             )
             if (
@@ -292,11 +288,23 @@ class DeliveryService:
                     ),
                 )
             else:
+                successor = MilestoneSnapshot(
+                    snapshot_id=uuid4().hex,
+                    triage_id=latest_snapshot.triage_id,
+                    previous_snapshot_id=latest_snapshot.snapshot_id,
+                    plan_commit_sha=latest_snapshot.plan_commit_sha,
+                    milestones=latest_snapshot.milestones,
+                    reason=normalized_reason,
+                    message_id=transaction.owner_message_id(),
+                    created_at=datetime.now(UTC),
+                )
+                self.snapshots.insert(transaction.connection, successor)
                 updated = transaction.transition(
                     reason=RuntimeContextChangeReason.CANDIDATE_REJECTED,
                     mutate=lambda saved: self._reject_candidate(
                         saved,
                         candidate_commit_sha,
+                        successor,
                     ),
                 )
         self.event_bus.publish(
@@ -311,9 +319,8 @@ class DeliveryService:
                     "run_id": current.current_run_id,
                     "milestone_key": milestone.key,
                     "candidate_commit_sha": candidate_commit_sha,
-                    "successor_snapshot_id": (
-                        successor.snapshot_id if successor is not None else None
-                    ),
+                    "successor_snapshot_id": successor.snapshot_id,
+                    "reason": normalized_reason,
                 },
             )
         )
@@ -328,13 +335,12 @@ class DeliveryService:
                     },
                 )
             )
-        next_milestone = successor.first_pending() if successor is not None else None
+        next_milestone = successor.first_pending()
         return CandidateDecision(
             state=updated,
+            identity=expected,
             decision=decision,
-            milestone_key=milestone.key,
-            candidate_commit_sha=candidate_commit_sha,
-            snapshot=successor,
+            result_snapshot_id=successor.snapshot_id,
             next_milestone_key=(
                 next_milestone.key
                 if next_milestone is not None
@@ -408,34 +414,84 @@ class DeliveryService:
                 "Milestone Hard Gate rejection requires an idle IN_PROGRESS project"
             )
         if context.current_run_id is not None:
-            raise DeliveryError(
-                "Milestone Hard Gate rejection cannot interrupt an active Run"
-            )
+            raise DeliveryError("Milestone Hard Gate rejection cannot interrupt an active Run")
         return replace(context, status="BLOCKED")
 
     def _candidate_contract(
         self,
         context: ProjectRuntimeState,
+        expected: CandidateIdentity,
         *,
         connection: sqlite3.Connection | None = None,
     ) -> tuple[MilestoneSnapshot, Milestone, str]:
-        return self._driver.candidate_contract(context, connection=connection)
+        return self._driver.candidate_contract(
+            context,
+            expected,
+            connection=connection,
+        )
 
     def _assert_candidate_ref(
         self,
-        context: ProjectRuntimeState,
-        candidate_commit_sha: str,
+        expected: CandidateIdentity,
     ) -> None:
-        if context.current_run_id is None:
-            raise DeliveryError("Candidate has no Run identity")
         try:
-            referenced = self.git.resolve_ref(
-                delivery_candidate_ref(context.current_run_id)
-            )
+            referenced = self.git.resolve_ref(delivery_candidate_ref(expected.run_id))
         except GitRepositoryError as error:
             raise DeliveryError(str(error)) from error
-        if referenced != candidate_commit_sha:
+        if referenced != expected.candidate_commit_sha:
             raise DeliveryError("Candidate Git ref does not match Runtime State")
+
+    def _integrate_candidate(
+        self,
+        context: ProjectRuntimeState,
+        expected: CandidateIdentity,
+    ) -> str:
+        head = self._assert_candidate_target(context, expected, accepted=None)
+        if head == context.git_main_version:
+            try:
+                self.git.integrate_fast_forward(
+                    expected.candidate_commit_sha,
+                    expected_branch=context.git_branch or "",
+                    expected_head=context.git_main_version,
+                )
+            except GitRepositoryError as error:
+                try:
+                    recovered = self._assert_candidate_target(
+                        context,
+                        expected,
+                        accepted=True,
+                    )
+                except DeliveryError:
+                    raise DeliveryError(str(error)) from error
+                if recovered != expected.candidate_commit_sha:
+                    raise DeliveryError(str(error)) from error
+        self._assert_candidate_ref(expected)
+        return self._assert_candidate_target(context, expected, accepted=True)
+
+    def _assert_candidate_target(
+        self,
+        context: ProjectRuntimeState,
+        expected: CandidateIdentity,
+        *,
+        accepted: bool | None,
+    ) -> str:
+        if context.git_branch is None or context.git_main_version is None:
+            raise DeliveryError("Candidate has no fixed target branch and commit")
+        try:
+            self.git.assert_clean()
+            if self.git.current_branch() != context.git_branch:
+                raise DeliveryError("Project target branch changed during delivery")
+            head = self.git.head_sha()
+        except GitRepositoryError as error:
+            raise DeliveryError(str(error)) from error
+        allowed = (
+            {context.git_main_version, expected.candidate_commit_sha}
+            if accepted is None
+            else ({expected.candidate_commit_sha} if accepted else {context.git_main_version})
+        )
+        if head not in allowed:
+            raise DeliveryError("Project target HEAD changed during Candidate decision")
+        return head
 
     @staticmethod
     def _accept_candidate(
@@ -462,11 +518,14 @@ class DeliveryService:
     def _reject_candidate(
         context: ProjectRuntimeState,
         candidate_commit_sha: str,
+        successor: MilestoneSnapshot,
     ) -> ProjectRuntimeState:
         if context.current_candidate_commit_sha != candidate_commit_sha:
             raise DeliveryError("Candidate changed while being rejected")
         return replace(
             context,
+            status="IN_PROGRESS",
+            current_snapshot_id=successor.snapshot_id,
             current_run_id=None,
             current_milestone_key=None,
             current_stage_key=None,
@@ -482,13 +541,10 @@ class DeliveryService:
             raise DeliveryError("Milestones require an approved Plan commit")
         if context.pending_action is not None:
             raise DeliveryError(
-                "Milestones cannot be updated while waiting for "
-                f"{context.pending_action}"
+                f"Milestones cannot be updated while waiting for {context.pending_action}"
             )
         if context.status not in {"TODO", "IN_PROGRESS", "BLOCKED"}:
-            raise DeliveryError(
-                "Milestones cannot be updated from status " f"{context.status}"
-            )
+            raise DeliveryError(f"Milestones cannot be updated from status {context.status}")
         if context.current_run_id is not None:
             if context.status != "BLOCKED":
                 raise DeliveryError("Milestones cannot be updated during an active Run")
@@ -497,17 +553,11 @@ class DeliveryService:
             raise DeliveryError("Milestones cannot be updated while a Candidate is pending")
         if not milestones:
             raise DeliveryError("Milestone View must not be empty")
-        if not any(
-            milestone.state is MilestoneState.PENDING for milestone in milestones
-        ):
+        if not any(milestone.state is MilestoneState.PENDING for milestone in milestones):
             raise DeliveryError("Milestone View must contain a pending Milestone")
         if context.current_snapshot_id is None:
-            if any(
-                milestone.state is MilestoneState.COMPLETED for milestone in milestones
-            ):
-                raise DeliveryError(
-                    "Initial Milestone View cannot mark a Milestone completed"
-                )
+            if any(milestone.state is MilestoneState.COMPLETED for milestone in milestones):
+                raise DeliveryError("Initial Milestone View cannot mark a Milestone completed")
             return None
         with self.context.transaction() as transaction:
             previous = self.snapshots.get(
@@ -516,7 +566,7 @@ class DeliveryService:
             )
         if previous is None:
             raise LookupError(
-                "Current Milestone Snapshot not found: " f"{context.current_snapshot_id}"
+                f"Current Milestone Snapshot not found: {context.current_snapshot_id}"
             )
         old_completed = tuple(
             milestone
@@ -524,14 +574,10 @@ class DeliveryService:
             if milestone.state is MilestoneState.COMPLETED
         )
         new_completed = tuple(
-            milestone
-            for milestone in milestones
-            if milestone.state is MilestoneState.COMPLETED
+            milestone for milestone in milestones if milestone.state is MilestoneState.COMPLETED
         )
         if new_completed != old_completed:
-            raise DeliveryError(
-                "Milestone completion is only allowed by accepting its Candidate"
-            )
+            raise DeliveryError("Milestone completion is only allowed by accepting its Candidate")
         return previous
 
     def _assert_approved_specs(self, context: ProjectRuntimeState) -> None:
@@ -548,8 +594,7 @@ class DeliveryService:
         if changed:
             raise DeliveryError(
                 "Canonical Plan Specs changed after user approval; update the Specs "
-                "and request Plan approval before continuing delivery: "
-                + ", ".join(changed)
+                "and request Plan approval before continuing delivery: " + ", ".join(changed)
             )
 
     def _assert_candidate_preserves_specs(
@@ -630,9 +675,7 @@ class DeliveryService:
                     "required_change_count": len(review.required_changes),
                     "review_artifact": {
                         "uri": review.audit_artifact.uri,
-                        "project_relative_path": (
-                            review.audit_artifact.project_relative_path
-                        ),
+                        "project_relative_path": (review.audit_artifact.project_relative_path),
                         "media_type": review.audit_artifact.media_type,
                         "size": review.audit_artifact.size,
                         "sha256": review.audit_artifact.sha256,
@@ -657,13 +700,9 @@ class DeliveryService:
         if not review.summary.strip():
             raise DeliveryError("Milestone Hard Gate returned an empty summary")
         if review.decision == "pass" and review.required_changes:
-            raise DeliveryError(
-                "Milestone Hard Gate pass must not contain required changes"
-            )
+            raise DeliveryError("Milestone Hard Gate pass must not contain required changes")
         if review.decision == "revise" and not review.required_changes:
-            raise DeliveryError(
-                "Milestone Hard Gate revise must contain required changes"
-            )
+            raise DeliveryError("Milestone Hard Gate revise must contain required changes")
 
     def _publish_snapshot(
         self,
