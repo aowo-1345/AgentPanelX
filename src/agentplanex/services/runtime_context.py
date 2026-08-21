@@ -1,29 +1,21 @@
 """Unified project Runtime Context transitions and observable diffs."""
 
 import sqlite3
-from collections.abc import Callable
-from dataclasses import dataclass, field, fields
-from datetime import datetime
+from dataclasses import dataclass, field
 
 from agentplanex.domains import (
-    ExecutionEvent,
-    ExecutionEventType,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     RuntimeContextChangeReason,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
-    SQLiteProjectRuntimeContextRepository,
+    SQLiteProjectRuntimeStateRepository,
 )
 from agentplanex.services.event_bus import EventBus
-
-type ContextMutation = Callable[[ProjectRuntimeContext], ProjectRuntimeContext]
-type ContextTransition = tuple[ProjectRuntimeContext, ExecutionEvent | None]
-
-_PERSISTED_FIELD_NAMES = tuple(
-    item.name
-    for item in fields(ProjectRuntimeContext)
-    if item.name != "project_owner_agent"
+from agentplanex.services.project_runtime_context._state import (
+    StateMutation,
+    StateTransition,
+    apply_state_transition,
 )
 
 
@@ -31,11 +23,11 @@ _PERSISTED_FIELD_NAMES = tuple(
 class RuntimeContextService:
     database: SQLiteDatabase
     event_bus: EventBus
-    contexts: SQLiteProjectRuntimeContextRepository = field(
-        default_factory=SQLiteProjectRuntimeContextRepository
+    contexts: SQLiteProjectRuntimeStateRepository = field(
+        default_factory=SQLiteProjectRuntimeStateRepository
     )
 
-    def get(self, triage_id: str) -> ProjectRuntimeContext | None:
+    def get(self, triage_id: str) -> ProjectRuntimeState | None:
         with self.database.connection() as connection:
             return self.contexts.get(connection, triage_id)
 
@@ -44,8 +36,8 @@ class RuntimeContextService:
         triage_id: str,
         *,
         reason: RuntimeContextChangeReason,
-        mutate: ContextMutation,
-    ) -> ProjectRuntimeContext:
+        mutate: StateMutation,
+    ) -> ProjectRuntimeState:
         with self.database.transaction() as connection:
             updated, event = self.transition_in_transaction(
                 connection,
@@ -64,8 +56,8 @@ class RuntimeContextService:
         triage_id: str,
         *,
         reason: RuntimeContextChangeReason,
-        mutate: ContextMutation,
-    ) -> ContextTransition:
+        mutate: StateMutation,
+    ) -> StateTransition:
         """Persist one transition inside a caller-owned transaction.
 
         The returned event must be published only after that transaction commits;
@@ -74,39 +66,10 @@ class RuntimeContextService:
         current = self.contexts.get(connection, triage_id)
         if current is None:
             raise LookupError(f"Project Runtime Context not found: {triage_id}")
-        updated = mutate(current)
-        if updated.triage_id != current.triage_id:
-            raise ValueError("Runtime Context transition cannot change triage_id")
-        changes = _context_changes(current, updated)
-        if not changes:
-            return updated, None
-
-        self.contexts.update(connection, updated)
-        return updated, ExecutionEvent(
-            triage_id=triage_id,
-            event_type=ExecutionEventType.RUNTIME_CONTEXT_UPDATED,
-            payload={
-                "reason": reason.value,
-                "changes": changes,
-            },
+        return apply_state_transition(
+            connection,
+            self.contexts,
+            current,
+            reason=reason,
+            mutate=mutate,
         )
-
-
-def _context_changes(
-    current: ProjectRuntimeContext,
-    updated: ProjectRuntimeContext,
-) -> dict[str, object]:
-    changes: dict[str, object] = {}
-    for name in _PERSISTED_FIELD_NAMES:
-        before = getattr(current, name)
-        after = getattr(updated, name)
-        if before != after:
-            changes[name] = {
-                "from": _event_value(before),
-                "to": _event_value(after),
-            }
-    return changes
-
-
-def _event_value(value: object) -> object:
-    return value.isoformat() if isinstance(value, datetime) else value

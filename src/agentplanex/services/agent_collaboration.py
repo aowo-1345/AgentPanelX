@@ -20,7 +20,7 @@ from agentplanex.domains import (
     AgentInteractionKind,
     AgentRole,
     ArtifactDescriptor,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     ResolvedArtifact,
     TalkToAgentRequest,
     TalkToAgentResult,
@@ -180,7 +180,7 @@ class AgentCollaborationService:
     def talk(
         self,
         request: TalkToAgentRequest,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
     ) -> TalkToAgentResult:
         """Block until one configured Agent Message or Task has completed."""
         card = self.catalog.get(request.agent_id)
@@ -288,7 +288,7 @@ class AgentCollaborationService:
         message: str,
         artifacts: tuple[ResolvedArtifact, ...],
         invocation: AgentInvocation | None,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
     ) -> str:
         operation = (
             "project_planning"

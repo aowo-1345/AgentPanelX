@@ -15,6 +15,7 @@ from agentplanex.domains import (
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteOwnerActivationRepository,
+    SQLiteProjectOwnerAgentRepository,
 )
 from agentplanex.project_owner_agent.exception import ModelGatewayError
 from agentplanex.project_owner_agent.models.responses import (
@@ -22,6 +23,7 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesTransport,
 )
 from agentplanex.project_runtime import ProjectRuntime
+from agentplanex.services.project_runtime_error import FeatureBusyError
 from agentplanex.services.stage_executor import StageExecutionRequest
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, Settings, load_settings
 
@@ -219,8 +221,8 @@ def test_drive_until_waiting_consumes_message_and_returns_owner_reply(
         approval_mode="yolo",
         responses_transport=_ReplyingOwner(),
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     activation = runtime.submit_message("Explain the next implementation step.")
 
     context = runtime.drive_until_waiting()
@@ -245,8 +247,8 @@ def test_drive_until_waiting_blocks_runtime_when_owner_fails(
         approval_mode="yolo",
         responses_transport=_FailingOwner(),
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     runtime.submit_message("Trigger a deterministic Owner failure.")
 
     context = runtime.drive_until_waiting()
@@ -288,8 +290,8 @@ def test_structured_owner_failures_block_runtime(
         approval_mode="yolo",
         responses_transport=transport,
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     runtime.submit_message("Reach a structured Owner failure.")
 
     context = runtime.drive_until_waiting()
@@ -314,8 +316,8 @@ def test_drive_until_waiting_stops_at_plan_approval(
         approval_mode="yolo",
         responses_transport=_UnexpectedOwner(),
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     _write_plan(project_path)
     runtime.execute_action(
         {
@@ -341,8 +343,8 @@ def test_message_does_not_clear_runtime_execution_block(
         approval_mode="yolo",
         responses_transport=_FailingOwner(),
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     runtime.submit_message("Fail the first activation.")
     assert runtime.drive_until_waiting().status == "BLOCKED"
 
@@ -365,8 +367,8 @@ def test_drive_until_waiting_leaves_tool_owned_activation_for_human_control(
         approval_mode="yolo",
         responses_transport=_UnexpectedOwner(),
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     runtime.submit_message("Run one manually supplied step.")
     step = runtime.drive_activation_tool(
         {
@@ -400,8 +402,8 @@ def test_manual_activation_failure_blocks_runtime(
         approval_mode="yolo",
         responses_transport=_UnexpectedOwner(),
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     runtime.submit_message("Fail this manual activation.")
 
     failed = runtime.fail_activation("Developer stopped the manual drive.")
@@ -422,8 +424,8 @@ def test_drive_until_waiting_runs_all_stages_then_delivers_candidate_to_owner(
         responses_transport=_ReplyingOwner(),
         stage_executor=executor,
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     _queue_first_run(runtime, project_path)
 
     context = runtime.drive_until_waiting()
@@ -454,8 +456,8 @@ def test_drive_until_waiting_returns_immediately_when_runtime_is_done(
         responses_transport=_ReplyingOwner(),
         stage_executor=executor,
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     _queue_first_run(runtime, project_path)
     runtime.drive_until_waiting()
     decision = runtime.execute_action(
@@ -489,8 +491,8 @@ def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
         responses_transport=_ReplyingOwner(),
         stage_executor=_FailingStageExecutor(),
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     _queue_first_run(runtime, project_path)
 
     context = runtime.drive_until_waiting()
@@ -502,13 +504,17 @@ def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
     conversation = runtime.project_workspace_view(context.triage_id).conversation
     assert all("Stage execution failed" not in item.content for item in conversation)
 
-    assert context.project_owner_agent is not None
-    owner_session_id = context.project_owner_agent.project_owner_session_id
+    database = SQLiteDatabase.for_project(project_path)
+    with database.read_only_connection() as connection:
+        owner = SQLiteProjectOwnerAgentRepository().get_by_triage_id(
+            connection,
+            context.triage_id,
+        )
+    assert owner is not None
+    owner_session_id = owner.project_owner_session_id
     follow_up = runtime.submit_message("Retry the failed Milestone deliberately.")
     waiting = runtime.drive_until_waiting()
     assert waiting.status == "BLOCKED"
-    assert waiting.project_owner_agent is not None
-    assert waiting.project_owner_agent.project_owner_session_id == owner_session_id
     assert runtime.project_control_view().owner_activation == follow_up
 
     retried = runtime.drive_activation_tool(
@@ -525,8 +531,13 @@ def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
     assert retried.exit.status.value == "MilestoneRunQueued"
     resumed = runtime.initialize()
     assert resumed.status == "IN_PROGRESS"
-    assert resumed.project_owner_agent is not None
-    assert resumed.project_owner_agent.project_owner_session_id == owner_session_id
+    with database.read_only_connection() as connection:
+        restored_owner = SQLiteProjectOwnerAgentRepository().get_by_triage_id(
+            connection,
+            resumed.triage_id,
+        )
+    assert restored_owner is not None
+    assert restored_owner.project_owner_session_id == owner_session_id
     assert [stage.status.value for stage in runtime.project_control_view().stage_runs] == [
         "FAILED",
         "QUEUED",
@@ -545,7 +556,7 @@ def test_drive_until_waiting_rejects_two_simultaneously_runnable_work_items(
         stage_executor=_SuccessfulStageExecutor(),
     )
     initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.begin_feature()
     _queue_first_run(runtime, project_path)
     database = SQLiteDatabase.for_project(project_path)
     with database.transaction() as connection:
@@ -573,8 +584,8 @@ def test_fail_interrupted_work_terminalizes_pending_activation_without_model(
         approval_mode="yolo",
         responses_transport=_UnexpectedOwner(),
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     pending = runtime.submit_message(
         "This accepted work was interrupted before claim."
     )
@@ -618,8 +629,8 @@ def test_fail_interrupted_work_terminalizes_queued_stage_and_preserves_cursor(
         responses_transport=_ReplyingOwner(),
         stage_executor=_SuccessfulStageExecutor(),
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     _queue_first_run(runtime, project_path)
     before = runtime.initialize()
 
@@ -645,7 +656,7 @@ def test_fail_interrupted_work_terminalizes_queued_stage_and_preserves_cursor(
     assert event.payload["started"] is False
 
 
-def test_fail_interrupted_work_terminalizes_running_activation(
+def test_running_activation_rejects_concurrent_interruption_recovery(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -656,33 +667,23 @@ def test_fail_interrupted_work_terminalizes_running_activation(
         approval_mode="yolo",
         responses_transport=owner,
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     runtime.submit_message("This activation was claimed before interruption.")
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(runtime.drive_until_waiting)
         assert owner.entered.wait(timeout=5)
         try:
-            assert runtime.fail_interrupted_work() is True
-            assert runtime.initialize().status == "BLOCKED"
-            workspace = runtime.project_workspace_view(initialized.triage_id)
-            assert workspace.owner_activation is None
-            assert any(
-                message.role == "status" and "interrupted" in message.content.lower()
-                for message in workspace.conversation
-            )
-            event = next(
-                event
-                for event in runtime.project_control_view().timeline
-                if event.event_type.value == "OWNER_ACTIVATION_FAILED"
-            )
-            assert event.payload["started"] is True
+            with pytest.raises(FeatureBusyError):
+                runtime.fail_interrupted_work()
+            with pytest.raises(FeatureBusyError):
+                runtime.initialize()
         finally:
             owner.release.set()
-        assert future.exception(timeout=5) is not None
+        assert future.result(timeout=5).status == "BLOCKED"
 
 
-def test_fail_interrupted_work_terminalizes_running_stage(
+def test_running_stage_rejects_concurrent_interruption_recovery(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -694,27 +695,17 @@ def test_fail_interrupted_work_terminalizes_running_stage(
         responses_transport=_ReplyingOwner(),
         stage_executor=stage_executor,
     )
-    initialized = runtime.initialize()
-    runtime.begin_feature(initialized.triage_id)
+    runtime.initialize()
+    runtime.begin_feature()
     _queue_first_run(runtime, project_path)
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(runtime.drive_until_waiting)
         assert stage_executor.entered.wait(timeout=5)
         try:
-            assert runtime.fail_interrupted_work() is True
-            assert runtime.initialize().status == "BLOCKED"
-            control = runtime.project_control_view()
-            assert [stage.status.value for stage in control.stage_runs] == ["FAILED"]
-            assert control.stage_runs[0].started_at is not None
-            assert control.stage_runs[0].lease_expires_at is None
-            assert control.owner_activation is None
-            event = next(
-                event
-                for event in control.timeline
-                if event.event_type.value == "STAGE_RUN_FAILED"
-                and event.payload.get("interrupted") is True
-            )
-            assert event.payload["started"] is True
+            with pytest.raises(FeatureBusyError):
+                runtime.fail_interrupted_work()
+            with pytest.raises(FeatureBusyError):
+                runtime.initialize()
         finally:
             stage_executor.release.set()
-        assert future.exception(timeout=5) is not None
+        assert future.result(timeout=5).status == "BLOCKED"

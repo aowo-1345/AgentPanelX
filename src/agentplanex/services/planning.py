@@ -14,7 +14,7 @@ from agentplanex.domains import (
     ExecutionEventType,
     OwnerActivation,
     ProjectOwnerTaskType,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     RuntimeContextChangeReason,
 )
 from agentplanex.infrastructure.git_repository import GitRepository
@@ -24,7 +24,7 @@ from agentplanex.infrastructure.sqlite import (
 )
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteOwnerActivationRepository,
-    SQLiteProjectRuntimeContextRepository,
+    SQLiteProjectRuntimeStateRepository,
 )
 from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.services.event_bus import EventBus
@@ -70,7 +70,7 @@ def missing_plan_hard_gate(_request: PlanReviewRequest) -> PlanReviewResult:
 
 @dataclass(frozen=True, slots=True)
 class PlanDecision:
-    context: ProjectRuntimeContext
+    context: ProjectRuntimeState
     activation: OwnerActivation
     commit_sha: str | None = None
 
@@ -79,7 +79,7 @@ class PlanDecision:
 class PlanApprovalRequest:
     """The observable result of submitting one exact Plan for human approval."""
 
-    context: ProjectRuntimeContext
+    context: ProjectRuntimeState
     accepted: bool
     subject_digest: str
     review: PlanReviewResult | None
@@ -89,8 +89,8 @@ class PlanApprovalRequest:
 class PlanningService:
     project_path: Path
     database: SQLiteDatabase
-    contexts: SQLiteProjectRuntimeContextRepository = field(
-        default_factory=SQLiteProjectRuntimeContextRepository
+    contexts: SQLiteProjectRuntimeStateRepository = field(
+        default_factory=SQLiteProjectRuntimeStateRepository
     )
     activations: SQLiteOwnerActivationRepository = field(
         default_factory=SQLiteOwnerActivationRepository
@@ -124,7 +124,7 @@ class PlanningService:
 
     def request_plan_approval(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
     ) -> PlanApprovalRequest:
         before = self._current_context(context.triage_id)
         self._assert_requestable(before)
@@ -152,7 +152,7 @@ class PlanningService:
 
         runtime_contexts = self._runtime_contexts()
 
-        def request(current: ProjectRuntimeContext) -> ProjectRuntimeContext:
+        def request(current: ProjectRuntimeState) -> ProjectRuntimeState:
             self._assert_requestable(current)
 
             updated = replace(
@@ -208,7 +208,7 @@ class PlanningService:
             message="plan: approve specifications",
         )
 
-        def approve(current: ProjectRuntimeContext) -> ProjectRuntimeContext:
+        def approve(current: ProjectRuntimeState) -> ProjectRuntimeState:
             self._assert_pending_action(current)
             return replace(
                 current,
@@ -243,7 +243,7 @@ class PlanningService:
         *,
         append_message: PlanDecisionMessageWriter,
     ) -> PlanDecision:
-        def reject(current: ProjectRuntimeContext) -> ProjectRuntimeContext:
+        def reject(current: ProjectRuntimeState) -> ProjectRuntimeState:
             self._assert_pending_action(current)
             return replace(
                 current,
@@ -272,8 +272,8 @@ class PlanningService:
         *,
         append_message: PlanDecisionMessageWriter,
         reason: RuntimeContextChangeReason,
-        mutate: Callable[[ProjectRuntimeContext], ProjectRuntimeContext],
-    ) -> tuple[ProjectRuntimeContext, OwnerActivation]:
+        mutate: Callable[[ProjectRuntimeState], ProjectRuntimeState],
+    ) -> tuple[ProjectRuntimeState, OwnerActivation]:
         with self.database.transaction() as connection:
             updated, context_event = self._runtime_contexts().transition_in_transaction(
                 connection,
@@ -322,7 +322,7 @@ class PlanningService:
 
     def _run_hard_gate(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         spec_documents: tuple[Path, ...],
         subject_digest: str,
     ) -> PlanReviewResult:
@@ -396,12 +396,12 @@ class PlanningService:
         if review.decision == "revise" and not review.required_changes:
             raise PlanningError("Plan Hard Gate revise must contain required changes")
 
-    def _current_context(self, triage_id: str) -> ProjectRuntimeContext:
+    def _current_context(self, triage_id: str) -> ProjectRuntimeState:
         with self.database.connection() as connection:
             return self._get_context(connection, triage_id)
 
     @staticmethod
-    def _assert_requestable(context: ProjectRuntimeContext) -> None:
+    def _assert_requestable(context: ProjectRuntimeState) -> None:
         if context.pending_action is not None:
             raise PlanningError(
                 "Project already has a pending action: " f"{context.pending_action}"
@@ -411,14 +411,14 @@ class PlanningService:
                 "Plan approval cannot be requested from status " f"{context.status}"
             )
 
-    def _assert_plan_pending(self, triage_id: str) -> ProjectRuntimeContext:
+    def _assert_plan_pending(self, triage_id: str) -> ProjectRuntimeState:
         with self.database.connection() as connection:
             current = self._get_context(connection, triage_id)
         self._assert_pending_action(current)
         return current
 
     @staticmethod
-    def _assert_pending_action(context: ProjectRuntimeContext) -> None:
+    def _assert_pending_action(context: ProjectRuntimeState) -> None:
         if context.pending_action != "PLAN_APPROVAL":
             raise PlanningError("Project is not waiting for Plan approval")
 
@@ -426,7 +426,7 @@ class PlanningService:
         self,
         connection: sqlite3.Connection,
         triage_id: str,
-    ) -> ProjectRuntimeContext:
+    ) -> ProjectRuntimeState:
         context = self.contexts.get(connection, triage_id)
         if context is None:
             raise LookupError(f"Project Runtime Context not found: {triage_id}")

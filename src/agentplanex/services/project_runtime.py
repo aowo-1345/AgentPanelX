@@ -17,7 +17,7 @@ from agentplanex.domains import (
     OwnerActivationStatus,
     ProjectOwnerTask,
     ProjectOwnerTaskType,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     RuntimeContextChangeReason,
     StageRun,
     StageRunStatus,
@@ -37,6 +37,7 @@ from agentplanex.services.owner_activation import (
 from agentplanex.services.planning import PlanDecision, PlanningService
 from agentplanex.services.project_control import ProjectControlQuery, ProjectControlView
 from agentplanex.services.project_owner import ProjectOwnerService
+from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 from agentplanex.services.runtime_context import RuntimeContextService
 
 type PlanDecisionAction = Literal["approve", "reject"]
@@ -63,19 +64,22 @@ class ProjectRuntimeService:
     delivery_runner: DeliveryRunner
     controls: ProjectControlQuery
     event_bus: EventBus
+    context: ProjectRuntimeContext
     runtime_contexts: RuntimeContextService
     activations: SQLiteOwnerActivationRepository
     driver: OwnerActivationDriver
 
-    def initialize(self) -> ProjectRuntimeContext:
-        """Create or restore the sole Context and Owner without external input."""
-        with self.database.transaction() as connection:
-            return self.owner.ensure_state(connection)
+    def initialize(self) -> ProjectRuntimeState:
+        """Create or restore the sole State and Owner without external input."""
+        return self.context.initialize()
 
-    def begin_feature(self, triage_id: str) -> ProjectRuntimeContext:
+    def state(self) -> ProjectRuntimeState:
+        """Restore the initialized Feature State without creating it."""
+        return self.context.state()
+
+    def begin_feature(self) -> ProjectRuntimeState:
         """Move one initialized Feature from TRIAGE to TODO without other work."""
-        return self.runtime_contexts.transition(
-            triage_id,
+        return self.context.transition(
             reason=RuntimeContextChangeReason.FEATURE_BEGUN,
             mutate=_begin_feature,
         )
@@ -87,7 +91,7 @@ class ProjectRuntimeService:
             content=content,
         )
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
             self._assert_delivery_idle(connection, context.triage_id)
             self._assert_owner_idle(connection, context.triage_id)
             message_id, summary_id = self.owner.append_task(
@@ -123,7 +127,7 @@ class ProjectRuntimeService:
     def drive_next_activation(self) -> ActivationDriveResult:
         """Claim and consume one activation for this project."""
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
         result = self.driver.drive_next(context.triage_id)
         if (
             result.activation is not None
@@ -132,11 +136,15 @@ class ProjectRuntimeService:
             self._block_failed_activation(result.activation)
         return result
 
-    def drive_until_waiting(self) -> ProjectRuntimeContext:
+    def drive_until_waiting(self) -> ProjectRuntimeState:
         """Drive durable automatic work until control returns to a human."""
+        with self.context.operation():
+            return self._drive_until_waiting()
+
+    def _drive_until_waiting(self) -> ProjectRuntimeState:
         while True:
             with self.database.transaction() as connection:
-                context = self.owner.ensure_state(connection)
+                context = self.owner.restore_state(connection)
             activation = self.driver.unfinished(context.triage_id)
             stage_run = self.delivery.active_stage_run(context.triage_id)
 
@@ -175,7 +183,7 @@ class ProjectRuntimeService:
         finished_at = datetime.now(UTC)
         failure = "Project Runtime process was interrupted before work completed."
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
             failed_activations = self.driver.fail_interrupted(
                 connection,
                 context.triage_id,
@@ -208,7 +216,7 @@ class ProjectRuntimeService:
         """Drive one activation step with a supplied Tool Action, without a model."""
 
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
         claim = self.driver.claim_for_tool(context.triage_id)
         if claim.started:
             self._publish_tool_loop_entered(claim.activation)
@@ -248,7 +256,7 @@ class ProjectRuntimeService:
         if not failure:
             raise ValueError("Project Owner failure reason must not be empty")
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
         claim = self.driver.claim_for_tool_failure(context.triage_id)
         if claim.started:
             self._publish_tool_loop_entered(claim.activation)
@@ -270,7 +278,7 @@ class ProjectRuntimeService:
         """Finish a Tool-driven activation with a persisted Owner reply."""
 
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
         claim = self.driver.claim_for_tool(context.triage_id)
         if claim.started:
             self._publish_tool_loop_entered(claim.activation)
@@ -298,7 +306,7 @@ class ProjectRuntimeService:
     def start_first_run(self) -> MilestoneRunQueued:
         """Apply the explicit first-Run command through the real Delivery Service."""
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
             self._assert_owner_idle(connection, context.triage_id)
             self._assert_delivery_idle(connection, context.triage_id)
         return self.delivery.start_first_run(context)
@@ -306,7 +314,7 @@ class ProjectRuntimeService:
     def drive_delivery(self) -> DeliveryDriveResult:
         """Run at most one durable Stage outside the Project Owner ReAct loop."""
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
             self._assert_owner_idle(connection, context.triage_id)
         return self.delivery_runner.drive_once(
             context.triage_id,
@@ -316,14 +324,14 @@ class ProjectRuntimeService:
     def project_control_view(self) -> ProjectControlView:
         """Return the one composed, read-only control projection for this project."""
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
         return self.controls.get(context.triage_id)
 
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit Tool Action without starting an Owner Loop."""
 
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
             unfinished = self.activations.get_unfinished(
                 connection,
                 context.triage_id,
@@ -400,7 +408,7 @@ class ProjectRuntimeService:
         feedback: str,
     ) -> PlanDecision:
         with self.database.transaction() as connection:
-            context = self.owner.ensure_state(connection)
+            context = self.owner.restore_state(connection)
             self._assert_delivery_idle(connection, context.triage_id)
             self._assert_owner_idle(connection, context.triage_id)
         task = ProjectOwnerTask(
@@ -415,7 +423,7 @@ class ProjectRuntimeService:
         def append_message(
             connection: sqlite3.Connection,
         ) -> tuple[str, str | None]:
-            current = self.owner.ensure_state(connection)
+            current = self.owner.restore_state(connection)
             if current.triage_id != context.triage_id:
                 raise RuntimeError("Project Runtime Context changed during command")
             self._assert_delivery_idle(connection, current.triage_id)
@@ -435,10 +443,10 @@ class ProjectRuntimeService:
     def _append_execution_result(
         self,
         connection: sqlite3.Connection,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         content: str,
     ) -> OwnerActivation:
-        owner_context = self.owner.ensure_state(connection)
+        owner_context = self.owner.restore_state(connection)
         if owner_context.triage_id != context.triage_id:
             raise RuntimeError("Project Runtime Context changed during Stage completion")
         self._assert_owner_idle(connection, context.triage_id)
@@ -486,7 +494,7 @@ class ProjectRuntimeService:
             )
 
 
-def _start_conversation(context: ProjectRuntimeContext) -> ProjectRuntimeContext:
+def _start_conversation(context: ProjectRuntimeState) -> ProjectRuntimeState:
     if context.blocked_reason is not None:
         if context.blocked_previous_status is None:
             raise ValueError("User-intervention blocker has no previous status")
@@ -504,7 +512,7 @@ def _start_conversation(context: ProjectRuntimeContext) -> ProjectRuntimeContext
     )
 
 
-def _begin_feature(context: ProjectRuntimeContext) -> ProjectRuntimeContext:
+def _begin_feature(context: ProjectRuntimeState) -> ProjectRuntimeState:
     if context.status != "TRIAGE":
         raise ValueError(
             "Feature can only begin from TRIAGE: "
@@ -514,8 +522,8 @@ def _begin_feature(context: ProjectRuntimeContext) -> ProjectRuntimeContext:
 
 
 def _block_runtime_execution(
-    context: ProjectRuntimeContext,
-) -> ProjectRuntimeContext:
+    context: ProjectRuntimeState,
+) -> ProjectRuntimeState:
     if context.status == "BLOCKED":
         return context
     if context.status == "DONE":

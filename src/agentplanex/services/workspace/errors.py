@@ -1,17 +1,12 @@
 """Stable Workspace scheduling failures exposed to external adapters."""
 
+from agentplanex.services.project_runtime_error import ProjectRuntimeCommandError
 
-class WorkspaceSchedulingError(RuntimeError):
+
+class WorkspaceSchedulingError(ProjectRuntimeCommandError):
     """A Workspace command was rejected before it changed Runtime state."""
 
     code: str
-
-
-class FeatureBusyError(WorkspaceSchedulingError):
-    code = "FEATURE_BUSY"
-
-    def __init__(self, triage_id: str) -> None:
-        super().__init__(f"Feature is already executing: {triage_id}")
 
 
 class WorkspaceCapacityExhaustedError(WorkspaceSchedulingError):

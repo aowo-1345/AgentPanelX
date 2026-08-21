@@ -7,7 +7,7 @@ from pydantic import Field, model_validator
 from agentplanex.domains import (
     Milestone,
     MilestoneState,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     Stage,
     ToolExecutionResult,
 )
@@ -99,7 +99,7 @@ class UpdateMilestonesExecution(ProjectExecution[UpdateMilestonesArguments]):
 
     def execute(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         arguments: UpdateMilestonesArguments,
     ) -> ToolExecutionResult:
         try:

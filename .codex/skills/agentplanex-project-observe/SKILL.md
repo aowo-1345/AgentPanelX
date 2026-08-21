@@ -55,11 +55,11 @@ sequenceDiagram
     Runtime->>SQLite: 发布后继 Snapshot 或标记 DONE
 ```
 
-`project_runtime_context` 回答项目现在在哪里。Snapshot、StageRun 和 Git 回答哪些计划与代码事实已经存在。Timeline 解释重要的历史事实；它不重建当前状态，也不负责调度工作。
+`project_runtime_state` 回答项目现在在哪里。Snapshot、StageRun 和 Git 回答哪些计划与代码事实已经存在。Timeline 解释重要的历史事实；它不重建当前状态，也不负责调度工作。
 
 ## 核心证据产出时序
 
-使用下图回答“某项证据何时产生、保存在哪里、如何与另一侧交叉验证”。图中的“接受分支”通常是 `main`：Plan 审批时先以项目目标 Worktree 当前附着的分支为准，Rolling Delivery 开始后再以 `project_runtime_context.git_branch` 固定。
+使用下图回答“某项证据何时产生、保存在哪里、如何与另一侧交叉验证”。图中的“接受分支”通常是 `main`：Plan 审批时先以项目目标 Worktree 当前附着的分支为准，Rolling Delivery 开始后再以 `project_runtime_state.git_branch` 固定。
 
 先用下面的文件树建立空间直觉。它表示“Plan 已批准、已有 Agent 审计 artifact、当前 Run 正在执行一个 Stage”时可能出现的中途切片；`{...}` 是示意 ID，不保证每个目录在所有状态下都存在。
 

@@ -8,13 +8,13 @@ from agentplanex.domains import (
     FeatureBinding,
     ManagedProject,
     ProjectBoard,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     StageRun,
 )
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
-    SQLiteProjectRuntimeContextRepository,
+    SQLiteProjectRuntimeStateRepository,
     SQLiteStageRunRepository,
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
@@ -40,8 +40,8 @@ class WorkspaceQueries:
 
     registry: WorkspaceRegistry
     git: WorkspaceGit
-    contexts: SQLiteProjectRuntimeContextRepository = field(
-        default_factory=SQLiteProjectRuntimeContextRepository
+    contexts: SQLiteProjectRuntimeStateRepository = field(
+        default_factory=SQLiteProjectRuntimeStateRepository
     )
     stage_runs: SQLiteStageRunRepository = field(
         default_factory=SQLiteStageRunRepository
@@ -82,7 +82,7 @@ class WorkspaceQueries:
             runtime_view=runtime_view,
         )
 
-    def context(self, binding: FeatureBinding) -> ProjectRuntimeContext:
+    def context(self, binding: FeatureBinding) -> ProjectRuntimeState:
         database = SQLiteDatabase.for_project(binding.worktree_path)
         try:
             with database.read_only_connection() as connection:

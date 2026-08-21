@@ -21,7 +21,7 @@ from agentplanex.domains import (
     OwnerActivationStatus,
     ProjectOwnerAgent,
     ProjectOwnerTaskType,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     Stage,
     StageRun,
     StageRunStatus,
@@ -33,7 +33,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMilestoneSnapshotRepository,
     SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
-    SQLiteProjectRuntimeContextRepository,
+    SQLiteProjectRuntimeStateRepository,
     SQLiteStageRunRepository,
     SQLiteSummaryHistoryRepository,
 )
@@ -53,9 +53,11 @@ def project_path(request: pytest.FixtureRequest) -> Iterator[Path]:
     shutil.rmtree(directory, ignore_errors=True)
 
 
-def test_context_can_be_reloaded_and_assembled(project_path: Path) -> None:
+def test_state_and_owner_history_can_be_reloaded_independently(
+    project_path: Path,
+) -> None:
     database = SQLiteDatabase.for_project(project_path)
-    runtimes = SQLiteProjectRuntimeContextRepository()
+    runtimes = SQLiteProjectRuntimeStateRepository()
     owners = SQLiteProjectOwnerAgentRepository()
     summaries = SQLiteSummaryHistoryRepository()
     messages = SQLiteMessageHistoryRepository()
@@ -85,7 +87,7 @@ def test_context_can_be_reloaded_and_assembled(project_path: Path) -> None:
         summary_id=summary.summary_id,
         message_id=message_history.message_id,
     )
-    runtime = ProjectRuntimeContext(
+    runtime = ProjectRuntimeState(
         triage_id="triage-1",
         idea="Ship the runtime control plane.",
         status="BLOCKED",
@@ -124,15 +126,9 @@ def test_context_can_be_reloaded_and_assembled(project_path: Path) -> None:
         summary_history=loaded_summary,
         message_history=loaded_messages,
     )
-    assembled_runtime = replace(
-        loaded_runtime,
-        project_owner_agent=assembled_owner,
-    )
-
     assert loaded_runtime == runtime
-    assert assembled_runtime.project_owner_agent is not None
-    assert assembled_runtime.project_owner_agent.summary_history == summary
-    assert assembled_runtime.project_owner_agent.message_history == message_history
+    assert assembled_owner.summary_history == summary
+    assert assembled_owner.message_history == message_history
 
 
 def test_message_checkpoint_range_is_bounded_and_session_safe(
@@ -206,7 +202,7 @@ def test_failed_transaction_does_not_leave_partial_state(
     project_path: Path,
 ) -> None:
     database = SQLiteDatabase.for_project(project_path)
-    runtimes = SQLiteProjectRuntimeContextRepository()
+    runtimes = SQLiteProjectRuntimeStateRepository()
     initialize_schema(database)
 
     with (
@@ -215,7 +211,7 @@ def test_failed_transaction_does_not_leave_partial_state(
     ):
         runtimes.insert(
             connection,
-            ProjectRuntimeContext(
+            ProjectRuntimeState(
                 triage_id="triage-rollback",
                 status="TODO",
                 git_main_version="main",
@@ -233,7 +229,7 @@ def test_read_only_connection_rejects_runtime_writes(project_path: Path) -> None
     with database.transaction() as connection:
         connection.execute(
             """
-            INSERT INTO project_runtime_context (triage_id, status)
+            INSERT INTO project_runtime_state (triage_id, status)
             VALUES (?, ?)
             """,
             ("triage-read-only", "TODO"),
@@ -241,14 +237,14 @@ def test_read_only_connection_rejects_runtime_writes(project_path: Path) -> None
 
     with database.read_only_connection() as connection:
         row = connection.execute(
-            "SELECT status FROM project_runtime_context WHERE triage_id = ?",
+            "SELECT status FROM project_runtime_state WHERE triage_id = ?",
             ("triage-read-only",),
         ).fetchone()
         assert row is not None
         assert row["status"] == "TODO"
         with pytest.raises(sqlite3.OperationalError):
             connection.execute(
-                "UPDATE project_runtime_context SET status = ? WHERE triage_id = ?",
+                "UPDATE project_runtime_state SET status = ? WHERE triage_id = ?",
                 ("DONE", "triage-read-only"),
             )
 
@@ -264,7 +260,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 11
+    assert schema_version[0] == 12
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -282,7 +278,7 @@ def test_schema_contains_current_control_plane_tables_and_columns(
     initialize_schema(database)
 
     expected_columns = {
-        "project_runtime_context": (
+        "project_runtime_state": (
             "triage_id",
             "idea",
             "status",
@@ -436,14 +432,14 @@ def test_schema_rejects_old_versions_and_requires_recreation(
         initialize_schema(database)
 
 
-def test_schema_migrates_user_intervention_blockers_from_version_10(
+def test_schema_does_not_migrate_version_10(
     project_path: Path,
 ) -> None:
     database = SQLiteDatabase.for_project(project_path)
     with database.transaction() as connection:
         connection.execute(
             """
-            CREATE TABLE project_runtime_context (
+            CREATE TABLE project_runtime_state (
                 triage_id TEXT PRIMARY KEY,
                 idea TEXT,
                 status TEXT NOT NULL,
@@ -463,40 +459,14 @@ def test_schema_migrates_user_intervention_blockers_from_version_10(
         )
         connection.execute(
             """
-            INSERT INTO project_runtime_context (triage_id, status)
+            INSERT INTO project_runtime_state (triage_id, status)
             VALUES ('triage-existing', 'TODO')
             """
         )
         connection.execute("PRAGMA user_version = 10")
 
-    initialize_schema(database)
-
-    with database.connection() as connection:
-        version = connection.execute("PRAGMA user_version").fetchone()
-        columns = tuple(
-            row["name"]
-            for row in connection.execute(
-                "PRAGMA table_info(project_runtime_context)"
-            ).fetchall()
-        )
-        row = connection.execute(
-            """
-            SELECT status, blocked_reason, blocked_capability,
-                   blocked_previous_status
-            FROM project_runtime_context
-            WHERE triage_id = 'triage-existing'
-            """
-        ).fetchone()
-
-    assert version is not None
-    assert version[0] == 11
-    assert columns[-3:] == (
-        "blocked_reason",
-        "blocked_capability",
-        "blocked_previous_status",
-    )
-    assert row is not None
-    assert tuple(row) == ("TODO", None, None, None)
+    with pytest.raises(RuntimeError, match="recreate this development database"):
+        initialize_schema(database)
 
 
 def test_competing_connections_claim_only_one_activation(

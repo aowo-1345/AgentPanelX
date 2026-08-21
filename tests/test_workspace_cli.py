@@ -15,6 +15,10 @@ import yaml
 
 from agentplanex.bootstrap import create_workspace
 from agentplanex.domains import FeatureBinding
+from agentplanex.infrastructure.sqlite import SQLiteDatabase
+from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteProjectOwnerAgentRepository,
+)
 from agentplanex.infrastructure.workspace_git import WorkspaceGitError
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.project_runtime import ProjectRuntime
@@ -412,8 +416,11 @@ def test_installed_cli_runs_two_isolated_features_end_to_end(
     assert second_view.context.status == "TRIAGE"
     assert second_view.owner_activation is None
     assert second_view.timeline == ()
-    first_owner = first_runtime.initialize().project_owner_agent
-    second_owner = second_runtime.initialize().project_owner_agent
+    owners = SQLiteProjectOwnerAgentRepository()
+    with SQLiteDatabase.for_project(first_worktree).read_only_connection() as connection:
+        first_owner = owners.get_by_triage_id(connection, feature_a["triage_id"])
+    with SQLiteDatabase.for_project(second_worktree).read_only_connection() as connection:
+        second_owner = owners.get_by_triage_id(connection, feature_b["triage_id"])
     assert first_owner is not None
     assert second_owner is not None
     assert first_owner.message_id is None

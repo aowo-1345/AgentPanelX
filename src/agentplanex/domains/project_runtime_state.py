@@ -1,14 +1,12 @@
-"""Project runtime context domain object."""
+"""Persisted state for one Feature Runtime."""
 
 from dataclasses import dataclass
 from datetime import datetime
 
-from agentplanex.domains.project_owner_agent import ProjectOwnerAgent
-
 
 @dataclass(frozen=True, slots=True)
-class ProjectRuntimeContext:
-    """Runtime state for one Triage and its Project Owner Agent."""
+class ProjectRuntimeState:
+    """Immutable persisted state for one Feature Runtime."""
 
     triage_id: str
     idea: str | None = None
@@ -27,8 +25,6 @@ class ProjectRuntimeContext:
     blocked_reason: str | None = None
     blocked_capability: str | None = None
     blocked_previous_status: str | None = None
-    project_owner_agent: ProjectOwnerAgent | None = None
-
     def __post_init__(self) -> None:
         if not self.triage_id.strip():
             raise ValueError("triage_id must not be empty")

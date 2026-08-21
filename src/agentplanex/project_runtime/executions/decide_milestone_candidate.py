@@ -7,7 +7,7 @@ from pydantic import Field
 from agentplanex.domains import (
     AgentExit,
     AgentExitStatus,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     ToolExecutionResult,
 )
 from agentplanex.project_owner_agent.tools import (
@@ -54,7 +54,7 @@ class DecideMilestoneCandidateExecution(
 
     def execute(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         arguments: DecideMilestoneCandidateArguments,
     ) -> ToolExecutionResult:
         try:

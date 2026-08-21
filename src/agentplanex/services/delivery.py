@@ -17,7 +17,7 @@ from agentplanex.domains import (
     MilestoneSnapshot,
     MilestoneState,
     OwnerActivation,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     RuntimeContextChangeReason,
     Stage,
     StageRun,
@@ -28,7 +28,8 @@ from agentplanex.infrastructure.git_repository import GitRepository, GitReposito
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMilestoneSnapshotRepository,
-    SQLiteProjectRuntimeContextRepository,
+    SQLiteProjectOwnerAgentRepository,
+    SQLiteProjectRuntimeStateRepository,
     SQLiteStageRunRepository,
 )
 from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
@@ -64,7 +65,7 @@ class MilestoneReviewResult:
 
 type MilestoneHardGate = Callable[[MilestoneReviewRequest], MilestoneReviewResult]
 type ExecutionResultWriter = Callable[
-    [sqlite3.Connection, ProjectRuntimeContext, str], OwnerActivation
+    [sqlite3.Connection, ProjectRuntimeState, str], OwnerActivation
 ]
 
 
@@ -77,7 +78,7 @@ def missing_milestone_hard_gate(_request: MilestoneReviewRequest) -> MilestoneRe
 class MilestonesUpdated:
     """Observable result of publishing one complete Milestone View."""
 
-    context: ProjectRuntimeContext
+    context: ProjectRuntimeState
     snapshot: MilestoneSnapshot | None
     accepted: bool
     subject_digest: str
@@ -88,7 +89,7 @@ class MilestonesUpdated:
 class FirstRunApprovalRequested:
     """The first Run is ready but still requires an explicit user Start."""
 
-    context: ProjectRuntimeContext
+    context: ProjectRuntimeState
     snapshot: MilestoneSnapshot
     milestone: Milestone
 
@@ -97,7 +98,7 @@ class FirstRunApprovalRequested:
 class MilestoneRunQueued:
     """A fixed first Stage has been durably queued for one Milestone Run."""
 
-    context: ProjectRuntimeContext
+    context: ProjectRuntimeState
     snapshot: MilestoneSnapshot
     milestone: Milestone
     stage: Stage
@@ -109,7 +110,7 @@ class MilestoneRunQueued:
 class StageClaim:
     """A Driver-owned lease over the sole queued StageRun."""
 
-    context: ProjectRuntimeContext
+    context: ProjectRuntimeState
     snapshot: MilestoneSnapshot
     milestone: Milestone
     stage: Stage
@@ -120,7 +121,7 @@ class StageClaim:
 class StageCompletion:
     """One terminal Stage fact and either its successor or Candidate result."""
 
-    context: ProjectRuntimeContext
+    context: ProjectRuntimeState
     stage_run: StageRun
     next_stage_run: StageRun | None
     candidate_commit_sha: str | None
@@ -131,7 +132,7 @@ class StageCompletion:
 class CandidateDecision:
     """The controlled outcome of accepting or rejecting one Candidate."""
 
-    context: ProjectRuntimeContext
+    context: ProjectRuntimeState
     decision: Literal["accept", "reject"]
     milestone_key: str
     candidate_commit_sha: str
@@ -148,8 +149,11 @@ class DeliveryService:
     database: SQLiteDatabase
     event_bus: EventBus = field(default_factory=EventBus)
     runtime_contexts: RuntimeContextService | None = None
-    contexts: SQLiteProjectRuntimeContextRepository = field(
-        default_factory=SQLiteProjectRuntimeContextRepository
+    contexts: SQLiteProjectRuntimeStateRepository = field(
+        default_factory=SQLiteProjectRuntimeStateRepository
+    )
+    owners: SQLiteProjectOwnerAgentRepository = field(
+        default_factory=SQLiteProjectOwnerAgentRepository
     )
     snapshots: SQLiteMilestoneSnapshotRepository = field(
         default_factory=SQLiteMilestoneSnapshotRepository
@@ -183,7 +187,7 @@ class DeliveryService:
 
     def update_milestones(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         *,
         reason: str,
         milestones: tuple[Milestone, ...],
@@ -226,11 +230,7 @@ class DeliveryService:
                 review=review,
             )
 
-        message_id = (
-            context.project_owner_agent.message_id
-            if context.project_owner_agent is not None
-            else None
-        )
+        message_id = self._owner_message_id(current.triage_id)
         snapshot = MilestoneSnapshot(
             snapshot_id=uuid4().hex,
             triage_id=current.triage_id,
@@ -279,7 +279,7 @@ class DeliveryService:
 
     def request_next_milestone(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
     ) -> FirstRunApprovalRequested | MilestoneRunQueued:
         """Request the first Start or queue the next pending Milestone Run."""
         current = self._current_context(context.triage_id)
@@ -319,7 +319,7 @@ class DeliveryService:
 
     def start_first_run(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
     ) -> MilestoneRunQueued:
         """Apply the user's one-time explicit Start and queue the first Stage."""
         current = self._current_context(context.triage_id)
@@ -580,7 +580,7 @@ class DeliveryService:
 
     def decide_milestone_candidate(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         *,
         decision: Literal["accept", "reject"],
         reason: str,
@@ -622,10 +622,9 @@ class DeliveryService:
             ):
                 raise DeliveryError("Candidate changed while applying its decision")
             if decision == "accept":
-                message_id = (
-                    context.project_owner_agent.message_id
-                    if context.project_owner_agent is not None
-                    else None
+                message_id = self._owner_message_id(
+                    latest.triage_id,
+                    connection=connection,
                 )
                 successor = latest_snapshot.with_completed_milestone(
                     latest_milestone.key,
@@ -710,7 +709,7 @@ class DeliveryService:
 
     def _queue_next_run(
         self,
-        current: ProjectRuntimeContext,
+        current: ProjectRuntimeState,
         snapshot: MilestoneSnapshot,
         milestone: Milestone,
         *,
@@ -844,9 +843,9 @@ class DeliveryService:
 
     @staticmethod
     def _request_first_run(
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         snapshot: MilestoneSnapshot,
-    ) -> ProjectRuntimeContext:
+    ) -> ProjectRuntimeState:
         if (
             context.status != "TODO"
             or context.pending_action is not None
@@ -865,7 +864,7 @@ class DeliveryService:
 
     def _snapshot_for_context(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         *,
         connection: sqlite3.Connection | None = None,
     ) -> MilestoneSnapshot:
@@ -898,7 +897,7 @@ class DeliveryService:
     def _stage_contract(
         self,
         connection: sqlite3.Connection,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         stage_run: StageRun,
     ) -> tuple[MilestoneSnapshot, Milestone, Stage]:
         if context.status != "IN_PROGRESS" or context.pending_action is not None:
@@ -926,10 +925,10 @@ class DeliveryService:
 
     @staticmethod
     def _advance_stage(
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         completed: StageRun,
         next_stage: Stage,
-    ) -> ProjectRuntimeContext:
+    ) -> ProjectRuntimeState:
         DeliveryService._assert_current_stage(context, completed)
         if context.current_candidate_commit_sha is not None:
             raise DeliveryError("Candidate appeared while advancing Stage execution")
@@ -937,10 +936,10 @@ class DeliveryService:
 
     @staticmethod
     def _candidate_ready(
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         completed: StageRun,
         candidate_commit_sha: str,
-    ) -> ProjectRuntimeContext:
+    ) -> ProjectRuntimeState:
         DeliveryService._assert_current_stage(context, completed)
         if context.current_candidate_commit_sha is not None:
             raise DeliveryError("Project already has a pending Candidate")
@@ -951,16 +950,16 @@ class DeliveryService:
 
     @staticmethod
     def _stage_failed(
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         failed: StageRun,
-    ) -> ProjectRuntimeContext:
+    ) -> ProjectRuntimeState:
         DeliveryService._assert_current_stage(context, failed)
         return replace(context, status="BLOCKED")
 
     @staticmethod
     def _block_after_milestone_hard_gate_rejection(
-        context: ProjectRuntimeContext,
-    ) -> ProjectRuntimeContext:
+        context: ProjectRuntimeState,
+    ) -> ProjectRuntimeState:
         if context.status != "IN_PROGRESS" or context.pending_action is not None:
             raise DeliveryError(
                 "Milestone Hard Gate rejection requires an idle IN_PROGRESS project"
@@ -973,7 +972,7 @@ class DeliveryService:
 
     @staticmethod
     def _assert_current_stage(
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         stage_run: StageRun,
     ) -> None:
         if (
@@ -987,7 +986,7 @@ class DeliveryService:
 
     def _candidate_contract(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         *,
         connection: sqlite3.Connection | None = None,
     ) -> tuple[MilestoneSnapshot, Milestone, str]:
@@ -1032,7 +1031,7 @@ class DeliveryService:
 
     def _assert_candidate_ref(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         candidate_commit_sha: str,
     ) -> None:
         if context.current_run_id is None:
@@ -1048,12 +1047,12 @@ class DeliveryService:
 
     @staticmethod
     def _accept_candidate(
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         candidate_commit_sha: str,
         successor: MilestoneSnapshot,
         completed: bool,
         integrated_commit_sha: str,
-    ) -> ProjectRuntimeContext:
+    ) -> ProjectRuntimeState:
         if context.current_candidate_commit_sha != candidate_commit_sha:
             raise DeliveryError("Candidate changed while being accepted")
         return replace(
@@ -1069,9 +1068,9 @@ class DeliveryService:
 
     @staticmethod
     def _reject_candidate(
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         candidate_commit_sha: str,
-    ) -> ProjectRuntimeContext:
+    ) -> ProjectRuntimeState:
         if context.current_candidate_commit_sha != candidate_commit_sha:
             raise DeliveryError("Candidate changed while being rejected")
         return replace(
@@ -1084,7 +1083,7 @@ class DeliveryService:
 
     def _assert_publishable(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         milestones: tuple[Milestone, ...],
     ) -> MilestoneSnapshot | None:
         if context.current_plan_commit_sha is None:
@@ -1140,7 +1139,7 @@ class DeliveryService:
             )
         return previous
 
-    def _assert_approved_specs(self, context: ProjectRuntimeContext) -> None:
+    def _assert_approved_specs(self, context: ProjectRuntimeState) -> None:
         plan_commit_sha = context.current_plan_commit_sha
         if plan_commit_sha is None:
             raise DeliveryError("Delivery requires an approved Plan commit")
@@ -1160,7 +1159,7 @@ class DeliveryService:
 
     def _assert_candidate_preserves_specs(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         candidate_commit_sha: str,
     ) -> None:
         plan_commit_sha = context.current_plan_commit_sha
@@ -1183,7 +1182,7 @@ class DeliveryService:
 
     def _assert_retryable_blocked(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         *,
         connection: sqlite3.Connection | None = None,
     ) -> None:
@@ -1219,7 +1218,7 @@ class DeliveryService:
 
     def _run_milestone_hard_gate(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         plan_commit_sha: str,
         milestones: tuple[Milestone, ...],
         subject_digest: str,
@@ -1310,9 +1309,9 @@ class DeliveryService:
     def _publish_snapshot(
         self,
         connection: sqlite3.Connection,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         snapshot: MilestoneSnapshot,
-    ) -> ProjectRuntimeContext:
+    ) -> ProjectRuntimeState:
         if context.current_plan_commit_sha != snapshot.plan_commit_sha:
             raise DeliveryError("Approved Plan changed while publishing Milestones")
         if context.current_candidate_commit_sha is not None:
@@ -1327,7 +1326,7 @@ class DeliveryService:
             current_stage_key=None,
         )
 
-    def _current_context(self, triage_id: str) -> ProjectRuntimeContext:
+    def _current_context(self, triage_id: str) -> ProjectRuntimeState:
         with self.database.connection() as connection:
             return self._get_context(connection, triage_id)
 
@@ -1335,11 +1334,24 @@ class DeliveryService:
         self,
         connection: sqlite3.Connection,
         triage_id: str,
-    ) -> ProjectRuntimeContext:
+    ) -> ProjectRuntimeState:
         context = self.contexts.get(connection, triage_id)
         if context is None:
             raise LookupError(f"Project Runtime Context not found: {triage_id}")
         return context
+
+    def _owner_message_id(
+        self,
+        triage_id: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> str | None:
+        if connection is not None:
+            owner = self.owners.get_by_triage_id(connection, triage_id)
+            return owner.message_id if owner is not None else None
+        with self.database.connection() as current_connection:
+            owner = self.owners.get_by_triage_id(current_connection, triage_id)
+        return owner.message_id if owner is not None else None
 
     def _runtime_contexts(self) -> RuntimeContextService:
         if self.runtime_contexts is None:
@@ -1378,7 +1390,7 @@ def _stage_index(milestone: Milestone, stage_key: str) -> int:
 
 
 def _candidate_ready_message(
-    context: ProjectRuntimeContext,
+    context: ProjectRuntimeState,
     milestone: Milestone,
     stage_run: StageRun,
     candidate_commit_sha: str,

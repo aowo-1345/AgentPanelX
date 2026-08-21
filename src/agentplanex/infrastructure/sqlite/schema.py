@@ -2,11 +2,11 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 _INITIAL_SCHEMA = (
     """
-    CREATE TABLE project_runtime_context (
+    CREATE TABLE project_runtime_state (
         triage_id TEXT PRIMARY KEY,
         idea TEXT,
         status TEXT NOT NULL DEFAULT 'TRIAGE'
@@ -191,23 +191,6 @@ def initialize_schema(database: SQLiteDatabase) -> None:
         if current_version == 0:
             for statement in _INITIAL_SCHEMA:
                 connection.execute(statement)
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            return
-
-        if current_version == 10:
-            connection.execute(
-                "ALTER TABLE project_runtime_context ADD COLUMN blocked_reason TEXT"
-            )
-            connection.execute(
-                "ALTER TABLE project_runtime_context ADD COLUMN blocked_capability TEXT"
-            )
-            connection.execute(
-                """
-                ALTER TABLE project_runtime_context
-                ADD COLUMN blocked_previous_status TEXT
-                    CHECK (blocked_previous_status IN ('TODO', 'IN_PROGRESS'))
-                """
-            )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             return
 

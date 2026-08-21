@@ -144,6 +144,7 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
         approval_mode="yolo",
         responses_transport=_OwnerTransport(settings),
     )
+    runtime.initialize()
 
     activation = runtime.submit_message("Inspect the project before replying")
     release = project_path / "release-tool"
@@ -241,6 +242,7 @@ def test_workspace_conversation_projects_model_tool_as_one_completed_activity(
         approval_mode="yolo",
         responses_transport=_OwnerTransport(settings, first_owner_tool=True),
     )
+    runtime.initialize()
 
     activation = runtime.submit_message("Inspect the project before replying")
     driven = runtime.drive_next_activation()
@@ -272,6 +274,7 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
         approval_mode="yolo",
         responses_transport=first_transport,
     )
+    runtime.initialize()
 
     first_activation = runtime.submit_message("Inspect the project before replying")
     first = runtime.drive_next_activation()
@@ -439,6 +442,7 @@ def test_summary_failure_keeps_the_original_owner_context(
         approval_mode="yolo",
         responses_transport=transport,
     )
+    runtime.initialize()
 
     activation = runtime.submit_message("original-context " * 600)
     driven = runtime.drive_next_activation()
@@ -473,6 +477,7 @@ def test_summary_publish_transaction_rejects_a_stale_checkpoint(
         approval_mode="yolo",
         responses_transport=_OwnerTransport(settings),
     )
+    runtime.initialize()
     activation = runtime.submit_message("create the owner checkpoint")
     runtime.drive_next_activation()
 
@@ -523,6 +528,7 @@ def test_frozen_activation_cannot_replace_a_newer_summary_during_compaction(
         approval_mode="yolo",
         responses_transport=_OwnerTransport(roomy_settings),
     )
+    runtime.initialize()
     baseline = runtime.submit_message("establish a stable history checkpoint")
     runtime.drive_next_activation()
 
@@ -619,6 +625,7 @@ def test_restart_fails_when_a_persisted_owner_tool_is_missing(
         approval_mode="yolo",
         responses_transport=_OwnerTransport(settings),
     )
+    runtime.initialize()
     activation = runtime.submit_message("create the owner")
     runtime.drive_next_activation()
 
@@ -650,6 +657,7 @@ def test_attribution_uses_the_summary_available_at_its_checkpoint(
         approval_mode="yolo",
         responses_transport=_OwnerTransport(settings),
     )
+    runtime.initialize()
 
     runtime.submit_message("first-history " * 600)
     first = runtime.drive_next_activation()

@@ -16,7 +16,7 @@ from agentplanex.domains import (
     Message,
     MessageHistory,
     OwnerActivationStatus,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
 )
 from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.codex import (
@@ -30,7 +30,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteExecutionEventRepository,
     SQLiteMessageHistoryRepository,
     SQLiteOwnerActivationRepository,
-    SQLiteProjectRuntimeContextRepository,
+    SQLiteProjectRuntimeStateRepository,
 )
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_runtime.executions import create_project_executions
@@ -39,6 +39,13 @@ from agentplanex.services import project_owner as project_owner_service
 from agentplanex.services.planning import PlanReviewRequest, PlanReviewResult
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 from scripts import debug_tool_cli
+
+
+def _initialize_runtime(project_path: Path) -> None:
+    debug_tool_cli.create_project_runtime(
+        project_path=project_path,
+        approval_mode="yolo",
+    ).initialize()
 
 
 def _invocation_envelope(message: str) -> dict[str, object]:
@@ -229,7 +236,7 @@ def _git(project_path: Path, *arguments: str) -> str:
 
 def _load_context(project_path: Path):
     database = SQLiteDatabase.for_project(project_path)
-    repository = SQLiteProjectRuntimeContextRepository()
+    repository = SQLiteProjectRuntimeStateRepository()
     with database.connection() as connection:
         contexts = repository.list_all(connection)
     assert len(contexts) == 1
@@ -264,7 +271,7 @@ def _loaded_events(project_path: Path) -> tuple[ExecutionEvent, ...]:
     database = SQLiteDatabase.for_project(project_path)
     repository = SQLiteExecutionEventRepository()
     with database.connection() as connection:
-        context = SQLiteProjectRuntimeContextRepository().list_all(connection)
+        context = SQLiteProjectRuntimeStateRepository().list_all(connection)
         assert len(context) == 1
         return repository.list_by_triage_id(connection, context[0].triage_id)
 
@@ -273,7 +280,7 @@ def _loaded_activations(project_path: Path):
     database = SQLiteDatabase.for_project(project_path)
     repository = SQLiteOwnerActivationRepository()
     with database.connection() as connection:
-        context = SQLiteProjectRuntimeContextRepository().list_all(connection)
+        context = SQLiteProjectRuntimeStateRepository().list_all(connection)
         assert len(context) == 1
         return repository.list_by_triage_id(connection, context[0].triage_id)
 
@@ -424,6 +431,7 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _write_specs(project_path)
     monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _PlanRequestingModel)
 
@@ -520,6 +528,7 @@ def test_executes_project_bound_action_without_constructing_a_model(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
 
     class _UnexpectedModel:
         def __init__(self, **_kwargs: object) -> None:
@@ -566,6 +575,7 @@ def test_project_owner_bash_writes_only_inside_project(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     relative_outside = project_path.parent / f"{project_path.name}-relative-outside"
     absolute_outside = project_path.parent / f"{project_path.name}-absolute-outside"
     protected_git = project_path / ".git" / "owner-write-probe"
@@ -638,6 +648,7 @@ def test_tool_driven_delivery_uses_same_activation_without_owner_model(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _write_specs(project_path)
 
     class _UnexpectedModel:
@@ -793,6 +804,7 @@ def test_tool_driven_activation_recovers_across_cli_processes(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     script = Path(debug_tool_cli.__file__).resolve()
 
     def invoke(*action: str) -> dict[str, object]:
@@ -884,6 +896,7 @@ def test_talk_task_keeps_workspace_and_publishes_document_uri(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     (project_path / "requirements.md").write_text(
         "# Requirements\n\nShip a durable planner workspace.\n",
         encoding="utf-8",
@@ -1038,6 +1051,7 @@ def test_plan_hard_gate_revise_returns_review_without_transition(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _reach_idle_in_progress(project_path, monkeypatch, capfd)
     (project_path / "requirements.md").write_text(
         "# Requirements\n\nNEEDS_REVIEW_CHANGES\n",
@@ -1088,6 +1102,7 @@ def test_plan_hard_gate_timeout_records_failed_invocation_only(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _reach_idle_in_progress(project_path, monkeypatch, capfd)
 
     def timeout(
@@ -1129,6 +1144,7 @@ def test_in_progress_blocks_spec_drift_then_gates_plan_reapproval(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _reach_idle_in_progress(project_path, monkeypatch, capfd)
     (project_path / "architecture.md").write_text(
         "# Architecture\n\nAdopt a revised boundary.\n",
@@ -1171,6 +1187,7 @@ def test_in_progress_milestone_replacement_runs_hard_gate(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _reach_idle_in_progress(project_path, monkeypatch, capfd)
 
     code = debug_tool_cli.main(
@@ -1215,6 +1232,7 @@ def test_first_milestone_hard_gate_rejection_blocks_delivery(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _reach_idle_in_progress(project_path, monkeypatch, capfd)
     before = _load_context(project_path)
     assert before.current_snapshot_id is not None
@@ -1274,6 +1292,7 @@ def test_plan_approval_rejects_specs_changed_after_hard_gate(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _write_specs(project_path)
     initial_head = _git(project_path, "rev-parse", "HEAD")
 
@@ -1313,6 +1332,7 @@ def test_returns_unknown_tool_failure_as_json(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
 
     result = debug_tool_cli.main(
         [
@@ -1363,6 +1383,7 @@ def test_missing_specs_are_returned_as_correctable_tool_error(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
 
     result = debug_tool_cli.main(
         [
@@ -1390,10 +1411,11 @@ def test_unexpected_gate_failure_is_not_converted_to_tool_observation(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _write_specs(project_path)
     database = SQLiteDatabase.for_project(project_path)
-    context = ProjectRuntimeContext("triage-unexpected", status="IN_PROGRESS")
-    contexts = SQLiteProjectRuntimeContextRepository()
+    context = ProjectRuntimeState("triage-unexpected", status="IN_PROGRESS")
+    contexts = SQLiteProjectRuntimeStateRepository()
     with database.transaction() as connection:
         contexts.insert(connection, context)
 
@@ -1424,6 +1446,7 @@ def test_complete_rolling_delivery_is_observable_through_debug_commands(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     plan_commit_sha = _approve_current_plan(project_path, monkeypatch, capfd)
     published = _publish_milestones(
         project_path,
@@ -1625,6 +1648,7 @@ def test_rejected_candidate_stays_reachable_and_next_run_skips_first_approval(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     target_commit_sha = _approve_current_plan(project_path, monkeypatch, capfd)
     _publish_milestones(
         project_path,
@@ -1695,6 +1719,7 @@ def test_candidate_that_changes_canonical_specs_cannot_be_accepted(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     plan_commit_sha = _approve_current_plan(project_path, monkeypatch, capfd)
     _publish_milestones(
         project_path,
@@ -1742,6 +1767,7 @@ def test_invalid_stage_output_becomes_failed_fact_and_block_without_activation(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     target_commit_sha = _approve_current_plan(project_path, monkeypatch, capfd)
     _publish_milestones(
         project_path,
@@ -1826,6 +1852,7 @@ def test_blocked_replanning_skips_plan_and_milestone_hard_gates(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _approve_current_plan(project_path, monkeypatch, capfd)
     _publish_milestones(
         project_path,
@@ -1912,6 +1939,7 @@ def test_request_then_approve_commits_specs_and_queues_owner_activation(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _write_specs(project_path)
     initial_head = _git(project_path, "rev-parse", "HEAD")
     (project_path / "index.html").write_text("staged user work\n", encoding="utf-8")
@@ -2009,6 +2037,7 @@ def test_request_then_reject_does_not_commit_and_queues_owner_activation(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _write_specs(project_path)
     initial_head = _git(project_path, "rev-parse", "HEAD")
     debug_tool_cli.main(
@@ -2083,6 +2112,7 @@ def test_plain_text_submits_then_drives_a_restart_safe_user_activation(
     capfd: pytest.CaptureFixture[str],
 ) -> None:
     project_path = initialize_git_project()
+    _initialize_runtime(project_path)
     _ReplyingModel.queries = []
     monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
 

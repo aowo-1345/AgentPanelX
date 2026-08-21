@@ -12,7 +12,7 @@ from agentplanex.domains import (
     OwnerActivationMode,
     OwnerActivationStatus,
     ProjectOwnerTaskType,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     SummaryHistory,
 )
 from agentplanex.project_owner_agent.context import (
@@ -56,14 +56,14 @@ class _InMemoryContextRuntime:
 
     def load_context(
         self,
-        _context: ProjectRuntimeContext,
+        _context: ProjectRuntimeState,
         _activation: OwnerActivation,
     ) -> LoadedOwnerContext:
         return LoadedOwnerContext(snapshot=self.snapshot, revision=self.revision)
 
     def append_messages(
         self,
-        _context: ProjectRuntimeContext,
+        _context: ProjectRuntimeState,
         appended: tuple[Message, ...],
         *,
         expected_revision: object,
@@ -78,7 +78,7 @@ class _InMemoryContextRuntime:
 
     def commit_summary(
         self,
-        _context: ProjectRuntimeContext,
+        _context: ProjectRuntimeState,
         _activation: OwnerActivation,
         *,
         expected_revision: object,
@@ -104,7 +104,7 @@ class _InMemoryContextRuntime:
 
     def record_compaction(
         self,
-        _context: ProjectRuntimeContext,
+        _context: ProjectRuntimeState,
         _activation: OwnerActivation,
         notice: ContextCompactionNotice,
         *,
@@ -185,7 +185,7 @@ def test_manager_restores_one_model_view_and_keeps_appended_messages() -> None:
         ),
     )
     runtime = _InMemoryContextRuntime(snapshot)
-    context = ProjectRuntimeContext(triage_id="triage-1")
+    context = ProjectRuntimeState(triage_id="triage-1")
     activation = OwnerActivation(
         activation_id="activation-1",
         triage_id="triage-1",
@@ -269,7 +269,7 @@ def test_manager_switches_only_after_runtime_commits_the_summary() -> None:
         ),
     )
     runtime = _InMemoryContextRuntime(snapshot)
-    context = ProjectRuntimeContext(triage_id="triage-1")
+    context = ProjectRuntimeState(triage_id="triage-1")
     activation = OwnerActivation(
         activation_id="activation-1",
         triage_id="triage-1",

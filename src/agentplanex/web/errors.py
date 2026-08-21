@@ -4,10 +4,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from agentplanex.infrastructure.workspace_git import WorkspaceGitError
-from agentplanex.services.workspace.errors import (
-    FeatureBusyError,
-    WorkspaceCapacityExhaustedError,
-)
+from agentplanex.services.project_runtime_error import FeatureBusyError
+from agentplanex.services.workspace.errors import WorkspaceCapacityExhaustedError
 
 
 def install_error_handlers(app: FastAPI) -> None:

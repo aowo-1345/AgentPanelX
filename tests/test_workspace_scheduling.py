@@ -15,17 +15,15 @@ from agentplanex.domains import (
     ManagedProject,
     OwnerActivation,
     ProjectOwnerTaskType,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.project_runtime import ProjectRuntime
+from agentplanex.services.project_runtime_error import FeatureBusyError
 from agentplanex.services.project_workspace import ProjectWorkspaceView
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
-from agentplanex.services.workspace.errors import (
-    FeatureBusyError,
-    WorkspaceCapacityExhaustedError,
-)
+from agentplanex.services.workspace.errors import WorkspaceCapacityExhaustedError
 from agentplanex.services.workspace.queries import (
     FeatureWorkspaceView,
     WorkspaceQueries,
@@ -57,7 +55,10 @@ class _ControlledRuntime:
             message_id=f"message-{self.triage_id}",
         )
 
-    def drive_until_waiting(self) -> ProjectRuntimeContext:
+    def state(self) -> ProjectRuntimeState:
+        return ProjectRuntimeState(triage_id=self.triage_id)
+
+    def drive_until_waiting(self) -> ProjectRuntimeState:
         self.trace.append("drive")
         self.drive_started.set()
         try:
@@ -65,7 +66,7 @@ class _ControlledRuntime:
                 raise TimeoutError(f"Test did not release {self.triage_id}")
             if self.raise_during_drive:
                 raise RuntimeError(f"controlled failure for {self.triage_id}")
-            return ProjectRuntimeContext(triage_id=self.triage_id, status="TODO")
+            return ProjectRuntimeState(triage_id=self.triage_id, status="TODO")
         finally:
             self.drive_finished.set()
 
@@ -73,9 +74,9 @@ class _ControlledRuntime:
         self.interruption_checks += 1
         return self.interrupted_work
 
-    def begin_feature(self, _triage_id: str) -> ProjectRuntimeContext:
+    def begin_feature(self) -> ProjectRuntimeState:
         self.trace.append("persist:begin")
-        return ProjectRuntimeContext(triage_id=self.triage_id, status="TODO")
+        return ProjectRuntimeState(triage_id=self.triage_id, status="TODO")
 
     def approve_plan(self) -> None:
         self.trace.append("persist:approve")
@@ -105,7 +106,7 @@ class _ControlledQueries:
             project=self.registry.get_project(project_id),
             binding=binding,
             runtime_view=ProjectWorkspaceView(
-                context=ProjectRuntimeContext(triage_id=triage_id, status="TODO"),
+                context=ProjectRuntimeState(triage_id=triage_id, status="TODO"),
                 owner_activation=None,
                 activation_has_reply=False,
                 runtime_error=None,

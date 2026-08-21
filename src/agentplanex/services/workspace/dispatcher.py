@@ -6,10 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from threading import Lock
 
-from agentplanex.services.workspace.errors import (
-    FeatureBusyError,
-    WorkspaceCapacityExhaustedError,
-)
+from agentplanex.services.project_runtime_error import FeatureBusyError
+from agentplanex.services.workspace.errors import WorkspaceCapacityExhaustedError
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -16,7 +16,7 @@ from agentplanex.domains import (
     OwnerActivation,
     OwnerActivationStatus,
     ProjectOwnerTaskType,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     StageRun,
 )
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
@@ -27,7 +27,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMilestoneSnapshotRepository,
     SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
-    SQLiteProjectRuntimeContextRepository,
+    SQLiteProjectRuntimeStateRepository,
     SQLiteStageRunRepository,
 )
 from agentplanex.services.planning import SPEC_DOCUMENT_NAMES
@@ -61,7 +61,7 @@ class PlanDocument:
 class ProjectWorkspaceView:
     """Panels derived from one required Runtime Context."""
 
-    context: ProjectRuntimeContext
+    context: ProjectRuntimeState
     owner_activation: OwnerActivation | None
     activation_has_reply: bool
     runtime_error: str | None
@@ -85,8 +85,8 @@ class ProjectWorkspaceQuery:
 
     database: SQLiteDatabase
     git: GitRepository
-    contexts: SQLiteProjectRuntimeContextRepository = field(
-        default_factory=SQLiteProjectRuntimeContextRepository
+    contexts: SQLiteProjectRuntimeStateRepository = field(
+        default_factory=SQLiteProjectRuntimeStateRepository
     )
     snapshots: SQLiteMilestoneSnapshotRepository = field(
         default_factory=SQLiteMilestoneSnapshotRepository
@@ -137,7 +137,7 @@ class ProjectWorkspaceQuery:
             ),
         )
 
-    def _context(self, triage_id: str) -> ProjectRuntimeContext:
+    def _context(self, triage_id: str) -> ProjectRuntimeState:
         with self.database.read_only_connection() as connection:
             context = self.contexts.get(connection, triage_id)
         if context is None:
@@ -160,7 +160,7 @@ class ProjectWorkspaceQuery:
 
     def _milestones(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
     ) -> tuple[MilestoneSnapshot | None, str | None]:
         if context.current_snapshot_id is None:
             return None, None
@@ -208,7 +208,7 @@ class ProjectWorkspaceQuery:
 
 
 def _human_actions(
-    context: ProjectRuntimeContext,
+    context: ProjectRuntimeState,
     activation: OwnerActivation | None,
     active_stage: StageRun | None,
     runtime_error: str | None,

@@ -15,8 +15,8 @@ from agentplanex.infrastructure.sqlite.repositories.owner_activation import (
 from agentplanex.infrastructure.sqlite.repositories.project_owner_agent import (
     SQLiteProjectOwnerAgentRepository,
 )
-from agentplanex.infrastructure.sqlite.repositories.project_runtime_context import (
-    SQLiteProjectRuntimeContextRepository,
+from agentplanex.infrastructure.sqlite.repositories.project_runtime_state import (
+    SQLiteProjectRuntimeStateRepository,
 )
 from agentplanex.infrastructure.sqlite.repositories.stage_run import (
     SQLiteStageRunRepository,
@@ -31,7 +31,7 @@ __all__ = [
     "SQLiteMilestoneSnapshotRepository",
     "SQLiteOwnerActivationRepository",
     "SQLiteProjectOwnerAgentRepository",
-    "SQLiteProjectRuntimeContextRepository",
+    "SQLiteProjectRuntimeStateRepository",
     "SQLiteStageRunRepository",
     "SQLiteSummaryHistoryRepository",
 ]

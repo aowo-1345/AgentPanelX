@@ -1,51 +1,31 @@
 """Project-scoped Runtime entry point and tool environment."""
 
+from collections.abc import Callable
 from pathlib import Path
 
 from agentplanex.domains import (
     Action,
     OwnerActivation,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     ToolExecutionResult,
 )
-from agentplanex.infrastructure.git_repository import GitRepository
-from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
-from agentplanex.infrastructure.sqlite.repositories import (
-    SQLiteOwnerActivationRepository,
-)
-from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.models.responses import (
-    ResponsesClient,
     ResponsesTransport,
 )
-from agentplanex.project_runtime.executions import create_project_executions
+from agentplanex.project_runtime.composition import compose_project_runtime
 from agentplanex.services import (
-    AgentCollaborationService,
-    DeliveryService,
-    EventBus,
-    PlanningService,
-    ProjectControlQuery,
     ProjectControlView,
-    ProjectOwnerService,
-    ProjectRuntimeService,
-    RuntimeContextService,
     ToolActivationDriveResult,
 )
-from agentplanex.services.agent_contracts import resolve_observation_skill
 from agentplanex.services.delivery import MilestoneRunQueued
-from agentplanex.services.delivery_runner import DeliveryDriveResult, DeliveryRunner
-from agentplanex.services.owner_activation import (
-    ActivationDriveResult,
-    OwnerActivationDriver,
-)
-from agentplanex.services.plan_hard_gate import CodexPlanHardGate
+from agentplanex.services.delivery_runner import DeliveryDriveResult
+from agentplanex.services.owner_activation import ActivationDriveResult
 from agentplanex.services.planning import PlanDecision
 from agentplanex.services.project_workspace import (
-    ProjectWorkspaceQuery,
     ProjectWorkspaceView,
 )
-from agentplanex.services.stage_executor import CodexStageExecutor, StageExecutor
+from agentplanex.services.stage_executor import StageExecutor
 from agentplanex.settings import Settings
 
 
@@ -64,154 +44,78 @@ class ProjectRuntime:
         project_path = project_path.resolve()
         if not project_path.is_dir():
             raise ValueError(f"Project path is not a directory: {project_path}")
-        observation_skill = resolve_observation_skill()
-
-        database = SQLiteDatabase.for_project(project_path)
-        initialize_schema(database)
-        event_bus = EventBus((SQLiteTimelineRecorder(database),))
-        model_settings = settings.project_owner_agent.selected_model
-        responses = ResponsesClient(
-            model=model_settings.name,
-            transport=responses_transport,
-        )
-        runtime_contexts = RuntimeContextService(database, event_bus)
-        activations = SQLiteOwnerActivationRepository()
-        collaboration = AgentCollaborationService.from_settings(
-            project_path,
-            settings.runtime,
-            observation_skill=observation_skill,
-        )
-        hard_gate = CodexPlanHardGate(collaboration)
-        planning = PlanningService(
+        components = compose_project_runtime(
             project_path=project_path,
-            database=database,
-            event_bus=event_bus,
-            runtime_contexts=runtime_contexts,
-            activations=activations,
-            review_plan=hard_gate.review,
-        )
-        git = GitRepository(project_path)
-        delivery = DeliveryService(
-            project_path=project_path,
-            database=database,
-            event_bus=event_bus,
-            runtime_contexts=runtime_contexts,
-            git=git,
-            review_milestones=hard_gate.review_milestones,
-        )
-        delivery_runner = DeliveryRunner(
-            delivery=delivery,
-            executor=(
-                stage_executor
-                if stage_executor is not None
-                else CodexStageExecutor(
-                    project_path,
-                    collaboration.transport,
-                    collaboration.observation_skill,
-                    collaboration.prompts,
-                )
-            ),
-            git=git,
-        )
-        controls = ProjectControlQuery(
-            database=database,
-            git=git,
-        )
-        self._workspace_query = ProjectWorkspaceQuery(database=database, git=git)
-        executions = create_project_executions(
-            project_path,
-            settings.runtime,
-            planning,
-            delivery,
-            collaboration,
-            event_bus,
-        )
-        owner = ProjectOwnerService(
-            database=database,
             settings=settings,
             approval_mode=approval_mode,
-            tools=executions.tools,
-            tool_executor=executions.execute,
-            event_bus=event_bus,
-            responses=responses,
-            observation_skill=collaboration.observation_skill,
-            prompts=collaboration.prompts,
+            responses_transport=responses_transport,
+            stage_executor=stage_executor,
         )
-        driver = OwnerActivationDriver(
-            database=database,
-            run_owner=owner.run_activation,
-            activations=activations,
-        )
-        self._service = ProjectRuntimeService(
-            database=database,
-            owner=owner,
-            planning=planning,
-            delivery=delivery,
-            delivery_runner=delivery_runner,
-            controls=controls,
-            event_bus=event_bus,
-            runtime_contexts=runtime_contexts,
-            activations=activations,
-            driver=driver,
-        )
-        self._git = git
+        self._service = components.service
+        self._context = components.context
+        self._workspace_query = components.workspace_query
+        self._git = components.git
 
-    def initialize(self) -> ProjectRuntimeContext:
+    def initialize(self) -> ProjectRuntimeState:
         """Initialize this Feature Runtime without messages, activations, or models."""
         context = self._service.initialize()
         self._git.ensure_runtime_excluded()
         return context
 
-    def begin_feature(self, triage_id: str) -> ProjectRuntimeContext:
+    def state(self) -> ProjectRuntimeState:
+        """Return this worktree's initialized Feature State without creating it."""
+        return self._service.state()
+
+    def begin_feature(self) -> ProjectRuntimeState:
         """Begin one selected Feature without creating an Owner activation."""
-        return self._service.begin_feature(triage_id)
+        return self._service.begin_feature()
 
     def submit_message(self, content: str) -> OwnerActivation:
         """Persist user input and enqueue one durable Owner activation."""
-        return self._service.submit_user_message(content)
+        return self._run(lambda: self._service.submit_user_message(content))
 
     def approve_plan(self) -> PlanDecision:
         """Approve the pending Plan and enqueue the Owner decision input."""
-        return self._service.approve_plan()
+        return self._run(self._service.approve_plan)
 
     def reject_plan(self, feedback: str = "") -> PlanDecision:
         """Reject the pending Plan and enqueue the Owner decision input."""
-        return self._service.reject_plan(feedback)
+        return self._run(lambda: self._service.reject_plan(feedback))
 
     def drive_next_activation(self) -> ActivationDriveResult:
         """Claim and process one pending Owner activation."""
-        return self._service.drive_next_activation()
+        return self._run(self._service.drive_next_activation)
 
-    def drive_until_waiting(self) -> ProjectRuntimeContext:
+    def drive_until_waiting(self) -> ProjectRuntimeState:
         """Run durable automatic work until control must return to the user."""
-        return self._service.drive_until_waiting()
+        return self._run(self._service.drive_until_waiting)
 
     def fail_interrupted_work(self) -> bool:
         """Fail unfinished automatic work left by a stopped Runtime process."""
-        return self._service.fail_interrupted_work()
+        return self._run(self._service.fail_interrupted_work)
 
     def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult:
         """Drive one Owner activation step with a supplied Tool Action."""
 
-        return self._service.drive_activation_tool(action)
+        return self._run(lambda: self._service.drive_activation_tool(action))
 
     def reply_to_activation(self, content: str) -> ToolActivationDriveResult:
         """Finish a Tool-driven Owner activation with a persisted reply."""
 
-        return self._service.reply_to_activation(content)
+        return self._run(lambda: self._service.reply_to_activation(content))
 
     def fail_activation(self, reason: str) -> ToolActivationDriveResult:
         """Explicitly fail a Tool-driven Owner activation."""
 
-        return self._service.fail_activation(reason)
+        return self._run(lambda: self._service.fail_activation(reason))
 
     def start_first_run(self) -> MilestoneRunQueued:
         """Apply the first explicit Run approval and queue its first Stage."""
-        return self._service.start_first_run()
+        return self._run(self._service.start_first_run)
 
     def drive_delivery(self) -> DeliveryDriveResult:
         """Run one queued Stage through the Delivery Driver."""
-        return self._service.drive_delivery()
+        return self._run(self._service.drive_delivery)
 
     def project_control_view(self) -> ProjectControlView:
         """Return the stable read model used by control clients and debug tooling."""
@@ -223,4 +127,8 @@ class ProjectRuntime:
 
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit tool action without entering the Agent loop."""
-        return self._service.execute_action(action)
+        return self._run(lambda: self._service.execute_action(action))
+
+    def _run[T](self, command: Callable[[], T]) -> T:
+        with self._context.operation():
+            return command()

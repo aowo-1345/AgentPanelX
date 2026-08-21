@@ -15,7 +15,7 @@ from agentplanex.domains import (
     Message,
     Milestone,
     MilestoneState,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     Stage,
     StageRun,
     StageRunStatus,
@@ -121,6 +121,7 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
         approval_mode="yolo",
         responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
+    runtime.initialize()
 
     activation = runtime.submit_message("Clarify the current project work.")
     runtime.drive_next_activation()
@@ -153,6 +154,7 @@ def test_existing_owner_prompt_remains_the_session_contract_after_restart(
         approval_mode="yolo",
         responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
+    runtime.initialize()
     activation = runtime.submit_message("Use the persisted Owner contract.")
     runtime = ProjectRuntime(
         project_path=project_path,
@@ -260,7 +262,7 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
 
     monkeypatch.setattr(CodexTurnTransport, "run", record)
     executions = create_project_executions(project_path, _settings().runtime)
-    context = ProjectRuntimeContext(
+    context = ProjectRuntimeState(
         triage_id="triage-contract",
         status="IN_PROGRESS",
         current_plan_commit_sha="plan-commit",

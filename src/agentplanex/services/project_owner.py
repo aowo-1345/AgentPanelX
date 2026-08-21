@@ -19,7 +19,7 @@ from agentplanex.domains import (
     OwnerActivationStatus,
     ProjectOwnerAgent,
     ProjectOwnerTask,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     SummaryHistory,
     ToolExecutionResult,
     ToolExecutor,
@@ -29,7 +29,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
     SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
-    SQLiteProjectRuntimeContextRepository,
+    SQLiteProjectRuntimeStateRepository,
     SQLiteSummaryHistoryRepository,
 )
 from agentplanex.project_owner_agent.agent import AgentConfig, DefaultAgent
@@ -68,6 +68,14 @@ class _ProjectOwnerRevision:
     summary_id: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class _LoadedOwnerRuntime:
+    """A transient pairing; persisted Runtime State never owns behavior objects."""
+
+    state: ProjectRuntimeState
+    owner: ProjectOwnerAgent
+
+
 @dataclass(slots=True)
 class ProjectOwnerService:
     """Own persistent Owner identity, native messages, and one ReAct Loop."""
@@ -81,8 +89,8 @@ class ProjectOwnerService:
     responses: ResponsesClient
     observation_skill: Path
     prompts: AgentPromptCatalog
-    contexts: SQLiteProjectRuntimeContextRepository = field(
-        default_factory=SQLiteProjectRuntimeContextRepository
+    contexts: SQLiteProjectRuntimeStateRepository = field(
+        default_factory=SQLiteProjectRuntimeStateRepository
     )
     owners: SQLiteProjectOwnerAgentRepository = field(
         default_factory=SQLiteProjectOwnerAgentRepository
@@ -101,49 +109,39 @@ class ProjectOwnerService:
         if self.approval_mode not in {"confirm", "yolo"}:
             raise ValueError(f"Unknown approval mode: {self.approval_mode!r}")
 
-    def ensure_state(
+    def restore_state(
         self,
         connection: sqlite3.Connection,
-    ) -> ProjectRuntimeContext:
-        """Return the sole project Context and create its Owner when absent."""
-        tool_names = tuple(tool.name for tool in self.tools.tools)
-        existing_contexts = self.contexts.list_all(connection)
-        if len(existing_contexts) > 1:
-            raise ValueError("Project contains more than one Project Runtime context")
-        if existing_contexts:
-            context = existing_contexts[0]
-        else:
-            context = ProjectRuntimeContext(triage_id=uuid4().hex)
-            self.contexts.insert(connection, context)
+    ) -> ProjectRuntimeState:
+        """Restore the initialized State and validate its persisted Owner identity."""
+        return self._restore(connection).state
 
-        owner = self.owners.get_by_triage_id(connection, context.triage_id)
-        configured_prompt = self.prompts.role_instructions(PromptRole.PROJECT_OWNER)
+    def _restore(self, connection: sqlite3.Connection) -> _LoadedOwnerRuntime:
+        states = self.contexts.list_all(connection)
+        if not states:
+            raise LookupError("Project Runtime is not initialized")
+        if len(states) > 1:
+            raise ValueError("Project contains more than one Project Runtime State")
+        state = states[0]
+        owner = self.owners.get_by_triage_id(connection, state.triage_id)
         if owner is None:
-            owner = ProjectOwnerAgent(
-                triage_id=context.triage_id,
-                project_owner_session_id=uuid4().hex,
-                system_prompt=configured_prompt,
-                tools=tool_names,
-            )
-            self.owners.insert(connection, owner)
-        else:
-            self.tools.select(owner.tools)
-
-        return replace(context, project_owner_agent=owner)
+            raise RuntimeError("Initialized Project Runtime has no Owner identity")
+        self.tools.select(owner.tools)
+        return _LoadedOwnerRuntime(state=state, owner=owner)
 
     def append_task(
         self,
         connection: sqlite3.Connection,
-        context: ProjectRuntimeContext,
+        state: ProjectRuntimeState,
         task: ProjectOwnerTask,
     ) -> tuple[str, str | None]:
         """Persist external input and return its message and frozen Summary IDs."""
         content = task.content.strip()
         if not content:
             raise ValueError("Project Owner task content must not be empty")
-        owner = context.project_owner_agent
+        owner = self.owners.get_by_triage_id(connection, state.triage_id)
         if owner is None:
-            raise ValueError("Project Runtime Context has no Project Owner Agent")
+            raise RuntimeError("Initialized Project Runtime has no Owner identity")
 
         appended: list[Message] = []
         if owner.message_id is None:
@@ -155,18 +153,16 @@ class ProjectOwnerService:
     def run_activation(self, activation: OwnerActivation) -> AgentExit:
         """Restore persisted Owner history and run exactly one activation."""
         try:
-            context = self._load_state_for_activation(activation)
-            owner = context.project_owner_agent
-            if owner is None:
-                raise RuntimeError("Project Owner was not restored")
-            agent = self._build_agent(context, owner, activation)
+            loaded = self._load_state_for_activation(activation)
+            state = loaded.state
+            agent = self._build_agent(state, loaded.owner, activation)
         except Exception as error:
             return _unhandled_exit(error)
 
         react_loop_id = activation.activation_id
         self.event_bus.publish(
             ExecutionEvent(
-                triage_id=context.triage_id,
+                triage_id=state.triage_id,
                 event_type=ExecutionEventType.REACT_LOOP_ENTERED,
                 react_loop_id=react_loop_id,
                 payload={
@@ -176,14 +172,14 @@ class ProjectOwnerService:
             )
         )
         try:
-            agent.run(context)
+            agent.run(state)
         except AgentFlowExit as error:
             result = AgentExit(status=error.status, content=error.content)
         except Exception as error:
             result = _unhandled_exit(error)
         self.event_bus.publish(
             ExecutionEvent(
-                triage_id=context.triage_id,
+                triage_id=state.triage_id,
                 event_type=ExecutionEventType.REACT_LOOP_EXITED,
                 react_loop_id=react_loop_id,
                 payload={
@@ -197,8 +193,8 @@ class ProjectOwnerService:
     def execute_action(self, action: Action) -> ToolExecutionResult:
         """Execute one explicit debug Tool Action against current persisted state."""
         with self.database.transaction() as connection:
-            context = self.ensure_state(connection)
-        return self.tool_executor(context, action)
+            state = self.restore_state(connection)
+        return self.tool_executor(state, action)
 
     def execute_activation_action(
         self,
@@ -207,16 +203,17 @@ class ProjectOwnerService:
     ) -> ToolExecutionResult:
         """Execute and persist one Tool step inside a claimed manual Owner loop."""
 
-        context = self._load_state_for_activation(
+        loaded = self._load_state_for_activation(
             activation,
             allow_advanced_checkpoint=True,
         )
-        self.append_messages(context, (format_tool_call_message(action),))
+        state = loaded.state
+        self.append_messages(state, (format_tool_call_message(action),))
         try:
-            result = self._execute_latest_context(context, action)
+            result = self._execute_latest_context(state, action)
         except Exception as error:
             self.append_messages(
-                context,
+                state,
                 (
                     format_tool_output_message(
                         action,
@@ -229,7 +226,7 @@ class ProjectOwnerService:
             )
             raise
         self.append_messages(
-            context,
+            state,
             (format_tool_output_message(action, result.output),),
         )
         return result
@@ -244,11 +241,14 @@ class ProjectOwnerService:
         reply = content.strip()
         if not reply:
             raise ValueError("Project Owner reply must not be empty")
-        context = self._load_state_for_activation(
+        loaded = self._load_state_for_activation(
             activation,
             allow_advanced_checkpoint=True,
         )
-        self.append_messages(context, ({"role": "assistant", "content": reply},))
+        self.append_messages(
+            loaded.state,
+            ({"role": "assistant", "content": reply},),
+        )
         return AgentExit(status=AgentExitStatus.REPLY_TO_HUMAN, content=reply)
 
     def _load_state_for_activation(
@@ -256,34 +256,31 @@ class ProjectOwnerService:
         activation: OwnerActivation,
         *,
         allow_advanced_checkpoint: bool = False,
-    ) -> ProjectRuntimeContext:
+    ) -> _LoadedOwnerRuntime:
         if activation.status is not OwnerActivationStatus.RUNNING:
             raise ValueError(
                 "Project Owner can only run a claimed activation: "
                 f"{activation.activation_id} is {activation.status.value}"
             )
         with self.database.connection() as connection:
-            context = self.ensure_state(connection)
-            if context.triage_id != activation.triage_id:
+            loaded = self._restore(connection)
+            if loaded.state.triage_id != activation.triage_id:
                 raise LookupError(
                     "Owner activation does not belong to this Project Runtime"
                 )
-            owner = context.project_owner_agent
-            if owner is None:
-                raise RuntimeError("Project Owner was not created")
             if (
-                owner.message_id != activation.message_id
+                loaded.owner.message_id != activation.message_id
                 and not allow_advanced_checkpoint
             ):
                 raise RuntimeError(
                     "Owner activation checkpoint is not the current message: "
-                    f"{activation.message_id} != {owner.message_id}"
+                    f"{activation.message_id} != {loaded.owner.message_id}"
                 )
-        return context
+        return loaded
 
     def _invocation_contract(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         activation: OwnerActivation,
     ) -> InvocationContract:
         fixed_work_object = {
@@ -324,7 +321,7 @@ class ProjectOwnerService:
 
     def _build_agent(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         owner: ProjectOwnerAgent,
         activation: OwnerActivation,
     ) -> DefaultAgent:
@@ -393,29 +390,23 @@ class ProjectOwnerService:
 
     def _execute_latest_context(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         action: Action,
     ) -> ToolExecutionResult:
         with self.database.connection() as connection:
             current = self.contexts.get(connection, context.triage_id)
         if current is None:
             raise LookupError(f"Project Runtime Context not found: {context.triage_id}")
-        return self.tool_executor(
-            replace(current, project_owner_agent=context.project_owner_agent),
-            action,
-        )
+        return self.tool_executor(current, action)
 
     def append_messages(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         appended: tuple[Message, ...],
         *,
         expected_revision: object | None = None,
     ) -> object:
         """Atomically append native Owner messages and advance its checkpoint."""
-        owner = context.project_owner_agent
-        if owner is None:
-            raise ValueError("Project Runtime Context has no Project Owner Agent")
         expected = (
             _require_owner_revision(expected_revision)
             if expected_revision is not None
@@ -423,15 +414,9 @@ class ProjectOwnerService:
         )
 
         with self.database.transaction() as connection:
-            persisted_owner = self.owners.get_by_session_id(
-                connection,
-                owner.project_owner_session_id,
-            )
+            persisted_owner = self.owners.get_by_triage_id(connection, context.triage_id)
             if persisted_owner is None:
-                raise LookupError(
-                    "Project Owner Agent not found: "
-                    f"{owner.project_owner_session_id}"
-                )
+                raise RuntimeError("Initialized Project Runtime has no Owner identity")
             if (
                 expected is not None
                 and persisted_owner.message_id != expected.message_id
@@ -460,7 +445,7 @@ class ProjectOwnerService:
 
     def commit_summary(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         activation: OwnerActivation,
         *,
         expected_revision: object,
@@ -469,18 +454,18 @@ class ProjectOwnerService:
     ) -> CommittedOwnerSummary:
         """Atomically persist one Agent-produced Summary at an expected revision."""
 
-        owner = context.project_owner_agent
-        if owner is None:
-            raise ValueError("Project Runtime Context has no Project Owner Agent")
         expected = _require_owner_revision(expected_revision)
-        summary = SummaryHistory(
-            project_owner_session_id=owner.project_owner_session_id,
-            summary_id=uuid4().hex,
-            covered_through_message_id=expected.message_id,
-            intent_summary_content=draft.intent_summary_content,
-            trajectory_summary_content=draft.trajectory_summary_content,
-        )
         with self.database.transaction() as connection:
+            owner = self.owners.get_by_triage_id(connection, context.triage_id)
+            if owner is None:
+                raise RuntimeError("Initialized Project Runtime has no Owner identity")
+            summary = SummaryHistory(
+                project_owner_session_id=owner.project_owner_session_id,
+                summary_id=uuid4().hex,
+                covered_through_message_id=expected.message_id,
+                intent_summary_content=draft.intent_summary_content,
+                trajectory_summary_content=draft.trajectory_summary_content,
+            )
             self.summaries.insert(connection, summary)
             self.owners.advance_summary(
                 connection,
@@ -505,7 +490,7 @@ class ProjectOwnerService:
 
     def record_compaction(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         activation: OwnerActivation,
         notice: ContextCompactionNotice,
         *,
@@ -572,24 +557,17 @@ class ProjectOwnerService:
 
     def load_context(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         activation: OwnerActivation,
     ) -> LoadedOwnerContext:
         """Load raw persisted facts for one fixed Activation checkpoint."""
 
-        owner = context.project_owner_agent
-        if owner is None:
-            raise ValueError("Project Runtime Context has no Project Owner Agent")
         restored, current_revision = _load_live_owner_context(
             self.database,
             activation.message_id,
             summary_id=activation.summary_id,
         )
-        if (
-            restored.triage_id != owner.triage_id
-            or restored.project_owner_session_id
-            != owner.project_owner_session_id
-        ):
+        if restored.triage_id != context.triage_id:
             raise RuntimeError(
                 "Restored Owner context does not match the Activation owner"
             )

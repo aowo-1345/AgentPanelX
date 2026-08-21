@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Never
 
 from agentplanex.domains import (
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     ToolExecutionResult,
     ToolExecutor,
 )
@@ -47,7 +47,7 @@ class DefaultAgent:
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
 
-    def run(self, context: ProjectRuntimeContext, task: str = "") -> Never:
+    def run(self, context: ProjectRuntimeState, task: str = "") -> Never:
         if task:
             self.add_messages(context, {"role": "user", "content": task})
 
@@ -74,11 +74,11 @@ class DefaultAgent:
                     },
                 )
 
-    def step(self, context: ProjectRuntimeContext) -> list[Message]:
+    def step(self, context: ProjectRuntimeState) -> list[Message]:
         """Query the model and execute its actions."""
         return self.execute_actions(context, self.query(context))
 
-    def query(self, context: ProjectRuntimeContext) -> Message:
+    def query(self, context: ProjectRuntimeState) -> Message:
         """Query the model, persisting only a terminal reply here."""
         if self.n_calls >= self.config.step_limit:
             raise StepLimitExceeded()
@@ -93,7 +93,7 @@ class DefaultAgent:
 
     def execute_actions(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         message: Message,
     ) -> list[Message]:
         """Execute actions and append their provider-formatted observations."""
@@ -106,7 +106,7 @@ class DefaultAgent:
 
     def _record_action_results(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         message: Message,
         results: list[ToolExecutionResult],
     ) -> list[Message]:
@@ -125,7 +125,7 @@ class DefaultAgent:
 
     def add_messages(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         *messages: Message,
     ) -> list[Message]:
         appended = self.owner_context.append(messages)

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
-from agentplanex.domains import ProjectRuntimeContext
+from agentplanex.domains import ProjectRuntimeState
 from agentplanex.project_owner_agent.models.responses import (
     ProjectOwnerModel,
     ResponsesClient,
@@ -222,7 +222,7 @@ def test_direct_execution_uses_the_same_argument_contract(
     )
 
     result = executions.execute(
-        ProjectRuntimeContext(triage_id="triage-tool-contract"),
+        ProjectRuntimeState(triage_id="triage-tool-contract"),
         {
             "tool": "talk_to_agent",
             "call_id": "call-1",
@@ -254,7 +254,7 @@ def test_unknown_agent_is_rejected_before_an_invocation_event(
     )
 
     result = executions.execute(
-        ProjectRuntimeContext(triage_id="triage-tool-contract"),
+        ProjectRuntimeState(triage_id="triage-tool-contract"),
         {
             "tool": "talk_to_agent",
             "call_id": "call-unknown-agent",

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agentplanex.domains.agent_exit import AgentExit
-from agentplanex.domains.project_runtime_context import ProjectRuntimeContext
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 
 type ToolArguments = dict[str, Any]
 type ToolSchema = dict[str, Any]
@@ -20,7 +20,7 @@ class ToolExecutionResult:
 
 
 type ToolExecutor = Callable[
-    [ProjectRuntimeContext, Action], ToolExecutionResult
+    [ProjectRuntimeState, Action], ToolExecutionResult
 ]
 
 BASH_TOOL_NAME = "bash"

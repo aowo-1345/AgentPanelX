@@ -2,7 +2,7 @@
 
 from agentplanex.domains import (
     Action,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     ToolExecutionResult,
     ToolExecutor,
 )
@@ -35,7 +35,7 @@ class InteractiveAgent(DefaultAgent):
 
     def execute_actions(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         message: Message,
     ) -> list[Message]:
         self.add_messages(context, message)

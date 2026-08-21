@@ -1,23 +1,23 @@
-"""SQLite operations for project runtime contexts."""
+"""SQLite operations for persisted Project Runtime State."""
 
 import sqlite3
 from datetime import datetime
 from typing import cast
 
-from agentplanex.domains import ProjectRuntimeContext
+from agentplanex.domains import ProjectRuntimeState
 
 
-class SQLiteProjectRuntimeContextRepository:
-    """Insert, update, and query project runtime contexts."""
+class SQLiteProjectRuntimeStateRepository:
+    """Insert, update, and query the sole Feature Runtime State."""
 
     def insert(
         self,
         connection: sqlite3.Connection,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
     ) -> None:
         connection.execute(
             """
-            INSERT INTO project_runtime_context (
+            INSERT INTO project_runtime_state (
                 triage_id,
                 idea,
                 status,
@@ -44,11 +44,11 @@ class SQLiteProjectRuntimeContextRepository:
     def update(
         self,
         connection: sqlite3.Connection,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
     ) -> None:
         cursor = connection.execute(
             """
-            UPDATE project_runtime_context
+            UPDATE project_runtime_state
             SET
                 idea = ?,
                 status = ?,
@@ -77,7 +77,7 @@ class SQLiteProjectRuntimeContextRepository:
         self,
         connection: sqlite3.Connection,
         triage_id: str,
-    ) -> ProjectRuntimeContext | None:
+    ) -> ProjectRuntimeState | None:
         row = connection.execute(
             f"{self._SELECT} WHERE triage_id = ?",
             (triage_id,),
@@ -89,7 +89,7 @@ class SQLiteProjectRuntimeContextRepository:
     def list_all(
         self,
         connection: sqlite3.Connection,
-    ) -> tuple[ProjectRuntimeContext, ...]:
+    ) -> tuple[ProjectRuntimeState, ...]:
         rows = connection.execute(
             f"{self._SELECT} ORDER BY triage_id"
         ).fetchall()
@@ -114,10 +114,10 @@ class SQLiteProjectRuntimeContextRepository:
         blocked_capability,
         blocked_previous_status
     """
-    _SELECT = f"SELECT {_COLUMNS} FROM project_runtime_context"
+    _SELECT = f"SELECT {_COLUMNS} FROM project_runtime_state"
 
     @staticmethod
-    def _values(context: ProjectRuntimeContext) -> tuple[object, ...]:
+    def _values(context: ProjectRuntimeState) -> tuple[object, ...]:
         return (
             context.triage_id,
             context.idea,
@@ -143,9 +143,9 @@ class SQLiteProjectRuntimeContextRepository:
         )
 
     @staticmethod
-    def _from_row(row: sqlite3.Row) -> ProjectRuntimeContext:
+    def _from_row(row: sqlite3.Row) -> ProjectRuntimeState:
         rolling_started_at = cast(str | None, row["rolling_started_at"])
-        return ProjectRuntimeContext(
+        return ProjectRuntimeState(
             triage_id=cast(str, row["triage_id"]),
             idea=cast(str | None, row["idea"]),
             status=cast(str, row["status"]),

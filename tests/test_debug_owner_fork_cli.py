@@ -17,7 +17,7 @@ from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
     SQLiteProjectOwnerAgentRepository,
-    SQLiteProjectRuntimeContextRepository,
+    SQLiteProjectRuntimeStateRepository,
     SQLiteSummaryHistoryRepository,
 )
 from agentplanex.project_owner_agent.exception import ReplyToHuman
@@ -60,6 +60,10 @@ def historical_project(
     capfd: pytest.CaptureFixture[str],
 ) -> Iterator[tuple[Path, str, SummaryHistory]]:
     project_path = initialize_git_project()
+    debug_tool_cli.create_project_runtime(
+        project_path=project_path,
+        approval_mode="yolo",
+    ).initialize()
     assert debug_tool_cli.main(
         ["--cwd", str(project_path), "--print", "message", "first"]
     ) == 0
@@ -84,7 +88,7 @@ def historical_project(
     messages = SQLiteMessageHistoryRepository()
     summaries = SQLiteSummaryHistoryRepository()
     with database.transaction() as connection:
-        contexts = SQLiteProjectRuntimeContextRepository().list_all(connection)
+        contexts = SQLiteProjectRuntimeStateRepository().list_all(connection)
         assert len(contexts) == 1
         owner = owners.get_by_triage_id(connection, contexts[0].triage_id)
         assert owner is not None

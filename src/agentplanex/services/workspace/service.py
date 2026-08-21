@@ -142,9 +142,10 @@ class WorkspaceService:
     def begin_feature(self, *, project_id: str, triage_id: str) -> FeatureState:
         binding = self._require_feature_binding(project_id, triage_id)
         runtime = self.runtime_factory(binding.worktree_path)
+        self._assert_runtime_identity(binding, runtime)
 
         def begin() -> FeatureState:
-            context = runtime.begin_feature(binding.triage_id)
+            context = runtime.begin_feature()
             return FeatureState(
                 project_id=binding.project_id,
                 triage_id=binding.triage_id,
@@ -162,6 +163,7 @@ class WorkspaceService:
     ) -> OwnerActivation:
         binding = self._require_feature_binding(project_id, triage_id)
         runtime = self.runtime_factory(binding.worktree_path)
+        self._assert_runtime_identity(binding, runtime)
         return self.dispatcher.dispatch(
             binding.triage_id,
             persist=lambda: runtime.submit_message(content),
@@ -195,6 +197,7 @@ class WorkspaceService:
     ) -> FeatureWorkspaceView:
         binding = self._require_feature_binding(project_id, triage_id)
         runtime = self.runtime_factory(binding.worktree_path)
+        self._assert_runtime_identity(binding, runtime)
         if action is FeatureAction.BEGIN:
             return self.dispatcher.exclusive(
                 binding.triage_id,
@@ -234,7 +237,7 @@ class WorkspaceService:
         binding: FeatureBinding,
         runtime: ProjectRuntime,
     ) -> FeatureWorkspaceView:
-        runtime.begin_feature(binding.triage_id)
+        runtime.begin_feature()
         return self.queries.feature_workspace(
             project_id=binding.project_id,
             triage_id=binding.triage_id,
@@ -254,6 +257,17 @@ class WorkspaceService:
             runtime.start_first_run()
         else:
             raise AssertionError(f"Non-automatic Feature action: {action}")
+
+    @staticmethod
+    def _assert_runtime_identity(
+        binding: FeatureBinding,
+        runtime: ProjectRuntime,
+    ) -> None:
+        state = runtime.state()
+        if state.triage_id != binding.triage_id:
+            raise RuntimeError(
+                "Workspace Feature binding does not match its Runtime identity"
+            )
 
     def _delete_feature(self, binding: FeatureBinding) -> None:
         project = self.registry.get_project(binding.project_id)

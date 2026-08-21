@@ -11,7 +11,7 @@ from agentplanex.domains import (
     ArtifactRef,
     ExecutionEvent,
     ExecutionEventType,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     TalkToAgentRequest,
     ToolExecutionResult,
 )
@@ -110,7 +110,7 @@ class TalkToAgentExecution(ProjectExecution[TalkToAgentArguments]):
 
     def execute(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         arguments: TalkToAgentArguments,
     ) -> ToolExecutionResult:
         request = arguments.to_request()
@@ -205,7 +205,7 @@ class TalkToAgentExecution(ProjectExecution[TalkToAgentArguments]):
 
     def _publish_failure(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         request: TalkToAgentRequest,
         invocation_id: str,
         error: Exception,

@@ -80,6 +80,7 @@ flowchart TB
         WorkspaceQueries[Workspace Queries]
         ProjectRuntime[ProjectRuntime Facade]
         RuntimeService[ProjectRuntimeService]
+        RuntimeContext[ProjectRuntimeContext]
         ControlQuery[Project Control Query]
     end
 
@@ -95,7 +96,7 @@ flowchart TB
     end
 
     subgraph Domain[Domain State]
-        Context[Project Runtime Context]
+        RuntimeState[ProjectRuntimeState]
         Messages[Message / Summary History]
         Milestones[Milestone Snapshot / Stage Run]
         Events[Execution Events]
@@ -118,6 +119,8 @@ flowchart TB
     WorkspaceService --> ProjectRuntime
     WorkspaceQueries --> Registry
     ProjectRuntime --> RuntimeService
+    RuntimeService --> RuntimeContext
+    RuntimeContext --> RuntimeState
     RuntimeService --> Orchestration
     ControlQuery --> Domain
     Orchestration --> Domain
@@ -147,10 +150,11 @@ Feature 的 `ProjectRuntime.drive_until_waiting()`；容量已满或 Feature 正
 
 ### ProjectRuntime 与 ProjectRuntimeService
 
-`ProjectRuntime` 是一个 Feature 的统一 facade 与 composition root；它持有该 Feature 的
-Runtime services，并向 Workspace、Control 和调试入口暴露稳定命令。内部的
-`ProjectRuntimeService` 负责协调 Project Owner、Planning 与 Delivery；查询投影从同一
-SQLite/Git 事实独立读取，不参与调度。它保证：
+`ProjectRuntime` 是一个 Feature 的统一 facade；composition root 为它装配并 seal 完整
+依赖图，再向 Workspace、Control 和调试入口暴露稳定命令。内部的
+`ProjectRuntimeService` 负责协调 Project Owner、Planning 与 Delivery；Services 层的
+`ProjectRuntimeContext` 负责单 Feature 的 `ProjectRuntimeState`、事务、提交后事件、
+执行期缓存与互斥。查询投影从同一 SQLite/Git 事实独立读取，不参与调度。它保证：
 
 - 用户 Message 与 `PENDING` Owner Activation 在同一事务内创建；
 - 一个 Feature 同时只存在一个未完成 Owner Activation；
@@ -158,17 +162,17 @@ SQLite/Git 事实独立读取，不参与调度。它保证：
 - Plan 决策、Milestone 更新、Candidate 接受或拒绝均通过 Service Contract 执行；
 - Tool 驱动模式与模型驱动模式共享同一 Runtime、持久化和事件链路。
 
-`ProjectRuntime.drive_until_waiting()` 以持久化的 Activation、StageRun 与 Context
+`ProjectRuntime.drive_until_waiting()` 以持久化的 Activation、StageRun 与 State
 为依据，连续推进本 Feature 已获准执行的工作：中间 Stage 会继续到下一 Stage，
 最终 Candidate 会生成 `EXECUTION_RESULT` Activation 并再次交给 Owner。循环在
 人工 Tool、审批、Owner 回复、`BLOCKED`、`DONE` 或没有自动工作时返回。若 Owner
-或 Stage 失败，对应工作会进入 `FAILED` 且 Context 进入 `BLOCKED`；Stage 失败不
+或 Stage 失败，对应工作会进入 `FAILED` 且 State 进入 `BLOCKED`；Stage 失败不
 伪造 Owner Activation。`fail_interrupted_work()` 只把进程中断遗留的未完成工作
 归并为 `FAILED + BLOCKED`，不调用模型或 Stage Executor，也不自动续跑。
 
 ### Project Owner Agent
 
-Project Owner 是长期目标的用户代理。它读取 Message History、Rolling Summary、Project Runtime Context 与当前工作区，通过 ReAct loop 选择 `bash`、`talk_to_agent`、`request_plan_approval`、`update_milestones`、`run_next_milestone` 和 `decide_milestone_candidate` 等 Tool，将一次自然语言目标逐步推进为可审查、可执行、可恢复的交付过程。
+Project Owner 是长期目标的用户代理。它读取 Message History、Rolling Summary、不可变的 ProjectRuntimeState 与当前工作区，通过 ReAct loop 选择 `bash`、`talk_to_agent`、`request_plan_approval`、`update_milestones`、`run_next_milestone` 和 `decide_milestone_candidate` 等 Tool，将一次自然语言目标逐步推进为可审查、可执行、可恢复的交付过程。Services 层的 ProjectRuntimeContext 负责单 Feature 的 State、事务和执行互斥，不作为持久化记录或模型输入。
 
 `project_owner_agent.context.OwnerContextManager` 统一拥有模型可见上下文：它从 Runtime adapter 取得固定 Activation 检查点的原始 Message/Summary 事实，渲染 System Prompt 与 Invocation Contract，在每次请求前计算完整 token 使用量，并在超限时生成、校验和切换 Rolling Summary。Runtime adapter 只负责追加消息、返回新的上下文修订位置、以 CAS 原子提交 Summary，以及把压缩通知记录到 Timeline；Agent 不接触 SQLite、Repository、Transaction 或 EventBus。Summary 只有在 Runtime 确认提交后才替换内存表示，失败时继续使用完整原始上下文。
 
@@ -176,7 +180,7 @@ Historical Project Owner 使用相同的检查点选择与 Summary/增量消息�
 
 每个 Runtime Tool 在对应的 `project_runtime/executions/` 模块内共同定义参数模型、模型可见说明与执行逻辑。`ToolCatalog` 从参数模型生成 provider schema，并在模型调用形成 `Action` 前执行同一份校验；`ProjectExecutions` 对调试或手工调用再次使用该 Contract 后才 dispatch。参数形状只定义一次，依赖当前 Runtime 状态的业务判断仍由 Execution 与 Service 负责。
 
-`bootstrap` 为每个 Workspace 创建一个共享的 OpenAI Responses Transport；Owner 主请求与 Rolling Summary 压缩复用其中的 OpenAI Client。超时和重试由 OpenAI SDK 负责，SDK 重试耗尽后统一抛出 `ModelGatewayError`，并沿 Runtime 现有的未处理异常路径使 Activation 进入 `FAILED`、Context 进入 `BLOCKED`。
+`bootstrap` 为每个 Workspace 创建一个共享的 OpenAI Responses Transport；Owner 主请求与 Rolling Summary 压缩复用其中的 OpenAI Client。超时和重试由 OpenAI SDK 负责，SDK 重试耗尽后统一抛出 `ModelGatewayError`，并沿 Runtime 现有的未处理异常路径使 Activation 进入 `FAILED`、State 进入 `BLOCKED`。
 
 ## 4. 权威数据与读写边界
 
@@ -188,7 +192,7 @@ AgentPanelX 不使用单个状态对象描述整个项目。不同事实由最�
 | 用户意图、Owner 回复、Tool activity | SQLite Message History | Project Owner Service | Conversation |
 | Owner 运行状态与失败 | SQLite Owner Activation | Activation Driver | Runtime / Conversation |
 | Rolling Summary 与 Owner 上下文 | SQLite Message / Summary History | Project Owner Runtime adapter | Owner ContextManager |
-| Feature 状态、pending action、Plan identity | SQLite Project Runtime Context | Runtime / Planning / Delivery | Board / Runtime |
+| Feature 状态、pending action、Plan identity | SQLite `project_runtime_state` | Runtime / Planning / Delivery | Board / Runtime |
 | Plan 文档与批准版本 | Git working tree + Plan commit | Project Owner / Planning | Plan panel / Git |
 | Milestone、Stage 与 Candidate | SQLite snapshot + Git refs | Delivery Service / Runner | Milestones / Runtime / Git |
 | 代码变更 | Feature / Stage worktree 与 Git commit | Coding Agent / Stage Executor | Git panel |
@@ -216,7 +220,7 @@ flowchart LR
 ```
 
 Workspace Registry 与 Feature Runtime 数据库是两个层次：前者只保存 Project identity 和
-Feature-to-worktree binding；后者由每个 Feature 独立持有 Context、Message、Activation、
+Feature-to-worktree binding；后者由每个 Feature 独立持有 State、Message、Activation、
 Snapshot、StageRun 与 Timeline。Dispatcher 的准入状态只存在于 Web 进程内，不新增调度表。
 Git 负责需要版本语义的交付事实。受管 Feature 初始化时，`ProjectRuntime.initialize()` 将
 `.agentplanex/` 写入目标仓库的 `.git/info/exclude`，避免 Runtime 数据进入业务 commit。
@@ -366,7 +370,7 @@ sequenceDiagram
     end
 ```
 
-`ProjectRuntime.drive_until_waiting()` 在同一次已准入请求中逐个驱动排队的 Stage，并在 Candidate 就绪后继续消费 `EXECUTION_RESULT` Activation，直到需要人工审批、Owner 回复、失败或没有可运行工作。若进程中断，下一次启动会把遗留工作终结为 `FAILED + BLOCKED`，不会跨进程自动续跑；持久化的 Stage、commit、ref 与 Context 用于审计和显式重试，而不是隐式恢复。
+`ProjectRuntime.drive_until_waiting()` 在同一次已准入请求中逐个驱动排队的 Stage，并在 Candidate 就绪后继续消费 `EXECUTION_RESULT` Activation，直到需要人工审批、Owner 回复、失败或没有可运行工作。若进程中断，下一次启动会把遗留工作终结为 `FAILED + BLOCKED`，不会跨进程自动续跑；持久化的 Stage、commit、ref 与 State 用于审计和显式重试，而不是隐式恢复。
 
 ## 8. Feature 生命周期
 

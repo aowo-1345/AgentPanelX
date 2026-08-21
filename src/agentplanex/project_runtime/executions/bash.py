@@ -6,7 +6,7 @@ from pydantic import Field
 
 from agentplanex.domains import (
     BASH_TOOL_NAME,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     RuntimeContextChangeReason,
     ToolExecutionResult,
 )
@@ -48,7 +48,7 @@ class BashExecution(ProjectExecution[BashArguments]):
 
     def execute(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         arguments: BashArguments,
     ) -> ToolExecutionResult:
         settings = self.dependencies.settings.bash
@@ -65,7 +65,7 @@ class BashExecution(ProjectExecution[BashArguments]):
                 f"sandbox: {denied_capability}."
             )
 
-            def block(current: ProjectRuntimeContext) -> ProjectRuntimeContext:
+            def block(current: ProjectRuntimeState) -> ProjectRuntimeState:
                 if current.status not in {"TODO", "IN_PROGRESS"}:
                     return current
                 return replace(

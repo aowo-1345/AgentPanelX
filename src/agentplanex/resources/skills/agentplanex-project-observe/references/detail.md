@@ -18,7 +18,7 @@ SQLite 和 Git 只能作为只读证据源。不要为了观察项目而初始�
 | 要回答的问题 | 权威来源 |
 |---|---|
 | 项目意图是什么？ | `requirements.md`、`architecture.md`、`roadmap.md` |
-| 项目现在在哪里？ | `project_runtime_context` |
+| 项目现在在哪里？ | `project_runtime_state` |
 | 已发布的是哪个 Milestone View？ | `milestone_snapshot` |
 | 某个 Stage 尝试了什么、产出了什么或为何失败？ | `stage_run` 与 Git |
 | 某次状态迁移或 Agent Loop 为何发生？ | `execution_event`，再关联 Message 和对象事实 |
@@ -32,7 +32,7 @@ Timeline 是追加式的观察记录。它不是事件溯源状态机、可靠�
 
 ```mermaid
 erDiagram
-    PROJECT_RUNTIME_CONTEXT {
+    PROJECT_RUNTIME_STATE {
         TEXT triage_id PK
         TEXT status
         TEXT pending_action
@@ -103,25 +103,25 @@ erDiagram
         TEXT payload
     }
 
-    PROJECT_RUNTIME_CONTEXT ||--|| PROJECT_OWNER_AGENT : "持有"
+    PROJECT_RUNTIME_STATE ||--|| PROJECT_OWNER_AGENT : "共享 Feature identity"
     PROJECT_OWNER_AGENT ||--o{ MESSAGE_HISTORY : "会话"
     PROJECT_OWNER_AGENT ||--o{ SUMMARY_HISTORY : "会话"
-    PROJECT_RUNTIME_CONTEXT ||--o{ MILESTONE_SNAPSHOT : "发布"
+    PROJECT_RUNTIME_STATE ||--o{ MILESTONE_SNAPSHOT : "发布"
     MILESTONE_SNAPSHOT o|--o{ MILESTONE_SNAPSHOT : "前序版本"
     MILESTONE_SNAPSHOT ||--o{ STAGE_RUN : "固定输入"
-    PROJECT_RUNTIME_CONTEXT ||--o{ STAGE_RUN : "交付事实"
-    PROJECT_RUNTIME_CONTEXT ||--o{ OWNER_ACTIVATION : "邮箱"
-    PROJECT_RUNTIME_CONTEXT ||--o{ EXECUTION_EVENT : "时间线"
+    PROJECT_RUNTIME_STATE ||--o{ STAGE_RUN : "交付事实"
+    PROJECT_RUNTIME_STATE ||--o{ OWNER_ACTIVATION : "邮箱"
+    PROJECT_RUNTIME_STATE ||--o{ EXECUTION_EVENT : "时间线"
     MESSAGE_HISTORY o|--o{ MILESTONE_SNAPSHOT : "说明"
     MESSAGE_HISTORY o|--o{ OWNER_ACTIVATION : "触发"
     MESSAGE_HISTORY o|--o{ EXECUTION_EVENT : "关联"
 ```
 
-数据库中没有 Plan、Milestone、Candidate 或 Run 的独立表。它们分别由 Git、不可变 Snapshot JSON、`stage_run.run_id`、Context 指针、Git ref 与 Timeline 事实共同表达。
+数据库中没有 Plan、Milestone、Candidate 或 Run 的独立表。它们分别由 Git、不可变 Snapshot JSON、`stage_run.run_id`、State 指针、Git ref 与 Timeline 事实共同表达。
 
 ## 数据表词典
 
-### `project_runtime_context`
+### `project_runtime_state`
 
 这是一个 `triage_id` 的唯一当前状态权威。它的指针字段描述现在，不是历史审计记录。
 

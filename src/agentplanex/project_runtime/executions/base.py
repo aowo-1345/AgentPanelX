@@ -8,7 +8,7 @@ from typing import Any, ClassVar, cast
 
 from agentplanex.domains import (
     Action,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     ToolExecutionResult,
 )
 from agentplanex.project_owner_agent.tools import (
@@ -52,7 +52,7 @@ class ProjectExecution[ArgumentsT: ToolArgumentsModel](ABC):
 
     def execute_call(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         raw_arguments: object,
     ) -> ToolExecutionResult:
         """Parse and execute one call through this Tool's sole argument contract."""
@@ -64,7 +64,7 @@ class ProjectExecution[ArgumentsT: ToolArgumentsModel](ABC):
     @abstractmethod
     def execute(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         arguments: ArgumentsT,
     ) -> ToolExecutionResult:
         """Execute one validated tool action."""
@@ -135,7 +135,7 @@ class ProjectExecutions:
 
     def execute(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         action: Action,
     ) -> ToolExecutionResult:
         tool_name = action.get("tool")

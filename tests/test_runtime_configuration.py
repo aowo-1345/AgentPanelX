@@ -18,7 +18,7 @@ from agentplanex.domains import (
     AgentExit,
     AgentExitStatus,
     Message,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     SummaryHistory,
 )
 from agentplanex.infrastructure import local_shell as local_shell_module
@@ -468,7 +468,7 @@ def test_project_executions_expose_and_dispatch_bash(
     )
 
     result = executions.execute(
-        ProjectRuntimeContext("test-runtime"),
+        ProjectRuntimeState("test-runtime"),
         {"tool": "bash", "arguments": {"command": "pwd"}},
     )
 
@@ -542,6 +542,9 @@ def test_cli_only_passes_explicit_runtime_inputs(
     captured: dict[str, object] = {}
 
     class _Runtime:
+        def initialize(self) -> ProjectRuntimeState:
+            return ProjectRuntimeState(triage_id="test-runtime")
+
         def submit_message(self, task: str) -> None:
             self.task = task
 
@@ -607,6 +610,7 @@ def test_runtime_restores_owner_history_across_activations(
         approval_mode="yolo",
         responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
+    runtime.initialize()
 
     runtime.submit_message("first")
     first_result = runtime.drive_next_activation()
@@ -658,6 +662,7 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
         approval_mode="yolo",
         responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
+    runtime.initialize()
 
     first_activation = runtime.submit_message("first")
     runtime.drive_next_activation()
@@ -759,6 +764,7 @@ def test_activation_rejects_summary_from_another_owner_session(
         approval_mode="yolo",
         responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
+    runtime.initialize()
     first_activation = runtime.submit_message("first")
     runtime.drive_next_activation()
     _ReplyingModel.queries = []
@@ -823,6 +829,7 @@ def test_runtime_applies_bash_limits(
         approval_mode="yolo",
         responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
+    runtime.initialize()
 
     runtime.submit_message(command)
     result = runtime.drive_next_activation().exit
@@ -896,6 +903,7 @@ def test_sandbox_denial_blocks_until_the_user_sends_another_message(
         approval_mode="yolo",
         responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
+    runtime.initialize()
 
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))

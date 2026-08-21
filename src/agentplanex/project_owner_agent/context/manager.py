@@ -10,7 +10,7 @@ from agentplanex.domains import (
     Message,
     MessageHistory,
     OwnerActivation,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     SummaryHistory,
 )
 from agentplanex.project_owner_agent.context.compaction import (
@@ -95,13 +95,13 @@ class OwnerContextRuntime(Protocol):
 
     def load_context(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         activation: OwnerActivation,
     ) -> LoadedOwnerContext: ...
 
     def append_messages(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         appended: tuple[Message, ...],
         *,
         expected_revision: object,
@@ -109,7 +109,7 @@ class OwnerContextRuntime(Protocol):
 
     def commit_summary(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         activation: OwnerActivation,
         *,
         expected_revision: object,
@@ -119,7 +119,7 @@ class OwnerContextRuntime(Protocol):
 
     def record_compaction(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         activation: OwnerActivation,
         notice: ContextCompactionNotice,
         *,
@@ -134,7 +134,7 @@ class OwnerContextManager:
         self,
         *,
         runtime: OwnerContextRuntime,
-        runtime_context: ProjectRuntimeContext,
+        runtime_context: ProjectRuntimeState,
         activation: OwnerActivation,
         messages: Sequence[Message],
         revision: object,
@@ -158,7 +158,7 @@ class OwnerContextManager:
         cls,
         *,
         runtime: OwnerContextRuntime,
-        runtime_context: ProjectRuntimeContext,
+        runtime_context: ProjectRuntimeState,
         activation: OwnerActivation,
         invocation: InvocationContract,
         observation_instruction: str,

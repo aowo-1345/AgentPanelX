@@ -77,7 +77,7 @@ Canonical Skill：[`agentplanex-project-attribution`](../.codex/skills/agentplan
 
 | Web Console 区域 | Skill 看到的权威对象 |
 | --- | --- |
-| Board status / pending action | Project Runtime Context |
+| Board status / pending action | ProjectRuntimeState |
 | Project Owner 对话 | Message History + Owner Activation |
 | Tool Step | ReAct / Tool execution evidence |
 | Plan | versioned spec documents + plan commit |

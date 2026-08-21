@@ -7,7 +7,7 @@ from agentplanex.domains import (
     MilestoneSnapshot,
     OwnerActivation,
     OwnerActivationStatus,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     StageRun,
     StageRunStatus,
 )
@@ -17,7 +17,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteExecutionEventRepository,
     SQLiteMilestoneSnapshotRepository,
     SQLiteOwnerActivationRepository,
-    SQLiteProjectRuntimeContextRepository,
+    SQLiteProjectRuntimeStateRepository,
     SQLiteStageRunRepository,
 )
 
@@ -26,7 +26,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 class ProjectControlView:
     """One composed projection over existing Runtime, Git, and Timeline facts."""
 
-    context: ProjectRuntimeContext
+    context: ProjectRuntimeState
     snapshot: MilestoneSnapshot | None
     stage_runs: tuple[StageRun, ...]
     owner_activation: OwnerActivation | None
@@ -42,8 +42,8 @@ class ProjectControlQuery:
 
     database: SQLiteDatabase
     git: GitRepository
-    contexts: SQLiteProjectRuntimeContextRepository = field(
-        default_factory=SQLiteProjectRuntimeContextRepository
+    contexts: SQLiteProjectRuntimeStateRepository = field(
+        default_factory=SQLiteProjectRuntimeStateRepository
     )
     snapshots: SQLiteMilestoneSnapshotRepository = field(
         default_factory=SQLiteMilestoneSnapshotRepository
@@ -92,7 +92,7 @@ class ProjectControlQuery:
 
 
 def _allowed_actions(
-    context: ProjectRuntimeContext,
+    context: ProjectRuntimeState,
     activation: OwnerActivation | None,
     active_stage: StageRun | None,
 ) -> tuple[str, ...]:

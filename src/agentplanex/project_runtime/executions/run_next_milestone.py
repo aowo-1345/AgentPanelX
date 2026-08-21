@@ -3,7 +3,7 @@
 from agentplanex.domains import (
     AgentExit,
     AgentExitStatus,
-    ProjectRuntimeContext,
+    ProjectRuntimeState,
     ToolExecutionResult,
 )
 from agentplanex.project_owner_agent.tools import NoToolArguments, ToolDefinition
@@ -36,7 +36,7 @@ class RunNextMilestoneExecution(ProjectExecution[NoToolArguments]):
 
     def execute(
         self,
-        context: ProjectRuntimeContext,
+        context: ProjectRuntimeState,
         arguments: NoToolArguments,
     ) -> ToolExecutionResult:
         try:

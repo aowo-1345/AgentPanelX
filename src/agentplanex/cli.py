@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol, TextIO
 
 from agentplanex.bootstrap import create_project_runtime
-from agentplanex.domains import AgentExitStatus, OwnerActivation
+from agentplanex.domains import AgentExitStatus, OwnerActivation, ProjectRuntimeState
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.exception import ModelError
 from agentplanex.services.owner_activation import ActivationDriveResult
@@ -16,6 +16,8 @@ type InputReader = Callable[[str], str]
 
 
 class OwnerRuntime(Protocol):
+    def initialize(self) -> ProjectRuntimeState: ...
+
     def submit_message(self, content: str) -> OwnerActivation: ...
 
     def drive_next_activation(self) -> ActivationDriveResult: ...
@@ -37,6 +39,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as error:
         print(str(error), file=sys.stderr)
         return 2
+
+    runtime.initialize()
 
     if args.print_mode:
         return _run_once(runtime, task)
