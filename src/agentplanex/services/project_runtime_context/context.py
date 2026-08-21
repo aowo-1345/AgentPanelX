@@ -170,6 +170,26 @@ class ProjectRuntimeContext:
         with self.operation(), self.transaction() as transaction:
             return transaction.owner_work()
 
+    def reconcile_interrupted_owner(
+        self,
+        *,
+        finished_at: datetime,
+        failure: str,
+    ) -> bool:
+        """Atomically fail unfinished Owner work and block the Feature."""
+        with self.operation(), self.transaction() as transaction:
+            failed = transaction.fail_interrupted_owner(
+                finished_at=finished_at,
+                failure=failure,
+            )
+            if not failed:
+                return False
+            transaction.transition(
+                reason=RuntimeContextChangeReason.INTERRUPTED_WORK_FAILED,
+                mutate=_block_after_owner_failure,
+            )
+        return True
+
     def drive_owner(self) -> ActivationDriveResult:
         """Claim, run, and terminalize at most one MODEL Owner activation."""
         with self.operation():

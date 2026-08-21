@@ -50,5 +50,5 @@ def compose_test_executions(
         state=state,
         context=components.context,
         planning=components.service.planning,
-        event_bus=components.service.event_bus,
+        event_bus=components.context.event_bus,
     )

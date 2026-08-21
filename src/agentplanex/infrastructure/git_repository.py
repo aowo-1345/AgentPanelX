@@ -215,12 +215,27 @@ class GitRepository:
         self._run("commit", "-m", message)
         return self.head_sha()
 
-    def update_ref(self, ref_name: str, commit_sha: str) -> None:
-        """Move one Runtime-owned ref to a validated Git commit."""
+    def compare_and_swap_ref(
+        self,
+        ref_name: str,
+        commit_sha: str,
+        *,
+        expected_sha: str | None,
+    ) -> None:
+        """Create or advance one Runtime ref only from its expected value."""
         if not ref_name.startswith("refs/agentplanex/"):
             raise ValueError("Only refs/agentplanex/* may be updated")
         self._run("rev-parse", "--verify", f"{commit_sha}^{{commit}}")
-        self._run("update-ref", ref_name, commit_sha)
+        expected = expected_sha or ("0" * 40)
+        if expected_sha is not None:
+            self._run("rev-parse", "--verify", f"{expected_sha}^{{commit}}")
+        self._run("update-ref", ref_name, commit_sha, expected)
+
+    def delete_ref(self, ref_name: str, *, expected_sha: str) -> None:
+        """Delete one Runtime ref only when it still identifies the expected commit."""
+        if not ref_name.startswith("refs/agentplanex/"):
+            raise ValueError("Only refs/agentplanex/* may be deleted")
+        self._run("update-ref", "-d", ref_name, expected_sha)
 
     def resolve_ref(self, ref_name: str) -> str:
         """Resolve one existing ref to its exact commit SHA."""

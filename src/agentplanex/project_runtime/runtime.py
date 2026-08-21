@@ -17,8 +17,8 @@ from agentplanex.project_runtime.composition import compose_project_runtime
 from agentplanex.services import (
     ProjectControlView,
 )
-from agentplanex.services.delivery import MilestoneRunQueued
-from agentplanex.services.delivery_runner import DeliveryDriveResult
+from agentplanex.services.delivery import DeliveryDriveOutcome, MilestoneRunQueued
+from agentplanex.services.delivery._stage_executor import StageExecutor
 from agentplanex.services.planning import PlanDecision
 from agentplanex.services.project_runtime_context import (
     ActivationDriveResult,
@@ -27,7 +27,6 @@ from agentplanex.services.project_runtime_context import (
 from agentplanex.services.project_workspace import (
     ProjectWorkspaceView,
 )
-from agentplanex.services.stage_executor import StageExecutor
 from agentplanex.settings import Settings
 
 
@@ -116,7 +115,7 @@ class ProjectRuntime:
         """Apply the first explicit Run approval and queue its first Stage."""
         return self._run(self._service.start_first_run)
 
-    def drive_delivery(self) -> DeliveryDriveResult:
+    def drive_delivery(self) -> DeliveryDriveOutcome:
         """Run one queued Stage through the Delivery Driver."""
         return self._run(self._service.drive_delivery)
 

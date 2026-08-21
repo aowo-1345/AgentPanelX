@@ -217,6 +217,18 @@ def milestone_view_digest(milestones: tuple[Milestone, ...]) -> str:
     return hashlib.sha256(milestone_view_json(milestones).encode("utf-8")).hexdigest()
 
 
+def delivery_run_ref(run_id: str) -> str:
+    """Return the durable ref for a Run's latest materialized Stage output."""
+    _require_identifier("run_id", run_id)
+    return f"refs/agentplanex/runs/{run_id}"
+
+
+def delivery_candidate_ref(run_id: str) -> str:
+    """Return the ref that keeps one fixed Candidate reachable."""
+    _require_identifier("run_id", run_id)
+    return f"refs/agentplanex/candidates/{run_id}"
+
+
 def _require_text(name: str, value: str) -> None:
     if not value.strip():
         raise ValueError(f"{name} must not be empty")

@@ -1,4 +1,4 @@
-"""Fresh Codex execution for one fixed delivery Stage."""
+"""Private Stage execution port and Codex adapter."""
 
 import json
 from dataclasses import dataclass

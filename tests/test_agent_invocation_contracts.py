@@ -36,11 +36,14 @@ from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.agent_contracts import resolve_observation_skill
-from agentplanex.services.delivery import MilestoneReviewRequest
+from agentplanex.services.delivery._stage_executor import (
+    CodexStageExecutor,
+    StageExecutionRequest,
+)
+from agentplanex.services.delivery.contracts import MilestoneReviewRequest
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning.contracts import PlanReviewRequest
 from agentplanex.services.project_runtime_context import _owner as project_owner_service
-from agentplanex.services.stage_executor import CodexStageExecutor, StageExecutionRequest
 from agentplanex.settings import (
     DEFAULT_SETTINGS_PATH,
     ModelSettings,

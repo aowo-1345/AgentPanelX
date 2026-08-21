@@ -3,7 +3,7 @@
 import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event
 
@@ -15,14 +15,16 @@ from agentplanex.domains import (
     OwnerActivation,
     OwnerActivationMode,
     ProjectOwnerTaskType,
+    delivery_candidate_ref,
 )
-from agentplanex.infrastructure.git_repository import GitRepository
+from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteExecutionEventRepository,
     SQLiteMessageHistoryRepository,
     SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
+    SQLiteStageRunRepository,
 )
 from agentplanex.project_owner_agent.exception import ModelGatewayError
 from agentplanex.project_owner_agent.models.responses import (
@@ -31,10 +33,10 @@ from agentplanex.project_owner_agent.models.responses import (
 )
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.project_runtime.errors import FeatureBusyError
-from agentplanex.services.delivery import delivery_candidate_ref
+from agentplanex.services.delivery import DeliveryError
+from agentplanex.services.delivery._stage_executor import StageExecutionRequest
 from agentplanex.services.project_control import ProjectControlQuery
 from agentplanex.services.project_workspace import ProjectWorkspaceQuery
-from agentplanex.services.stage_executor import StageExecutionRequest
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, Settings, load_settings
 
 
@@ -175,7 +177,7 @@ def _write_plan(project_path: Path) -> None:
         (project_path / name).write_text(f"# {name}\n", encoding="utf-8")
 
 
-def _queue_first_run(runtime: ProjectRuntime, project_path: Path) -> None:
+def _request_first_run(runtime: ProjectRuntime, project_path: Path) -> None:
     _write_plan(project_path)
     requested = runtime.execute_action(
         {
@@ -218,6 +220,10 @@ def _queue_first_run(runtime: ProjectRuntime, project_path: Path) -> None:
     )
     assert queued.exit is not None
     assert queued.exit.status.value == "FirstRunApprovalRequested"
+
+
+def _queue_first_run(runtime: ProjectRuntime, project_path: Path) -> None:
+    _request_first_run(runtime, project_path)
     runtime.start_first_run()
 
 
@@ -454,6 +460,40 @@ def test_drive_until_waiting_runs_all_stages_then_delivers_candidate_to_owner(
     )
 
 
+def test_first_run_rejects_git_identity_changed_after_plan_approval(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=_SuccessfulStageExecutor(),
+    )
+    runtime.initialize()
+    runtime.begin_feature()
+    _request_first_run(runtime, project_path)
+    approved_plan_commit = runtime.state().current_plan_commit_sha
+    (project_path / "architecture.md").write_text(
+        "# architecture.md\n\nChanged after approval.\n",
+        encoding="utf-8",
+    )
+    changed_commit = GitRepository(project_path).commit_paths(
+        (project_path / "architecture.md",),
+        message="test: change approved plan identity"
+    )
+    assert changed_commit != approved_plan_commit
+
+    with pytest.raises(DeliveryError, match=r"Plan Specs changed|Plan approval"):
+        runtime.start_first_run()
+
+    control = runtime.project_control_view()
+    assert control.state.status == "READY"
+    assert control.state.pending_action == "FIRST_RUN_APPROVAL"
+    assert control.stage_runs == ()
+
+
 def test_feature_runs_from_user_message_through_owner_tools_to_done(
     initialize_git_project: Callable[[], Path],
 ) -> None:
@@ -511,8 +551,9 @@ def test_feature_runs_from_user_message_through_owner_tools_to_done(
     assert queued.activation.status.value == "COMPLETED"
     started = runtime.start_first_run()
     candidate = runtime.drive_delivery()
-    assert candidate.outcome == "candidate_ready"
-    assert candidate.activation is not None
+    assert candidate == "candidate_ready"
+    candidate_activation = runtime.project_control_view().owner_activation
+    assert candidate_activation is not None
 
     accepted = runtime.drive_activation_tool(
         {
@@ -526,7 +567,7 @@ def test_feature_runs_from_user_message_through_owner_tools_to_done(
     )
 
     state = runtime.state()
-    assert accepted.activation.activation_id == candidate.activation.activation_id
+    assert accepted.activation.activation_id == candidate_activation.activation_id
     assert accepted.activation.status.value == "COMPLETED"
     assert state.status == "DONE"
     assert state.current_candidate_commit_sha is None
@@ -536,7 +577,7 @@ def test_feature_runs_from_user_message_through_owner_tools_to_done(
     assert output_commit is not None
     git = GitRepository(project_path)
     assert git.head_sha() == output_commit
-    assert git.resolve_ref(delivery_candidate_ref(started.stage_run.run_id)) == output_commit
+    assert git.resolve_ref(delivery_candidate_ref(started.run_id)) == output_commit
     assert (project_path / "src" / "stage-1.txt").read_text(encoding="utf-8") == (
         "implemented stage-1\n"
     )
@@ -692,7 +733,7 @@ def test_final_stage_handoff_failure_rolls_back_candidate_and_timeline(
     runtime.initialize()
     runtime.begin_feature()
     _queue_first_run(runtime, project_path)
-    assert runtime.drive_delivery().outcome == "stage_succeeded"
+    assert runtime.drive_delivery() == "stage_succeeded"
 
     database = SQLiteDatabase.for_project(project_path)
     with database.transaction() as connection:
@@ -711,7 +752,7 @@ def test_final_stage_handoff_failure_rolls_back_candidate_and_timeline(
 
     result = runtime.drive_delivery()
 
-    assert result.outcome == "stage_failed"
+    assert result == "stage_failed"
     state = runtime.state()
     assert state.status == "BLOCKED"
     assert state.current_candidate_commit_sha is None
@@ -724,11 +765,65 @@ def test_final_stage_handoff_failure_rolls_back_candidate_and_timeline(
     assert "CANDIDATE_READY" not in {
         event.event_type.value for event in control.timeline
     }
+    run_id = control.stage_runs[-1].run_id
+    with pytest.raises(GitRepositoryError):
+        GitRepository(project_path).resolve_ref(delivery_candidate_ref(run_id))
     with database.read_only_connection() as connection:
         activation_count = connection.execute(
             "SELECT COUNT(*) FROM owner_activation"
         ).fetchone()[0]
     assert activation_count == activation_count_before
+
+
+def test_candidate_cleanup_failure_preserves_failed_state_and_orphan_ref(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_path = initialize_git_project()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=_SuccessfulStageExecutor(),
+    )
+    runtime.initialize()
+    runtime.begin_feature()
+    _queue_first_run(runtime, project_path)
+    assert runtime.drive_delivery() == "stage_succeeded"
+    database = SQLiteDatabase.for_project(project_path)
+    with database.transaction() as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER reject_candidate_activation_cleanup_failure
+            BEFORE INSERT ON owner_activation
+            BEGIN
+                SELECT RAISE(ABORT, 'forced candidate handoff rollback');
+            END
+            """
+        )
+
+    def reject_cleanup(
+        _repository: GitRepository,
+        _ref_name: str,
+        *,
+        expected_sha: str,
+    ) -> None:
+        assert expected_sha
+        raise GitRepositoryError("forced cleanup failure")
+
+    monkeypatch.setattr(GitRepository, "delete_ref", reject_cleanup)
+    assert runtime.drive_delivery() == "stage_failed"
+
+    control = runtime.project_control_view()
+    assert control.state.status == "BLOCKED"
+    assert control.state.current_candidate_commit_sha is None
+    assert control.stage_runs[-1].status.value == "FAILED"
+    run_id = control.stage_runs[-1].run_id
+    orphan_commit = GitRepository(project_path).resolve_ref(
+        delivery_candidate_ref(run_id)
+    )
+    assert orphan_commit != control.state.current_candidate_commit_sha
 
 
 def test_drive_until_waiting_rejects_two_simultaneously_runnable_work_items(
@@ -900,6 +995,40 @@ def test_fail_interrupted_work_terminalizes_queued_stage_and_preserves_cursor(
     assert event.payload["started"] is False
 
 
+def test_expired_stage_lease_fails_without_reexecuting_adapter(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    stage_executor = _SuccessfulStageExecutor()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=stage_executor,
+    )
+    state = runtime.initialize()
+    runtime.begin_feature()
+    _queue_first_run(runtime, project_path)
+    now = datetime.now(UTC)
+    database = SQLiteDatabase.for_project(project_path)
+    with database.transaction() as connection:
+        claimed = SQLiteStageRunRepository().claim_next(
+            connection,
+            state.triage_id,
+            started_at=now - timedelta(hours=2),
+            lease_expires_at=now - timedelta(hours=1),
+        )
+    assert claimed is not None
+
+    assert runtime.drive_delivery() == "stage_failed"
+    assert stage_executor.executed_stage_keys == []
+    control = runtime.project_control_view()
+    assert control.state.status == "BLOCKED"
+    assert control.stage_runs[-1].status.value == "FAILED"
+    assert "lease expired" in (control.stage_runs[-1].failure or "")
+
+
 def test_running_activation_rejects_concurrent_interruption_recovery(
     initialize_git_project: Callable[[], Path],
 ) -> None:
@@ -955,6 +1084,15 @@ def test_running_stage_rejects_concurrent_interruption_recovery(
             assert control.state.status == "IN_PROGRESS"
             assert control.stage_runs[-1].status.value == "RUNNING"
             assert workspace.state == control.state
+            with database.transaction() as connection:
+                SQLiteExecutionEventRepository().insert(
+                    connection,
+                    ExecutionEvent(
+                        triage_id=state.triage_id,
+                        event_type=ExecutionEventType.AGENT_INVOCATION_STARTED,
+                        payload={"operation": "concurrent-writer-proof"},
+                    ),
+                )
             with pytest.raises(FeatureBusyError):
                 runtime.fail_interrupted_work()
             with pytest.raises(FeatureBusyError):

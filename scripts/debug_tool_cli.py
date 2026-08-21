@@ -43,8 +43,10 @@ from agentplanex.domains import (  # noqa: E402
     StageRun,
     ToolExecutionResult,
 )
-from agentplanex.services.delivery import MilestoneRunQueued  # noqa: E402
-from agentplanex.services.delivery_runner import DeliveryDriveResult  # noqa: E402
+from agentplanex.services.delivery import (  # noqa: E402
+    DeliveryDriveOutcome,
+    MilestoneRunQueued,
+)
 from agentplanex.services.planning import PlanDecision  # noqa: E402
 from agentplanex.services.project_control import ProjectControlView  # noqa: E402
 from agentplanex.services.project_runtime_context import (  # noqa: E402
@@ -87,7 +89,7 @@ class RuntimeCommands(Protocol):
 
     def start_first_run(self) -> MilestoneRunQueued: ...
 
-    def drive_delivery(self) -> DeliveryDriveResult: ...
+    def drive_delivery(self) -> DeliveryDriveOutcome: ...
 
     def project_control_view(self) -> ProjectControlView: ...
 
@@ -558,12 +560,12 @@ def _start_first_run(
                 "ok": True,
                 "result": {
                     "status": queued.state.status,
-                    "run_id": queued.stage_run.run_id,
-                    "stage_run_id": queued.stage_run.stage_run_id,
-                    "snapshot_id": queued.snapshot.snapshot_id,
-                    "milestone_key": queued.milestone.key,
-                    "stage_key": queued.stage.key,
-                    "input_commit_sha": queued.stage_run.input_commit_sha,
+                    "run_id": queued.run_id,
+                    "stage_run_id": queued.stage_run_id,
+                    "snapshot_id": queued.snapshot_id,
+                    "milestone_key": queued.milestone_key,
+                    "stage_key": queued.stage_key,
+                    "input_commit_sha": queued.input_commit_sha,
                 },
             },
             ensure_ascii=False,
@@ -582,7 +584,29 @@ def _drive_delivery_once(
 
     output = stdout if stdout is not None else sys.stdout
     try:
-        driven = runtime.drive_delivery()
+        before = runtime.project_control_view()
+        active_stage = next(
+            (
+                stage_run
+                for stage_run in reversed(before.stage_runs)
+                if stage_run.status.value in {"QUEUED", "RUNNING"}
+            ),
+            None,
+        )
+        outcome = runtime.drive_delivery()
+        after = runtime.project_control_view()
+        driven_stage = (
+            next(
+                (
+                    stage_run
+                    for stage_run in after.stage_runs
+                    if stage_run.stage_run_id == active_stage.stage_run_id
+                ),
+                None,
+            )
+            if active_stage is not None
+            else None
+        )
     except Exception as error:
         _print_command_error("drive-delivery", error, output)
         return 1
@@ -592,18 +616,18 @@ def _drive_delivery_once(
                 "action": "drive-delivery",
                 "ok": True,
                 "result": {
-                    "outcome": driven.outcome,
-                    "context_status": driven.context_status,
-                    "candidate_commit_sha": driven.candidate_commit_sha,
+                    "outcome": outcome.value,
+                    "context_status": after.state.status,
+                    "candidate_commit_sha": after.state.current_candidate_commit_sha,
                     "stage_run": (
-                        _stage_run_json(driven.stage_run)
-                        if driven.stage_run is not None
+                        _stage_run_json(driven_stage)
+                        if driven_stage is not None
                         else None
                     ),
                 },
                 "activation": (
-                    _activation_json(driven.activation)
-                    if driven.activation is not None
+                    _activation_json(after.owner_activation)
+                    if after.owner_activation is not None
                     else None
                 ),
             },

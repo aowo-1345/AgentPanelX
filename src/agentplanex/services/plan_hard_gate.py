@@ -12,7 +12,7 @@ from agentplanex.agent_contracts import InvocationContract, PromptRole
 from agentplanex.domains import AgentCollaborationError, AgentRole, ArtifactDescriptor
 from agentplanex.infrastructure.codex import CodexTurnRequest
 from agentplanex.services.agent_collaboration import AgentCollaborationService
-from agentplanex.services.delivery import (
+from agentplanex.services.delivery.contracts import (
     DeliveryError,
     MilestoneReviewRequest,
     MilestoneReviewResult,

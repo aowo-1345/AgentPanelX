@@ -91,8 +91,8 @@ flowchart TB
         HardGate[Plan / Milestone Hard Gate]
         Collaboration[Agent Collaboration]
         DeliveryService[Delivery Service]
-        DeliveryRunner[Delivery Runner]
-        StageExecutor[Stage Executor]
+        DeliveryDriver[Private Stage Driver]
+        StageExecutor[Private Stage Executor Adapter]
     end
 
     subgraph Domain[Domain State]
@@ -128,6 +128,8 @@ flowchart TB
     Domain --> DB
     Orchestration --> Git
     Collaboration --> Codex
+    DeliveryService --> DeliveryDriver
+    DeliveryDriver --> StageExecutor
     StageExecutor --> Codex
     OwnerRuntime --> ModelGateway
     OwnerRuntime --> Sandbox
@@ -195,7 +197,7 @@ AgentPanelX 不使用单个状态对象描述整个项目。不同事实由最�
 | Rolling Summary 与 Owner 上下文 | SQLite Message / Summary History | Project Owner Runtime adapter | Owner ContextManager |
 | Feature 状态、pending action、Plan identity | SQLite `project_runtime_state` | Runtime / Planning / Delivery | Board / Runtime |
 | Plan 文档与批准版本 | Git working tree + Plan commit | Project Owner / Planning | Plan panel / Git |
-| Milestone、Stage 与 Candidate | SQLite snapshot + Git refs | Delivery Service / Runner | Milestones / Runtime / Git |
+| Milestone、Stage 与 Candidate | SQLite snapshot + Git refs | Delivery Service | Milestones / Runtime / Git |
 | 代码变更 | Feature / Stage worktree 与 Git commit | Coding Agent / Stage Executor | Git panel |
 | 状态到达路径 | SQLite Timeline | EventBus recorder | Timeline |
 
@@ -335,7 +337,7 @@ sequenceDiagram
     participant Runtime as Project Runtime
     participant Delivery as Delivery Service
     participant DB as SQLite State / Delivery Facts
-    participant Runner as Delivery Runner
+    participant Driver as Private Stage Driver
     participant Stage as Stage Executor
     participant WT as Stage Worktree
     participant Agent as Coding Agent
@@ -344,18 +346,19 @@ sequenceDiagram
     Owner->>Delivery: run_next_milestone
     Delivery->>DB: queue durable Stage Run
     loop Same admitted drive until a human waiting point
-        Runtime->>Runner: drive one queued Stage
-        Runner->>DB: claim one Stage
-        Runner->>WT: prepare isolated worktree from fixed input
-        Runner->>Stage: execute claimed Stage
+        Runtime->>Delivery: drive_next
+        Delivery->>Driver: drive one queued Stage
+        Driver->>DB: short transaction: claim + lease
+        Driver->>WT: prepare isolated worktree from fixed input
+        Driver->>Stage: execute outside SQLite transaction
         Stage->>Agent: run fixed Stage objective
         Agent->>WT: inspect / edit / test
-        Runner->>Git: record output commit
+        Driver->>Git: CAS run ref to output commit
         alt More stages remain
-            Runner->>DB: complete Stage and queue next Stage
+            Driver->>DB: short transaction: complete + queue next
         else Milestone candidate ready
-            Runner->>Git: update refs/agentplanex/candidates/run-id
-            Runner->>DB: persist candidate SHA and EXECUTION_RESULT Activation
+            Driver->>Git: CAS refs/agentplanex/candidates/run-id
+            Driver->>DB: atomic Candidate State + EXECUTION_RESULT Activation
             Runtime->>Owner: drive candidate Activation
             Owner->>Delivery: accept or reject candidate
             alt Accepted
@@ -366,12 +369,18 @@ sequenceDiagram
             end
         end
         opt Stage fails
-            Runner->>DB: persist failure + BLOCKED context
+            Driver->>DB: persist failure + BLOCKED context
         end
     end
 ```
 
-`ProjectRuntime.drive_until_waiting()` 在同一次已准入请求中逐个驱动排队的 Stage，并在 Candidate 就绪后继续消费 `EXECUTION_RESULT` Activation，直到需要人工审批、Owner 回复、失败或没有可运行工作。若进程中断，下一次启动会把遗留工作终结为 `FAILED + BLOCKED`，不会跨进程自动续跑；持久化的 Stage、commit、ref 与 State 用于审计和显式重试，而不是隐式恢复。
+`ProjectRuntime.drive_until_waiting()` 只通过 Delivery 的 `active_work()` 与
+`drive_next()` 协调交付，不接触 StageRun Repository、Executor、worktree 或 ref。
+私有 Driver 把每次执行分成短事务领取、事务外长时间执行、短事务终结三个阶段。
+Run ref 表示该 Run 最近一次已物化的输出；Candidate 只有在最终事务同时提交 State 与
+Owner Activation 后才成为权威业务事实。若该事务失败，Stage 先进入 `FAILED + BLOCKED`，
+Candidate ref 再按期望 SHA 尝试清理；清理失败只留下可审计的孤立 ref，不会伪造成功。
+若进程中断，下一次启动会把遗留工作终结为 `FAILED + BLOCKED`，不会跨进程自动续跑。
 
 ## 8. Feature 生命周期
 
@@ -520,8 +529,7 @@ flowchart LR
 | Owner model context / Rolling Summary | `src/agentplanex/project_owner_agent/context/`, `services/project_runtime_context/_owner.py` |
 | Planning、Plan identity 与 Hard Gate | `src/agentplanex/services/planning/`, `domains/plan.py`, `plan_hard_gate.py` |
 | Agent Collaboration | `src/agentplanex/services/agent_collaboration.py`, `agent_contracts.py` |
-| Delivery 状态机与 Runner | `src/agentplanex/services/delivery.py`, `delivery_runner.py` |
-| Coding Agent Stage 执行 | `src/agentplanex/services/stage_executor.py` |
+| Delivery 状态机与私有 Stage 执行 | `src/agentplanex/services/delivery/` |
 | EventBus 与 Timeline | `src/agentplanex/services/event_bus.py`, `infrastructure/sqlite/timeline.py` |
 | Git / worktree 基础设施 | `src/agentplanex/infrastructure/git_repository.py`, `workspace_git.py`, `agent_workspace.py` |
 | React Board / Workspace | `frontend/src/pages/BoardPage.tsx`, `WorkspacePage.tsx` |

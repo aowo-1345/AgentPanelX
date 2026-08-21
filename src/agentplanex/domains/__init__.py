@@ -23,6 +23,8 @@ from agentplanex.domains.delivery import (
     Stage,
     StageRun,
     StageRunStatus,
+    delivery_candidate_ref,
+    delivery_run_ref,
     milestone_view_digest,
     milestone_view_json,
 )
@@ -117,6 +119,8 @@ __all__ = [
     "ToolExecutionResult",
     "ToolExecutor",
     "ToolSchema",
+    "delivery_candidate_ref",
+    "delivery_run_ref",
     "milestone_view_digest",
     "milestone_view_json",
 ]

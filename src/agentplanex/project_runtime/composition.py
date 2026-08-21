@@ -24,12 +24,14 @@ from agentplanex.services import (
     ProjectRuntimeService,
 )
 from agentplanex.services.agent_contracts import resolve_observation_skill
-from agentplanex.services.delivery_runner import DeliveryRunner
+from agentplanex.services.delivery._stage_executor import (
+    CodexStageExecutor,
+    StageExecutor,
+)
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 from agentplanex.services.project_runtime_context._owner import _OwnerRuntime
 from agentplanex.services.project_workspace import ProjectWorkspaceQuery
-from agentplanex.services.stage_executor import CodexStageExecutor, StageExecutor
 from agentplanex.settings import Settings
 
 
@@ -80,12 +82,7 @@ def compose_project_runtime(
         project_path=project_path,
         context=context,
         git=git,
-        event_bus=event_bus,
-        review_milestones=hard_gate.review_milestones,
-    )
-    delivery_runner = DeliveryRunner(
-        delivery=delivery,
-        executor=(
+        stage_executor=(
             stage_executor
             if stage_executor is not None
             else CodexStageExecutor(
@@ -95,7 +92,8 @@ def compose_project_runtime(
                 collaboration.prompts,
             )
         ),
-        git=git,
+        event_bus=event_bus,
+        review_milestones=hard_gate.review_milestones,
     )
     executions = create_project_executions(
         project_path,
@@ -129,8 +127,6 @@ def compose_project_runtime(
     service = ProjectRuntimeService(
         planning=planning,
         delivery=delivery,
-        delivery_runner=delivery_runner,
-        event_bus=event_bus,
         context=context,
     )
     return _ProjectRuntimeComponents(
