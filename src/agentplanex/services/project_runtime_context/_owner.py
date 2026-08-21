@@ -176,14 +176,6 @@ class _OwnerRuntime:
             result = _unhandled_exit(RuntimeError("Project Owner Agent returned without an exit"))
         return result
 
-    def execute_action(
-        self,
-        state: ProjectRuntimeState,
-        action: Action,
-    ) -> ToolExecutionResult:
-        """Execute one explicit debug Tool Action against current persisted state."""
-        return self.tool_executor(state, action)
-
     def execute_activation_action(
         self,
         state: ProjectRuntimeState,

@@ -79,6 +79,7 @@ flowchart TB
         WorkspaceDispatcher[Workspace Dispatcher]
         WorkspaceQueries[Workspace Queries]
         ProjectRuntime[ProjectRuntime Facade]
+        RuntimeControl[ProjectRuntimeControl]
         RuntimeService[ProjectRuntimeService]
         RuntimeContext[ProjectRuntimeContext]
         ControlQuery[Project Control Query]
@@ -119,6 +120,8 @@ flowchart TB
     WorkspaceService --> ProjectRuntime
     WorkspaceQueries --> Registry
     ProjectRuntime --> RuntimeService
+    RuntimeControl --> RuntimeService
+    RuntimeControl --> RuntimeContext
     RuntimeService --> RuntimeContext
     RuntimeContext --> RuntimeState
     RuntimeContext --> OwnerRuntime
@@ -153,9 +156,14 @@ Feature 的 `ProjectRuntime.drive_until_waiting()`；容量已满或 Feature 正
 
 ### ProjectRuntime 与 ProjectRuntimeService
 
-`ProjectRuntime` 是一个 Feature 的统一 facade；composition root 为它装配并 seal 完整
-依赖图，再向 Workspace、Control 和调试入口暴露稳定命令。内部的
-`ProjectRuntimeService` 负责协调 Project Owner、Planning 与 Delivery；Services 层的
+`ProjectRuntime` 是一个 Feature 的正常命令 facade，只持有一个内部
+`ProjectRuntimeService`。它不暴露 Context、Git、Execution、查询或单步 Driver；人工
+介入使用独立的 `ProjectRuntimeControl`，只读界面使用独立 Query。composition root
+创建唯一 Context，把同一实例交给 Planning、Delivery 与 RuntimeService，再分别绑定
+抽象 Tool Executor 和私有 Owner Runtime，最后 seal 对象图并只返回所需 adapter。
+
+`ProjectRuntimeService` 负责协调 Project Owner、Planning 与 Delivery，并显式拥有每个
+写命令的 Context operation 范围和自动循环停止条件。Services 层的
 `ProjectRuntimeContext` 负责单 Feature 的 `ProjectRuntimeState`、事务、提交后事件、
 执行期缓存与互斥。查询投影从同一 SQLite/Git 事实独立读取，不参与调度。它保证：
 
@@ -225,8 +233,9 @@ flowchart LR
 Workspace Registry 与 Feature Runtime 数据库是两个层次：前者只保存 Project identity 和
 Feature-to-worktree binding；后者由每个 Feature 独立持有 State、Message、Activation、
 Snapshot、StageRun 与 Timeline。Dispatcher 的准入状态只存在于 Web 进程内，不新增调度表。
-Git 负责需要版本语义的交付事实。受管 Feature 初始化时，`ProjectRuntime.initialize()` 将
-`.agentplanex/` 写入目标仓库的 `.git/info/exclude`，避免 Runtime 数据进入业务 commit。
+Git 负责需要版本语义的交付事实。受管 Feature 的 command graph 组合时会先将
+`.agentplanex/` 写入目标仓库的 `.git/info/exclude`，再创建 Runtime Schema，避免
+Runtime 数据进入业务 commit。
 任何操作都必须经过 Runtime 与 Service；直接修改 SQLite 或 Git ref 不属于受支持的控制路径。
 
 ## 5. 核心链路一：从目标到 Project Owner Activation
@@ -532,7 +541,8 @@ flowchart LR
 | Project / Feature Registry | `src/agentplanex/infrastructure/workspace_registry.py` |
 | Workspace commands 与准入 | `src/agentplanex/services/workspace/service.py`, `dispatcher.py` |
 | Workspace read projection | `src/agentplanex/services/workspace/queries.py`, `services/project_workspace.py` |
-| Project Runtime facade / composition / 协调 | `src/agentplanex/project_runtime/runtime.py`, `composition.py`, `services/project_runtime.py` |
+| 正常 Project Runtime facade / composition / 协调 | `src/agentplanex/project_runtime/runtime.py`, `composition.py`, `services/project_runtime.py` |
+| 特权单步 Runtime Control | `src/agentplanex/project_runtime/control.py` |
 | Project Runtime Context 与内部 Owner Runtime | `src/agentplanex/services/project_runtime_context/` |
 | Owner Activation lifecycle | `src/agentplanex/services/project_runtime_context/_activation.py` |
 | Owner Tool Contract 与执行 | `src/agentplanex/project_owner_agent/tools/base.py`, `project_runtime/executions/` |

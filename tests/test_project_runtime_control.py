@@ -7,6 +7,7 @@ import pytest
 
 from agentplanex.bootstrap import (
     create_project_control_query,
+    create_project_runtime,
     create_project_runtime_control,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
@@ -20,9 +21,8 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
     ResponsesTransport,
 )
-from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.project_runtime.control import ProjectRuntimeControl
-from agentplanex.project_runtime.errors import FeatureBusyError
+from agentplanex.project_runtime.runtime import ProjectRuntime
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 
 
@@ -32,7 +32,7 @@ class _UnusedResponses(ResponsesTransport):
 
 
 def _runtime(project_path: Path) -> ProjectRuntime:
-    return ProjectRuntime(
+    return create_project_runtime(
         project_path=project_path,
         settings=load_settings(DEFAULT_SETTINGS_PATH),
         approval_mode="yolo",
@@ -129,41 +129,15 @@ def test_bare_tool_cannot_bypass_owner_activation_or_fabricate_one_when_idle(
     assert after.owner_activation is None
     database = SQLiteDatabase.for_project(project_path)
     with database.read_only_connection() as connection:
-        assert len(
-            SQLiteOwnerActivationRepository().list_by_triage_id(
-                connection,
-                state.triage_id,
+        assert (
+            len(
+                SQLiteOwnerActivationRepository().list_by_triage_id(
+                    connection,
+                    state.triage_id,
+                )
             )
-        ) == 1
-
-
-def test_query_ignores_operation_lock_but_control_write_does_not(
-    initialize_git_project: Callable[[], Path],
-) -> None:
-    project_path = initialize_git_project()
-    runtime = _runtime(project_path)
-    initialized = runtime.initialize()
-    control = _control(project_path)
-    query = create_project_control_query(project_path=project_path)
-
-    with runtime._context.operation():
-        assert query.get_current().state == initialized
-        with pytest.raises(FeatureBusyError):
-            control.submit_message("This write must not race the Runtime.")
-
-
-def test_control_graph_reuses_one_context_without_holding_mechanics(
-    initialize_git_project: Callable[[], Path],
-) -> None:
-    control = _control(initialize_git_project())
-
-    assert control._service.context is control._context
-    assert control._service.planning.context is control._context
-    assert control._service.delivery.context is control._context
-    assert not any(
-        hasattr(control, name)
-        for name in ("stage_runs", "activations", "runner", "executor", "git")
-    )
+            == 1
+        )
 
 
 def test_control_rejects_missing_project_before_composition(tmp_path: Path) -> None:

@@ -13,24 +13,14 @@ from threading import Thread
 import pytest
 import yaml
 
-from agentplanex.bootstrap import create_workspace
+from agentplanex.bootstrap import create_project_control_query, create_workspace
 from agentplanex.domains import FeatureBinding
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectOwnerAgentRepository,
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGitError
-from agentplanex.project_owner_agent.models.responses import ResponsesRequest
-from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
-
-
-class _UnusedResponsesTransport:
-    def create(self, _request: ResponsesRequest) -> object:
-        raise AssertionError("Workspace inspection must not call the model gateway")
-
-
-_UNUSED_RESPONSES_TRANSPORT = _UnusedResponsesTransport()
 
 
 def _git(project_path: Path, *arguments: str) -> str:
@@ -147,9 +137,7 @@ def _database_schema(database_path: Path) -> dict[str, tuple[str, ...]]:
         return {
             str(table[0]): tuple(
                 str(column[1])
-                for column in connection.execute(
-                    f'PRAGMA table_info("{table[0]}")'
-                ).fetchall()
+                for column in connection.execute(f'PRAGMA table_info("{table[0]}")').fetchall()
             )
             for table in tables
         }
@@ -299,18 +287,24 @@ def test_installed_cli_runs_two_isolated_features_end_to_end(
         "--path-format=absolute",
         "--git-common-dir",
     )
-    assert _git(
-        first_worktree,
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-    ) == source_common_dir
-    assert _git(
-        second_worktree,
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-    ) == source_common_dir
+    assert (
+        _git(
+            first_worktree,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        )
+        == source_common_dir
+    )
+    assert (
+        _git(
+            second_worktree,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        )
+        == source_common_dir
+    )
     assert _git(first_worktree, "status", "--porcelain") == ""
     assert _git(second_worktree, "status", "--porcelain") == ""
 
@@ -390,21 +384,8 @@ def test_installed_cli_runs_two_isolated_features_end_to_end(
         second_worktree: _runtime_database_snapshot(second_worktree),
     } == runtime_files_before_board
 
-    settings = load_settings(config_path)
-    first_runtime = ProjectRuntime(
-        project_path=first_worktree,
-        settings=settings,
-        approval_mode="yolo",
-        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
-    )
-    second_runtime = ProjectRuntime(
-        project_path=second_worktree,
-        settings=settings,
-        approval_mode="yolo",
-        responses_transport=_UNUSED_RESPONSES_TRANSPORT,
-    )
-    first_view = first_runtime.project_control_view()
-    second_view = second_runtime.project_control_view()
+    first_view = create_project_control_query(project_path=first_worktree).get_current()
+    second_view = create_project_control_query(project_path=second_worktree).get_current()
     assert first_view.state.triage_id == feature_a["triage_id"]
     assert first_view.state.status == "TODO"
     assert first_view.owner_activation is None
@@ -428,12 +409,15 @@ def test_installed_cli_runs_two_isolated_features_end_to_end(
     assert second_owner.message_id is None
     assert second_owner.summary_id is None
 
-    assert _run_installed_cli(
-        config_path,
-        "board",
-        "--project",
-        project_id,
-    ) == recovered_board
+    assert (
+        _run_installed_cli(
+            config_path,
+            "board",
+            "--project",
+            project_id,
+        )
+        == recovered_board
+    )
     assert _run_installed_cli(config_path, "project", "list") == [project]
 
 

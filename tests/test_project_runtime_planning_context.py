@@ -7,6 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from agentplanex.bootstrap import (
+    create_project_control_query,
+    create_project_runtime,
+    create_project_runtime_control,
+)
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
@@ -16,7 +21,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectRuntimeStateRepository,
 )
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
-from agentplanex.project_runtime import ProjectRuntime
+from agentplanex.project_runtime.control import ProjectRuntimeControl
 from agentplanex.services.planning import PlanningService
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 
@@ -45,8 +50,8 @@ class _ReplyingResponsesTransport:
         }
 
 
-def _runtime(project_path: Path) -> ProjectRuntime:
-    return ProjectRuntime(
+def _runtime(project_path: Path) -> ProjectRuntimeControl:
+    return create_project_runtime_control(
         project_path=project_path,
         settings=load_settings(DEFAULT_SETTINGS_PATH),
         approval_mode="yolo",
@@ -66,7 +71,7 @@ def test_rejected_plan_activation_failure_rolls_back_state_and_owner_message(
     runtime = _runtime(project_path)
     state = runtime.initialize()
     _write_specs(project_path)
-    requested = runtime.execute_action(
+    requested = runtime.execute_tool(
         {
             "tool": "request_plan_approval",
             "call_id": "request-plan",
@@ -133,7 +138,7 @@ def test_approve_retry_reuses_unapproved_plan_checkpoint(
     runtime = _runtime(project_path)
     state = runtime.initialize()
     _write_specs(project_path)
-    requested = runtime.execute_action(
+    requested = runtime.execute_tool(
         {
             "tool": "request_plan_approval",
             "call_id": "request-plan",
@@ -180,7 +185,7 @@ def test_plan_decision_does_not_clear_an_unrelated_runtime_failure(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    failing = ProjectRuntime(
+    failing = create_project_runtime(
         project_path=project_path,
         settings=load_settings(DEFAULT_SETTINGS_PATH),
         approval_mode="yolo",
@@ -191,7 +196,13 @@ def test_plan_decision_does_not_clear_an_unrelated_runtime_failure(
     failing.submit_message("Block this Runtime before replanning.")
     assert failing.drive_until_waiting().status == "BLOCKED"
     _write_specs(project_path)
-    requested = failing.execute_action(
+    control = create_project_runtime_control(
+        project_path=project_path,
+        settings=load_settings(DEFAULT_SETTINGS_PATH),
+        approval_mode="yolo",
+        responses_transport=_UnusedResponsesTransport(),
+    )
+    requested = control.execute_tool(
         {
             "tool": "request_plan_approval",
             "call_id": "request-blocked-plan",
@@ -200,7 +211,7 @@ def test_plan_decision_does_not_clear_an_unrelated_runtime_failure(
     )
     assert requested.exit is not None
 
-    resumed = ProjectRuntime(
+    resumed = create_project_runtime(
         project_path=project_path,
         settings=load_settings(DEFAULT_SETTINGS_PATH),
         approval_mode="yolo",
@@ -210,8 +221,17 @@ def test_plan_decision_does_not_clear_an_unrelated_runtime_failure(
 
     assert decision.state.status == "BLOCKED"
     assert resumed.drive_until_waiting().status == "BLOCKED"
-    driven = resumed.drive_next_activation()
+    resumed_control = create_project_runtime_control(
+        project_path=project_path,
+        settings=load_settings(DEFAULT_SETTINGS_PATH),
+        approval_mode="yolo",
+        responses_transport=_ReplyingResponsesTransport(),
+    )
+    driven = resumed_control.drive_owner_model()
     assert driven.activation is not None
     assert driven.activation.status.value == "COMPLETED"
     assert resumed.state().status == "BLOCKED"
-    assert resumed.project_control_view().owner_activation is None
+    assert (
+        create_project_control_query(project_path=project_path).get_current().owner_activation
+        is None
+    )

@@ -10,6 +10,7 @@ from typing import ClassVar
 
 import pytest
 
+from agentplanex.bootstrap import create_project_runtime_control
 from agentplanex.domains import (
     ActionOutput,
     Message,
@@ -33,7 +34,6 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
-from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.agent_contracts import resolve_observation_skill
 from agentplanex.services.delivery._stage_executor import (
@@ -120,7 +120,7 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
     project_path = initialize_git_project()
     _RecordingOwnerModel.queries = []
     monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _RecordingOwnerModel)
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
@@ -129,7 +129,7 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
     runtime.initialize()
 
     activation = runtime.submit_message("Clarify the current project work.")
-    runtime.drive_next_activation()
+    runtime.drive_owner_model()
 
     instructions = str(_RecordingOwnerModel.queries[-1][0]["content"])
     skill_path = resolve_observation_skill()
@@ -153,7 +153,7 @@ def test_existing_owner_prompt_remains_the_session_contract_after_restart(
     monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _RecordingOwnerModel)
     old_prompt = "Configured Owner prompt before restart."
     current_prompt = "Configured Owner prompt after restart."
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=_settings(owner_prompt=old_prompt),
         approval_mode="yolo",
@@ -161,7 +161,7 @@ def test_existing_owner_prompt_remains_the_session_contract_after_restart(
     )
     runtime.initialize()
     activation = runtime.submit_message("Use the persisted Owner contract.")
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=_settings(owner_prompt=current_prompt),
         approval_mode="yolo",
@@ -174,7 +174,7 @@ def test_existing_owner_prompt_remains_the_session_contract_after_restart(
     assert owner is not None
     assert owner.system_prompt == old_prompt
 
-    runtime.drive_next_activation()
+    runtime.drive_owner_model()
 
     instructions = str(_RecordingOwnerModel.queries[-1][0]["content"])
     assert instructions.startswith(old_prompt)
@@ -209,7 +209,7 @@ def test_runtime_uses_packaged_observation_skill_independent_of_target_project(
     assert (skill_path.parent / "references" / "detail.md").read_bytes() == (
         repository_skill.parent / "references" / "detail.md"
     ).read_bytes()
-    ProjectRuntime(
+    create_project_runtime_control(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",

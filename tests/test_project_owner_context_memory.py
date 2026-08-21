@@ -10,6 +10,11 @@ from threading import Lock
 
 import pytest
 
+from agentplanex.bootstrap import (
+    create_project_control_query,
+    create_project_runtime_control,
+    create_project_workspace_query,
+)
 from agentplanex.domains import SummaryHistory
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
@@ -20,7 +25,6 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
     ResponsesTransport,
 )
-from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.services.agent_contracts import AgentPromptCatalog
 from agentplanex.services.historical_owner import HistoricalOwnerForkService
 from agentplanex.settings import (
@@ -138,7 +142,7 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
 ) -> None:
     project_path = initialize_git_project()
     settings = _settings(capacity_tokens=128_000)
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",
@@ -155,7 +159,7 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
     )
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
-            runtime.drive_activation_tool,
+            runtime.drive_owner_tool,
             {
                 "tool": "bash",
                 "call_id": "running-tool",
@@ -165,7 +169,9 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
         try:
             deadline = time.monotonic() + 5
             while True:
-                conversation = runtime.project_workspace_view(activation.triage_id).conversation
+                conversation = create_project_workspace_query(
+                    project_path=project_path
+                ).get(activation.triage_id).conversation
                 running = next(
                     (message for message in conversation if message.role == "tool"),
                     None,
@@ -189,7 +195,9 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
 
     completed = next(
         message
-        for message in runtime.project_workspace_view(activation.triage_id).conversation
+        for message in create_project_workspace_query(project_path=project_path)
+        .get(activation.triage_id)
+        .conversation
         if message.role == "tool"
     )
     assert completed.message_id == running.message_id
@@ -197,7 +205,7 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
     assert completed.tool_activity.status == "completed"
     assert "completed" in (completed.tool_activity.output_preview or "")
 
-    runtime.drive_activation_tool(
+    runtime.drive_owner_tool(
         {
             "tool": "bash",
             "call_id": "failed-tool",
@@ -218,7 +226,9 @@ def test_workspace_conversation_surfaces_live_project_owner_tool_activity(
     )
     failed = [
         message
-        for message in runtime.project_workspace_view(activation.triage_id).conversation
+        for message in create_project_workspace_query(project_path=project_path)
+        .get(activation.triage_id)
+        .conversation
         if message.role == "tool"
     ][-1]
     assert failed.tool_activity is not None
@@ -236,7 +246,7 @@ def test_workspace_conversation_projects_model_tool_as_one_completed_activity(
 ) -> None:
     project_path = initialize_git_project()
     settings = _settings(capacity_tokens=128_000)
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",
@@ -245,11 +255,13 @@ def test_workspace_conversation_projects_model_tool_as_one_completed_activity(
     runtime.initialize()
 
     activation = runtime.submit_message("Inspect the project before replying")
-    driven = runtime.drive_next_activation()
+    driven = runtime.drive_owner_model()
 
     assert driven.exit is not None
     assert driven.exit.content == "owner-finished"
-    conversation = runtime.project_workspace_view(activation.triage_id).conversation
+    conversation = create_project_workspace_query(project_path=project_path).get(
+        activation.triage_id
+    ).conversation
     assert [message.role for message in conversation] == ["user", "tool", "assistant"]
     activity = conversation[1].tool_activity
     assert activity is not None
@@ -268,7 +280,7 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
     project_path = initialize_git_project()
     settings = _settings()
     first_transport = _OwnerTransport(settings, first_owner_tool=True)
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",
@@ -277,7 +289,7 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
     runtime.initialize()
 
     first_activation = runtime.submit_message("Inspect the project before replying")
-    first = runtime.drive_next_activation()
+    first = runtime.drive_owner_model()
 
     assert first.exit is not None
     assert first.exit.content == "owner-finished"
@@ -351,14 +363,14 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
         }
     )
     restarted_transport = _OwnerTransport(changed_settings)
-    restarted = ProjectRuntime(
+    restarted = create_project_runtime_control(
         project_path=project_path,
         settings=changed_settings,
         approval_mode="yolo",
         responses_transport=restarted_transport,
     )
     second_activation = restarted.submit_message("updated-context " * 600)
-    second = restarted.drive_next_activation()
+    second = restarted.drive_owner_model()
 
     assert second.exit is not None
     assert second.exit.content == "owner-finished"
@@ -420,7 +432,7 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
 
     completed = [
         event
-        for event in restarted.project_control_view().timeline
+        for event in create_project_control_query(project_path=project_path).get_current().timeline
         if event.event_type.value == "CONTEXT_COMPACTION_COMPLETED"
     ]
     assert [event.payload["query_index"] for event in completed] == [1, 0]
@@ -436,7 +448,7 @@ def test_summary_failure_keeps_the_original_owner_context(
     project_path = initialize_git_project()
     settings = _settings()
     transport = _OwnerTransport(settings, summary_failure=summary_failure)
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",
@@ -445,7 +457,7 @@ def test_summary_failure_keeps_the_original_owner_context(
     runtime.initialize()
 
     activation = runtime.submit_message("original-context " * 600)
-    driven = runtime.drive_next_activation()
+    driven = runtime.drive_owner_model()
 
     assert driven.exit is not None
     assert driven.exit.content == "owner-finished"
@@ -459,7 +471,12 @@ def test_summary_failure_keeps_the_original_owner_context(
     assert owner is not None
     assert owner.summary_id is None
     assert summary_count == 0
-    assert [event.event_type.value for event in runtime.project_control_view().timeline].count(
+    assert [
+        event.event_type.value
+        for event in create_project_control_query(project_path=project_path)
+        .get_current()
+        .timeline
+    ].count(
         "CONTEXT_COMPACTION_FAILED"
     ) == 1
 
@@ -471,7 +488,7 @@ def test_summary_publish_transaction_rejects_a_stale_checkpoint(
 
     project_path = initialize_git_project()
     settings = _settings(capacity_tokens=128_000)
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",
@@ -479,7 +496,7 @@ def test_summary_publish_transaction_rejects_a_stale_checkpoint(
     )
     runtime.initialize()
     activation = runtime.submit_message("create the owner checkpoint")
-    runtime.drive_next_activation()
+    runtime.drive_owner_model()
 
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
@@ -522,7 +539,7 @@ def test_frozen_activation_cannot_replace_a_newer_summary_during_compaction(
 
     project_path = initialize_git_project()
     roomy_settings = _settings(capacity_tokens=128_000)
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=roomy_settings,
         approval_mode="yolo",
@@ -530,7 +547,7 @@ def test_frozen_activation_cannot_replace_a_newer_summary_during_compaction(
     )
     runtime.initialize()
     baseline = runtime.submit_message("establish a stable history checkpoint")
-    runtime.drive_next_activation()
+    runtime.drive_owner_model()
 
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
@@ -577,13 +594,13 @@ def test_frozen_activation_cannot_replace_a_newer_summary_during_compaction(
 
     compact_settings = _settings(capacity_tokens=3_000)
     transport = _OwnerTransport(compact_settings)
-    restarted = ProjectRuntime(
+    restarted = create_project_runtime_control(
         project_path=project_path,
         settings=compact_settings,
         approval_mode="yolo",
         responses_transport=transport,
     )
-    driven = restarted.drive_next_activation()
+    driven = restarted.drive_owner_model()
 
     assert driven.activation is not None
     assert driven.activation.activation_id == activation.activation_id
@@ -606,7 +623,7 @@ def test_frozen_activation_cannot_replace_a_newer_summary_during_compaction(
     assert summary_count_after == summary_count_before
     compaction_events = [
         event.event_type.value
-        for event in restarted.project_control_view().timeline
+        for event in create_project_control_query(project_path=project_path).get_current().timeline
         if event.payload.get("activation_id") == activation.activation_id
     ]
     assert compaction_events.count("CONTEXT_COMPACTION_STARTED") == 1
@@ -619,7 +636,7 @@ def test_restart_fails_when_a_persisted_owner_tool_is_missing(
 ) -> None:
     project_path = initialize_git_project()
     settings = _settings(capacity_tokens=128_000)
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",
@@ -627,7 +644,7 @@ def test_restart_fails_when_a_persisted_owner_tool_is_missing(
     )
     runtime.initialize()
     activation = runtime.submit_message("create the owner")
-    runtime.drive_next_activation()
+    runtime.drive_owner_model()
 
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
@@ -636,7 +653,7 @@ def test_restart_fails_when_a_persisted_owner_tool_is_missing(
         assert owner is not None
         owners.update(connection, replace(owner, tools=("removed_tool",)))
 
-    restarted = ProjectRuntime(
+    restarted = create_project_runtime_control(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",
@@ -651,7 +668,7 @@ def test_attribution_uses_the_summary_available_at_its_checkpoint(
 ) -> None:
     project_path = initialize_git_project()
     settings = _settings()
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",
@@ -660,11 +677,11 @@ def test_attribution_uses_the_summary_available_at_its_checkpoint(
     runtime.initialize()
 
     runtime.submit_message("first-history " * 600)
-    first = runtime.drive_next_activation()
+    first = runtime.drive_owner_model()
     checkpoint = runtime.submit_message("historical checkpoint")
-    runtime.drive_next_activation()
+    runtime.drive_owner_model()
     runtime.submit_message("future-history " * 600)
-    future = runtime.drive_next_activation()
+    future = runtime.drive_owner_model()
 
     assert first.activation is not None
     assert first.activation.summary_id is not None

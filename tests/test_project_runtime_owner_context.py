@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 import agentplanex.services as services
+from agentplanex.bootstrap import create_project_runtime
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteOwnerActivationRepository,
@@ -24,7 +25,7 @@ class _UnusedResponsesTransport:
 
 
 def _runtime(project_path: Path) -> ProjectRuntime:
-    return ProjectRuntime(
+    return create_project_runtime(
         project_path=project_path,
         settings=load_settings(DEFAULT_SETTINGS_PATH),
         approval_mode="yolo",
@@ -86,6 +87,14 @@ def test_services_package_does_not_export_owner_activation_driver() -> None:
     assert not hasattr(services, "ActivationDriveResult")
 
 
+def test_services_package_exports_only_independent_capabilities() -> None:
+    assert set(services.__all__) == {
+        "AgentCollaborationService",
+        "EventBus",
+        "HistoricalOwnerForkService",
+    }
+
+
 def test_failed_owner_exit_and_runtime_block_are_one_transaction(
     initialize_git_project: Callable[[], Path],
 ) -> None:
@@ -108,7 +117,7 @@ def test_failed_owner_exit_and_runtime_block_are_one_transaction(
         )
 
     with pytest.raises(sqlite3.IntegrityError, match="forced block rollback"):
-        runtime.drive_next_activation()
+        runtime.drive_until_waiting()
 
     with database.transaction() as connection:
         activation = SQLiteOwnerActivationRepository().get(

@@ -10,9 +10,13 @@ from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.models.responses import ResponsesTransport
 from agentplanex.project_runtime import ProjectRuntime
-from agentplanex.project_runtime.composition import compose_project_runtime_control
+from agentplanex.project_runtime.composition import (
+    compose_project_runtime,
+    compose_project_runtime_control,
+)
 from agentplanex.project_runtime.control import ProjectRuntimeControl
 from agentplanex.services.project_control import ProjectControlQuery
+from agentplanex.services.project_workspace import ProjectWorkspaceQuery
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.queries import WorkspaceQueries
 from agentplanex.services.workspace.service import WorkspaceService
@@ -28,7 +32,7 @@ def create_project_runtime(
 ) -> ProjectRuntime:
     """Create a Runtime from explicit invocation inputs and loaded settings."""
     configured = settings or load_settings()
-    return ProjectRuntime(
+    return compose_project_runtime(
         project_path=project_path,
         settings=configured,
         approval_mode=approval_mode,
@@ -67,6 +71,17 @@ def create_project_control_query(*, project_path: Path) -> ProjectControlQuery:
     if not resolved.is_dir():
         raise ValueError(f"Project path is not a directory: {resolved}")
     return ProjectControlQuery(
+        database=SQLiteDatabase.for_project(resolved),
+        git=GitRepository(resolved),
+    )
+
+
+def create_project_workspace_query(*, project_path: Path) -> ProjectWorkspaceQuery:
+    """Create the read-only Web/CLI projection without a command graph."""
+    resolved = project_path.resolve()
+    if not resolved.is_dir():
+        raise ValueError(f"Project path is not a directory: {resolved}")
+    return ProjectWorkspaceQuery(
         database=SQLiteDatabase.for_project(resolved),
         git=GitRepository(resolved),
     )

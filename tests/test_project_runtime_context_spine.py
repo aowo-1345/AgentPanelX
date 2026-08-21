@@ -3,11 +3,17 @@
 import sqlite3
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import fields
 from pathlib import Path
 from threading import Event
 
 import pytest
 
+from agentplanex.bootstrap import (
+    create_project_control_query,
+    create_project_runtime,
+    create_project_runtime_control,
+)
 from agentplanex.domains import ProjectRuntimeState
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
@@ -48,11 +54,47 @@ class _BlockingResponsesTransport:
 
 
 def _runtime(project_path: Path) -> ProjectRuntime:
-    return ProjectRuntime(
+    return create_project_runtime(
         project_path=project_path,
         settings=load_settings(DEFAULT_SETTINGS_PATH),
         approval_mode="yolo",
         responses_transport=_UnusedResponsesTransport(),
+    )
+
+
+def test_normal_runtime_exposes_only_the_feature_command_facade(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    runtime = _runtime(initialize_git_project())
+
+    assert [field.name for field in fields(ProjectRuntime)] == ["_service"]
+    assert {
+        name
+        for name, member in vars(ProjectRuntime).items()
+        if not name.startswith("_") and callable(member)
+    } == {
+        "initialize",
+        "state",
+        "begin_feature",
+        "submit_message",
+        "approve_plan",
+        "reject_plan",
+        "start_first_run",
+        "drive_until_waiting",
+        "fail_interrupted_work",
+    }
+    assert not any(
+        hasattr(runtime, name)
+        for name in (
+            "context",
+            "git",
+            "executions",
+            "project_control_view",
+            "project_workspace_view",
+            "drive_owner_model",
+            "drive_delivery",
+            "execute_tool",
+        )
     )
 
 
@@ -115,9 +157,7 @@ def test_non_initialization_command_does_not_create_feature(
     database = SQLiteDatabase.for_project(project_path)
     with database.read_only_connection() as connection:
         assert SQLiteProjectRuntimeStateRepository().list_all(connection) == ()
-        assert connection.execute("SELECT COUNT(*) FROM project_owner_agent").fetchone()[
-            0
-        ] == 0
+        assert connection.execute("SELECT COUNT(*) FROM project_owner_agent").fetchone()[0] == 0
 
 
 def test_initialization_rolls_back_state_when_owner_identity_cannot_commit(
@@ -142,9 +182,7 @@ def test_initialization_rolls_back_state_when_owner_identity_cannot_commit(
 
     with database.transaction() as connection:
         assert SQLiteProjectRuntimeStateRepository().list_all(connection) == ()
-        assert connection.execute("SELECT COUNT(*) FROM project_owner_agent").fetchone()[
-            0
-        ] == 0
+        assert connection.execute("SELECT COUNT(*) FROM project_owner_agent").fetchone()[0] == 0
         connection.execute("DROP TRIGGER reject_owner_identity")
     assert runtime.initialize().status == "TRIAGE"
 
@@ -191,7 +229,7 @@ def test_second_runtime_fails_fast_while_feature_operation_is_running(
 ) -> None:
     project_path = initialize_git_project()
     blocking_transport = _BlockingResponsesTransport()
-    first = ProjectRuntime(
+    first = create_project_runtime(
         project_path=project_path,
         settings=load_settings(DEFAULT_SETTINGS_PATH),
         approval_mode="yolo",
@@ -201,11 +239,21 @@ def test_second_runtime_fails_fast_while_feature_operation_is_running(
     first.begin_feature()
     first.submit_message("hold the Feature operation")
     second = _runtime(project_path)
+    control = create_project_runtime_control(
+        project_path=project_path,
+        settings=load_settings(DEFAULT_SETTINGS_PATH),
+        approval_mode="yolo",
+        responses_transport=_UnusedResponsesTransport(),
+    )
+    query = create_project_control_query(project_path=project_path)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         driving = pool.submit(first.drive_until_waiting)
         assert blocking_transport.entered.wait(timeout=5)
+        assert query.get_current().state.status == "TODO"
         with pytest.raises(FeatureBusyError):
             second.initialize()
+        with pytest.raises(FeatureBusyError):
+            control.submit_message("This write must not race the Runtime.")
         blocking_transport.release.set()
         assert driving.result(timeout=5).status == "TODO"

@@ -1,8 +1,13 @@
 """Privileged single-step control over one composed Feature Runtime."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
-from agentplanex.domains import Action, OwnerActivation, ToolExecutionResult
+from agentplanex.domains import (
+    Action,
+    OwnerActivation,
+    ProjectRuntimeState,
+    ToolExecutionResult,
+)
 from agentplanex.services.delivery import DeliveryDriveOutcome, MilestoneRunQueued
 from agentplanex.services.planning import PlanDecision
 from agentplanex.services.project_runtime import ProjectRuntimeService
@@ -13,32 +18,30 @@ from agentplanex.services.project_runtime_context import (
 )
 
 
-@dataclass(slots=True)
+@dataclass(eq=False, slots=True)
 class ProjectRuntimeControl:
     """Expose explicit human intervention without defining another state path."""
 
-    _service: ProjectRuntimeService
-    _context: ProjectRuntimeContext
+    _service: ProjectRuntimeService = field(repr=False)
+    _context: ProjectRuntimeContext = field(repr=False)
+
+    def initialize(self) -> ProjectRuntimeState:
+        return self._service.initialize()
 
     def submit_message(self, content: str) -> OwnerActivation:
-        with self._context.operation():
-            return self._service.submit_user_message(content)
+        return self._service.submit_user_message(content)
 
     def approve_plan(self) -> PlanDecision:
-        with self._context.operation():
-            return self._service.approve_plan()
+        return self._service.approve_plan()
 
     def reject_plan(self, feedback: str = "") -> PlanDecision:
-        with self._context.operation():
-            return self._service.reject_plan(feedback)
+        return self._service.reject_plan(feedback)
 
     def start_first_run(self) -> MilestoneRunQueued:
-        with self._context.operation():
-            return self._service.start_first_run()
+        return self._service.start_first_run()
 
     def drive_delivery(self) -> DeliveryDriveOutcome:
-        with self._context.operation():
-            return self._service.drive_delivery()
+        return self._service.drive_delivery()
 
     def drive_owner_model(self) -> ActivationDriveResult:
         return self._context.drive_owner()

@@ -1,4 +1,4 @@
-"""Composition root for one complete Feature Runtime object graph."""
+"""Composition root for one complete Feature Runtime command graph."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,34 +16,28 @@ from agentplanex.project_runtime.executions import (
     ProjectExecutions,
     create_project_executions,
 )
-from agentplanex.services import (
-    AgentCollaborationService,
-    DeliveryService,
-    EventBus,
-    PlanningService,
-    ProjectControlQuery,
-    ProjectRuntimeService,
-)
+from agentplanex.project_runtime.runtime import ProjectRuntime
+from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.agent_contracts import resolve_observation_skill
+from agentplanex.services.delivery import DeliveryService
 from agentplanex.services.delivery._stage_executor import (
     CodexStageExecutor,
     StageExecutor,
 )
+from agentplanex.services.event_bus import EventBus
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
+from agentplanex.services.planning import PlanningService
+from agentplanex.services.project_runtime import ProjectRuntimeService
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 from agentplanex.services.project_runtime_context._owner import _OwnerRuntime
-from agentplanex.services.project_workspace import ProjectWorkspaceQuery
 from agentplanex.settings import Settings
 
 
 @dataclass(frozen=True, slots=True)
-class _ProjectRuntimeComponents:
+class _ProjectCommandGraph:
     service: ProjectRuntimeService
     context: ProjectRuntimeContext
     executions: ProjectExecutions
-    workspace_query: ProjectWorkspaceQuery
-    control_query: ProjectControlQuery
-    git: GitRepository
 
 
 def compose_project_runtime(
@@ -52,9 +46,50 @@ def compose_project_runtime(
     settings: Settings,
     approval_mode: ApprovalMode,
     responses_transport: ResponsesTransport,
+) -> ProjectRuntime:
+    """Return the sealed normal Runtime rather than its internal object graph."""
+    graph = _compose_command_graph(
+        project_path=project_path,
+        settings=settings,
+        approval_mode=approval_mode,
+        responses_transport=responses_transport,
+        stage_executor=None,
+    )
+    return ProjectRuntime(_service=graph.service)
+
+
+def compose_project_runtime_control(
+    *,
+    project_path: Path,
+    settings: Settings,
+    approval_mode: ApprovalMode,
+    responses_transport: ResponsesTransport,
+) -> ProjectRuntimeControl:
+    """Return privileged Control over the same sealed command graph design."""
+    graph = _compose_command_graph(
+        project_path=project_path,
+        settings=settings,
+        approval_mode=approval_mode,
+        responses_transport=responses_transport,
+        stage_executor=None,
+    )
+    return ProjectRuntimeControl(_service=graph.service, _context=graph.context)
+
+
+def _compose_command_graph(
+    *,
+    project_path: Path,
+    settings: Settings,
+    approval_mode: ApprovalMode,
+    responses_transport: ResponsesTransport,
     stage_executor: StageExecutor | None,
-) -> _ProjectRuntimeComponents:
-    """Build and seal all command-side collaborators for one worktree."""
+) -> _ProjectCommandGraph:
+    """Build, bind, and seal the sole command graph for one adapter instance."""
+    project_path = project_path.resolve()
+    if not project_path.is_dir():
+        raise ValueError(f"Project path is not a directory: {project_path}")
+    git = GitRepository(project_path)
+    git.ensure_runtime_excluded()
     database = SQLiteDatabase.for_project(project_path)
     initialize_schema(database)
     event_bus = EventBus((SQLiteTimelineRecorder(database),))
@@ -71,7 +106,6 @@ def compose_project_runtime(
         observation_skill=observation_skill,
     )
     hard_gate = CodexPlanHardGate(collaboration)
-    git = GitRepository(project_path)
     planning = PlanningService(
         project_path=project_path,
         context=context,
@@ -105,6 +139,7 @@ def compose_project_runtime(
         collaboration=collaboration,
         event_bus=event_bus,
     )
+    context._bind_tool_executor(executions.execute)
     model_settings = settings.project_owner_agent.selected_model
     owner = _OwnerRuntime(
         database=database,
@@ -120,45 +155,17 @@ def compose_project_runtime(
         observation_skill=collaboration.observation_skill,
         prompts=collaboration.prompts,
         load_state=context._reload_state,
-        set_activation_initial_summary=(context._set_owner_activation_initial_summary),
+        set_activation_initial_summary=context._set_owner_activation_initial_summary,
     )
     context._bind_owner_runtime(owner)
     context._seal()
-    control_query = ProjectControlQuery(database=database, git=git)
     service = ProjectRuntimeService(
         planning=planning,
         delivery=delivery,
         context=context,
     )
-    return _ProjectRuntimeComponents(
+    return _ProjectCommandGraph(
         service=service,
         context=context,
         executions=executions,
-        workspace_query=ProjectWorkspaceQuery(database=database, git=git),
-        control_query=control_query,
-        git=git,
-    )
-
-
-def compose_project_runtime_control(
-    *,
-    project_path: Path,
-    settings: Settings,
-    approval_mode: ApprovalMode,
-    responses_transport: ResponsesTransport,
-) -> ProjectRuntimeControl:
-    """Compose the command graph before constructing its privileged adapter."""
-    project_path = project_path.resolve()
-    if not project_path.is_dir():
-        raise ValueError(f"Project path is not a directory: {project_path}")
-    components = compose_project_runtime(
-        project_path=project_path,
-        settings=settings,
-        approval_mode=approval_mode,
-        responses_transport=responses_transport,
-        stage_executor=None,
-    )
-    return ProjectRuntimeControl(
-        _service=components.service,
-        _context=components.context,
     )

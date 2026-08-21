@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Protocol, TextIO
 
-from agentplanex.bootstrap import create_project_runtime
+from agentplanex.bootstrap import create_project_runtime_control
 from agentplanex.domains import AgentExitStatus, OwnerActivation, ProjectRuntimeState
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.exception import ModelError
@@ -15,12 +15,12 @@ from agentplanex.services.project_runtime_context import ActivationDriveResult
 type InputReader = Callable[[str], str]
 
 
-class OwnerRuntime(Protocol):
+class OwnerControl(Protocol):
     def initialize(self) -> ProjectRuntimeState: ...
 
     def submit_message(self, content: str) -> OwnerActivation: ...
 
-    def drive_next_activation(self) -> ActivationDriveResult: ...
+    def drive_owner_model(self) -> ActivationDriveResult: ...
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -32,7 +32,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     approval_mode: ApprovalMode = args.mode
     try:
-        runtime = create_project_runtime(
+        runtime = create_project_runtime_control(
             project_path=args.cwd,
             approval_mode=approval_mode,
         )
@@ -48,7 +48,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _run_once(
-    runtime: OwnerRuntime,
+    runtime: OwnerControl,
     task: str,
     *,
     stdout: TextIO | None = None,
@@ -58,7 +58,7 @@ def _run_once(
     error_output = stderr if stderr is not None else sys.stderr
     try:
         runtime.submit_message(task)
-        driven = runtime.drive_next_activation()
+        driven = runtime.drive_owner_model()
     except (ModelError, ValueError) as error:
         print(str(error), file=error_output)
         return 1
@@ -75,7 +75,7 @@ def _run_once(
 
 
 def _run_interactive(
-    runtime: OwnerRuntime,
+    runtime: OwnerControl,
     initial_task: str = "",
     *,
     read_input: InputReader = input,

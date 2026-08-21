@@ -13,6 +13,10 @@ import yaml
 from openai import APIConnectionError, omit
 
 from agentplanex import bootstrap, cli
+from agentplanex.bootstrap import (
+    create_project_control_query,
+    create_project_runtime_control,
+)
 from agentplanex.domains import (
     ActionOutput,
     AgentExit,
@@ -34,7 +38,7 @@ from agentplanex.project_owner_agent.exception import ModelGatewayError, ReplyTo
 from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
 )
-from agentplanex.project_runtime import ProjectRuntime
+from agentplanex.project_runtime.runtime import ProjectRuntime
 from agentplanex.services.project_runtime_context import ActivationDriveResult
 from agentplanex.services.project_runtime_context import _owner as project_owner_service
 from agentplanex.settings import (
@@ -548,7 +552,7 @@ def test_cli_only_passes_explicit_runtime_inputs(
         def submit_message(self, task: str) -> None:
             self.task = task
 
-        def drive_next_activation(self) -> ActivationDriveResult:
+        def drive_owner_model(self) -> ActivationDriveResult:
             return ActivationDriveResult(
                 activation=None,
                 exit=AgentExit(
@@ -561,7 +565,7 @@ def test_cli_only_passes_explicit_runtime_inputs(
         captured.update(kwargs)
         return _Runtime()
 
-    monkeypatch.setattr(cli, "create_project_runtime", create_runtime)
+    monkeypatch.setattr(cli, "create_project_runtime_control", create_runtime)
 
     assert (
         cli.main(
@@ -604,7 +608,7 @@ def test_runtime_restores_owner_history_across_activations(
     _ReplyingModel.queries = []
     monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
     project_path = initialize_git_project()
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
@@ -613,17 +617,17 @@ def test_runtime_restores_owner_history_across_activations(
     runtime.initialize()
 
     runtime.submit_message("first")
-    first_result = runtime.drive_next_activation()
+    first_result = runtime.drive_owner_model()
     runtime.submit_message("second")
-    second_result = runtime.drive_next_activation()
-    restarted_runtime = ProjectRuntime(
+    second_result = runtime.drive_owner_model()
+    restarted_runtime = create_project_runtime_control(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
         responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
     restarted_runtime.submit_message("third")
-    third_result = restarted_runtime.drive_next_activation()
+    third_result = restarted_runtime.drive_owner_model()
 
     first = first_result.exit
     second = second_result.exit
@@ -656,7 +660,7 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
     _ReplyingModel.queries = []
     monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
     project_path = initialize_git_project()
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
@@ -665,9 +669,9 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
     runtime.initialize()
 
     first_activation = runtime.submit_message("first")
-    runtime.drive_next_activation()
+    runtime.drive_owner_model()
     runtime.submit_message("second")
-    runtime.drive_next_activation()
+    runtime.drive_owner_model()
 
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
@@ -709,13 +713,13 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
         summaries.insert(connection, newer_summary)
         owners.update(connection, replace(owner, summary_id=newer_summary.summary_id))
 
-    restarted_runtime = ProjectRuntime(
+    restarted_runtime = create_project_runtime_control(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
         responses_transport=_UNUSED_RESPONSES_TRANSPORT,
     )
-    result = restarted_runtime.drive_next_activation()
+    result = restarted_runtime.drive_owner_model()
 
     assert result.activation is not None
     assert result.activation.summary_id == frozen_summary.summary_id
@@ -758,7 +762,7 @@ def test_activation_rejects_summary_from_another_owner_session(
     _ReplyingModel.queries = []
     monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _ReplyingModel)
     project_path = initialize_git_project()
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
@@ -766,7 +770,7 @@ def test_activation_rejects_summary_from_another_owner_session(
     )
     runtime.initialize()
     first_activation = runtime.submit_message("first")
-    runtime.drive_next_activation()
+    runtime.drive_owner_model()
     _ReplyingModel.queries = []
 
     database = SQLiteDatabase.for_project(project_path)
@@ -792,7 +796,7 @@ def test_activation_rejects_summary_from_another_owner_session(
         owners.update(connection, replace(owner, summary_id=invalid_summary.summary_id))
 
     activation = runtime.submit_message("second")
-    result = runtime.drive_next_activation()
+    result = runtime.drive_owner_model()
 
     assert activation.summary_id == invalid_summary.summary_id
     assert result.activation is not None
@@ -820,7 +824,7 @@ def test_runtime_applies_bash_limits(
 ) -> None:
     monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _BashCallingModel)
     project_path = initialize_git_project()
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=_settings(
             bash_timeout_seconds=timeout_seconds,
@@ -832,7 +836,7 @@ def test_runtime_applies_bash_limits(
     runtime.initialize()
 
     runtime.submit_message(command)
-    result = runtime.drive_next_activation().exit
+    result = runtime.drive_owner_model().exit
     assert result is not None
 
     assert expected in result.content
@@ -897,7 +901,7 @@ def test_sandbox_denial_blocks_until_the_user_sends_another_message(
     _PolicyAwareBashModel.observation = None
     monkeypatch.setattr(project_owner_service, "ProjectOwnerModel", _PolicyAwareBashModel)
     project_path = initialize_git_project()
-    runtime = ProjectRuntime(
+    runtime = create_project_runtime_control(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
@@ -914,7 +918,7 @@ def test_sandbox_denial_blocks_until_the_user_sends_another_message(
             f"socket.create_connection(('127.0.0.1', {port}), 0.2)\""
         )
         runtime.submit_message(command)
-        result = runtime.drive_next_activation()
+        result = runtime.drive_owner_model()
 
     assert result.exit is not None
     assert result.exit.status is AgentExitStatus.REPLY_TO_HUMAN
@@ -922,20 +926,20 @@ def test_sandbox_denial_blocks_until_the_user_sends_another_message(
     assert _PolicyAwareBashModel.observation is not None
     assert _PolicyAwareBashModel.observation["user_action_required"] is True
 
-    blocked = runtime.project_control_view().state
+    blocked = create_project_control_query(project_path=project_path).get_current().state
     assert blocked.status == "BLOCKED"
     assert blocked.blocked_capability == "network"
     assert blocked.blocked_previous_status == "TODO"
     assert blocked.blocked_reason is not None
 
-    denied_retry = runtime.execute_action(
+    denied_retry = runtime.execute_tool(
         {"tool": "bash", "arguments": {"command": "touch should-not-exist"}}
     )
     assert denied_retry.output["error_type"] == "USER_INTERVENTION_REQUIRED"
     assert not (project_path / "should-not-exist").exists()
 
     runtime.submit_message("Continue without network access.")
-    resumed = runtime.project_control_view().state
+    resumed = create_project_control_query(project_path=project_path).get_current().state
     assert resumed.status == "TODO"
     assert resumed.blocked_reason is None
     assert resumed.blocked_capability is None

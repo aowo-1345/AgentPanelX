@@ -2,7 +2,7 @@
 
 import fcntl
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -65,6 +65,10 @@ class ProjectRuntimeContext:
         repr=False,
     )
     _owner_runtime: _OwnerRuntime | None = field(default=None, init=False, repr=False)
+    _tool_executor: Callable[
+        [ProjectRuntimeState, Action],
+        ToolExecutionResult,
+    ] | None = field(default=None, init=False, repr=False)
     _activation: _OwnerActivationLifecycle = field(
         default_factory=_OwnerActivationLifecycle,
         init=False,
@@ -87,8 +91,20 @@ class ProjectRuntimeContext:
             raise RuntimeError("Project Runtime Context dependencies are already bound")
         self._owner_runtime = owner_runtime
 
+    def _bind_tool_executor(
+        self,
+        tool_executor: Callable[
+            [ProjectRuntimeState, Action],
+            ToolExecutionResult,
+        ],
+    ) -> None:
+        """Bind the Owner-independent Tool path during composition only."""
+        if self._sealed or self._tool_executor is not None:
+            raise RuntimeError("Project Runtime Context dependencies are already bound")
+        self._tool_executor = tool_executor
+
     def _seal(self) -> None:
-        if self._owner_runtime is None:
+        if self._owner_runtime is None or self._tool_executor is None:
             raise RuntimeError("Project Runtime Context composition is incomplete")
         self._sealed = True
 
@@ -320,7 +336,10 @@ class ProjectRuntimeContext:
                         "Project Owner has an unfinished activation; use drive tool "
                         "so the Action stays bound to it"
                     )
-            return self._owner().execute_action(self._reload_state(), action)
+            executor = self._tool_executor
+            if executor is None:
+                raise RuntimeError("Project Runtime Context Tool Executor is not bound")
+            return executor(self._reload_state(), action)
 
     def _finish_owner(
         self,
