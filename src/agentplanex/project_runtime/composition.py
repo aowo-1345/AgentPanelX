@@ -11,6 +11,7 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesClient,
     ResponsesTransport,
 )
+from agentplanex.project_runtime.control import ProjectRuntimeControl
 from agentplanex.project_runtime.executions import (
     ProjectExecutions,
     create_project_executions,
@@ -136,4 +137,28 @@ def compose_project_runtime(
         workspace_query=ProjectWorkspaceQuery(database=database, git=git),
         control_query=control_query,
         git=git,
+    )
+
+
+def compose_project_runtime_control(
+    *,
+    project_path: Path,
+    settings: Settings,
+    approval_mode: ApprovalMode,
+    responses_transport: ResponsesTransport,
+) -> ProjectRuntimeControl:
+    """Compose the command graph before constructing its privileged adapter."""
+    project_path = project_path.resolve()
+    if not project_path.is_dir():
+        raise ValueError(f"Project path is not a directory: {project_path}")
+    components = compose_project_runtime(
+        project_path=project_path,
+        settings=settings,
+        approval_mode=approval_mode,
+        responses_transport=responses_transport,
+        stage_executor=None,
+    )
+    return ProjectRuntimeControl(
+        _service=components.service,
+        _context=components.context,
     )

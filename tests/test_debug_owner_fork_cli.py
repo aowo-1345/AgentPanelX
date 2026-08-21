@@ -10,6 +10,7 @@ from typing import ClassVar
 
 import pytest
 
+from agentplanex.bootstrap import create_project_runtime
 from agentplanex.domains import ActionOutput, Message, SummaryHistory
 from agentplanex.infrastructure import openai_responses as openai_responses_module
 from agentplanex.infrastructure.openai_responses import OpenAIResponsesTransport
@@ -60,7 +61,7 @@ def historical_project(
     capfd: pytest.CaptureFixture[str],
 ) -> Iterator[tuple[Path, str, SummaryHistory]]:
     project_path = initialize_git_project()
-    debug_tool_cli.create_project_runtime(
+    create_project_runtime(
         project_path=project_path,
         approval_mode="yolo",
     ).initialize()

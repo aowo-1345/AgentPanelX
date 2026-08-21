@@ -11,7 +11,9 @@ description: 通过真实 Runtime 有边界地介入 AgentPlaneX 项目。当开
 
 ## 控制入口
 
-所有命令都经过真实 `ProjectRuntime`、Service、Execution、SQLite、Git 和 EventBus：
+所有写命令都经过特权 `ProjectRuntimeControl`，并复用正常 Runtime 的同一套
+Context、Planning、Delivery、Execution、SQLite、Git 和 EventBus 规则。`view` 只构造
+独立的只读 `ProjectControlQuery`，不会启动模型或取得 Feature operation lock：
 
 ```bash
 uv run python scripts/debug_tool_cli.py --cwd <project> --print "view"

@@ -2,12 +2,17 @@
 
 from pathlib import Path
 
+from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.openai_responses import OpenAIResponsesTransport
+from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.models.responses import ResponsesTransport
 from agentplanex.project_runtime import ProjectRuntime
+from agentplanex.project_runtime.composition import compose_project_runtime_control
+from agentplanex.project_runtime.control import ProjectRuntimeControl
+from agentplanex.services.project_control import ProjectControlQuery
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.queries import WorkspaceQueries
 from agentplanex.services.workspace.service import WorkspaceService
@@ -32,6 +37,38 @@ def create_project_runtime(
             if responses_transport is not None
             else create_responses_transport(configured)
         ),
+    )
+
+
+def create_project_runtime_control(
+    *,
+    project_path: Path,
+    approval_mode: ApprovalMode,
+    settings: Settings | None = None,
+    responses_transport: ResponsesTransport | None = None,
+) -> ProjectRuntimeControl:
+    """Create the privileged intervention surface over the real command graph."""
+    configured = settings or load_settings()
+    return compose_project_runtime_control(
+        project_path=project_path,
+        settings=configured,
+        approval_mode=approval_mode,
+        responses_transport=(
+            responses_transport
+            if responses_transport is not None
+            else create_responses_transport(configured)
+        ),
+    )
+
+
+def create_project_control_query(*, project_path: Path) -> ProjectControlQuery:
+    """Create a read-only projection without constructing a Runtime command graph."""
+    resolved = project_path.resolve()
+    if not resolved.is_dir():
+        raise ValueError(f"Project path is not a directory: {resolved}")
+    return ProjectControlQuery(
+        database=SQLiteDatabase.for_project(resolved),
+        git=GitRepository(resolved),
     )
 
 

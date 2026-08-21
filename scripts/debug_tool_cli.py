@@ -11,9 +11,10 @@ The input can be either:
 * an interaction command such as ``message``, ``drive tool``, ``approve``,
   ``start``, ``drive-delivery``, or ``view``.
 
-All commands use the real ``ProjectRuntime`` for ``--cwd`` and therefore exercise
-the real project SQLite database, Git repository, Tool implementations, and
-Delivery machinery. ``drive`` may invoke the Project Owner model and
+Write commands use the privileged ``ProjectRuntimeControl`` for ``--cwd`` and
+therefore exercise the same Context, Services, SQLite database, Git repository,
+Tool implementations, and Delivery machinery as the normal Runtime. ``view`` uses
+only the read-only projection. ``drive`` may invoke the Project Owner model and
 ``drive-delivery`` may invoke the Stage Executor. ``start`` specifically means
 approving the first Delivery Run; it does not mean starting a TRIAGE conversation.
 """
@@ -33,7 +34,10 @@ sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from const import TARGET_PROJECT  # noqa: E402
 
-from agentplanex.bootstrap import create_project_runtime  # noqa: E402
+from agentplanex.bootstrap import (  # noqa: E402
+    create_project_control_query,
+    create_project_runtime_control,
+)
 from agentplanex.domains import (  # noqa: E402
     Action,
     AgentExit,
@@ -70,8 +74,8 @@ type InteractionAction = Literal[
 ]
 
 
-class RuntimeCommands(Protocol):
-    """The ProjectRuntime commands exposed by this developer control surface."""
+class ControlCommands(Protocol):
+    """The privileged commands used by this developer control surface."""
 
     def submit_message(self, content: str) -> OwnerActivation: ...
 
@@ -79,21 +83,25 @@ class RuntimeCommands(Protocol):
 
     def reject_plan(self, feedback: str = "") -> PlanDecision: ...
 
-    def drive_next_activation(self) -> ActivationDriveResult: ...
+    def drive_owner_model(self) -> ActivationDriveResult: ...
 
-    def drive_activation_tool(self, action: Action) -> ToolActivationDriveResult: ...
+    def drive_owner_tool(self, action: Action) -> ToolActivationDriveResult: ...
 
-    def reply_to_activation(self, content: str) -> ToolActivationDriveResult: ...
+    def reply_owner(self, content: str) -> ToolActivationDriveResult: ...
 
-    def fail_activation(self, reason: str) -> ToolActivationDriveResult: ...
+    def fail_owner(self, reason: str) -> ToolActivationDriveResult: ...
 
     def start_first_run(self) -> MilestoneRunQueued: ...
 
     def drive_delivery(self) -> DeliveryDriveOutcome: ...
 
-    def project_control_view(self) -> ProjectControlView: ...
+    def execute_tool(self, action: Action) -> ToolExecutionResult: ...
 
-    def execute_action(self, action: Action) -> ToolExecutionResult: ...
+
+class ControlQuery(Protocol):
+    """The independently composed read-only control projection."""
+
+    def get_current(self) -> ProjectControlView: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +114,7 @@ class _Interaction:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Create the real Runtime for ``--cwd`` and run one or many debug commands."""
+    """Create control lazily for ``--cwd`` and run one or many debug commands."""
 
     args = _parser().parse_args(argv)
     action_text = " ".join(args.action).strip()
@@ -122,18 +130,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             _print_error(str(error))
             return 2
 
-    try:
-        runtime = create_project_runtime(
-            project_path=args.cwd,
-            approval_mode="yolo",
-        )
-    except ValueError as error:
-        _print_error(str(error))
-        return 2
-
     if command is not None:
-        return _dispatch(runtime, command)
-    return _run_interactive(runtime, action_text)
+        if isinstance(command, _Interaction) and command.action == "view":
+            try:
+                query = create_project_control_query(project_path=args.cwd)
+            except ValueError as error:
+                _print_error(str(error))
+                return 2
+            return _show_view(query)
+        try:
+            control = create_project_runtime_control(
+                project_path=args.cwd,
+                approval_mode="yolo",
+            )
+        except ValueError as error:
+            _print_error(str(error))
+            return 2
+        query = (
+            create_project_control_query(project_path=args.cwd)
+            if isinstance(command, _Interaction)
+            and command.action == "drive-delivery"
+            else None
+        )
+        return _dispatch(control, command, query=query)
+    return _run_interactive(args.cwd, action_text)
 
 
 def _execute_once(
@@ -161,7 +181,7 @@ def _execute_once(
 
 
 def _run_interactive(
-    runtime: RuntimeCommands,
+    project_path: Path,
     initial_action: str = "",
     *,
     read_input: InputReader = input,
@@ -170,6 +190,8 @@ def _run_interactive(
     """Read and dispatch commands until EOF or an explicit exit command."""
 
     action_text = initial_action
+    control: ControlCommands | None = None
+    query: ControlQuery | None = None
     while True:
         if not action_text:
             try:
@@ -186,47 +208,69 @@ def _run_interactive(
         except ValueError as error:
             _print_error(str(error), output=stdout)
         else:
-            _dispatch(runtime, command, stdout=stdout)
+            try:
+                if isinstance(command, _Interaction) and command.action == "view":
+                    if query is None:
+                        query = create_project_control_query(project_path=project_path)
+                    _show_view(query, stdout=stdout)
+                else:
+                    if control is None:
+                        control = create_project_runtime_control(
+                            project_path=project_path,
+                            approval_mode="yolo",
+                        )
+                    if (
+                        isinstance(command, _Interaction)
+                        and command.action == "drive-delivery"
+                        and query is None
+                    ):
+                        query = create_project_control_query(project_path=project_path)
+                    _dispatch(control, command, query=query, stdout=stdout)
+            except ValueError as error:
+                _print_error(str(error), output=stdout)
         action_text = ""
 
 
 def _dispatch(
-    runtime: RuntimeCommands,
+    control: ControlCommands,
     command: Action | _Interaction,
     *,
+    query: ControlQuery | None = None,
     stdout: TextIO | None = None,
 ) -> int:
-    """Route one parsed command to the matching ProjectRuntime interface."""
+    """Route one parsed command to the privileged control interface."""
 
     if not isinstance(command, _Interaction):
-        return _execute_once(runtime.execute_action, command, stdout=stdout)
+        return _execute_once(control.execute_tool, command, stdout=stdout)
     if command.action == "message":
-        return _submit_message(runtime, command.message, stdout=stdout)
+        return _submit_message(control, command.message, stdout=stdout)
     if command.action == "approve":
-        return _submit_plan_decision(runtime, "approve", "", stdout=stdout)
+        return _submit_plan_decision(control, "approve", "", stdout=stdout)
     if command.action == "reject":
         return _submit_plan_decision(
-            runtime,
+            control,
             "reject",
             command.message,
             stdout=stdout,
         )
     if command.action == "drive":
-        return _drive_once(runtime, stdout=stdout)
+        return _drive_once(control, stdout=stdout)
     if command.action == "drive-tool":
         if command.tool_action is None:
             raise RuntimeError("Tool drive is missing its Tool Action")
-        return _drive_tool_once(runtime, command.tool_action, stdout=stdout)
+        return _drive_tool_once(control, command.tool_action, stdout=stdout)
     if command.action == "drive-reply":
-        return _drive_reply_once(runtime, command.message, stdout=stdout)
+        return _drive_reply_once(control, command.message, stdout=stdout)
     if command.action == "drive-fail":
-        return _drive_fail_once(runtime, command.message, stdout=stdout)
+        return _drive_fail_once(control, command.message, stdout=stdout)
     if command.action == "start":
-        return _start_first_run(runtime, stdout=stdout)
+        return _start_first_run(control, stdout=stdout)
     if command.action == "drive-delivery":
-        return _drive_delivery_once(runtime, stdout=stdout)
+        if query is None:
+            raise RuntimeError("Delivery drive requires its read-only projection")
+        return _drive_delivery_once(control, query, stdout=stdout)
     if command.action == "view":
-        return _show_view(runtime, stdout=stdout)
+        raise AssertionError("View must be routed through the read-only query")
     raise AssertionError(f"Unhandled interaction action: {command.action}")
 
 
@@ -322,7 +366,7 @@ def _parse_action(action_text: str) -> Action:
 
 
 def _submit_message(
-    runtime: RuntimeCommands,
+    control: ControlCommands,
     message: str,
     *,
     stdout: TextIO | None = None,
@@ -331,7 +375,7 @@ def _submit_message(
 
     output = stdout if stdout is not None else sys.stdout
     try:
-        activation = runtime.submit_message(message)
+        activation = control.submit_message(message)
     except Exception as error:
         _print_command_error("message", error, output)
         return 1
@@ -350,7 +394,7 @@ def _submit_message(
 
 
 def _submit_plan_decision(
-    runtime: RuntimeCommands,
+    control: ControlCommands,
     action: Literal["approve", "reject"],
     feedback: str,
     *,
@@ -361,9 +405,9 @@ def _submit_plan_decision(
     output = stdout if stdout is not None else sys.stdout
     try:
         decision = (
-            runtime.approve_plan()
+            control.approve_plan()
             if action == "approve"
-            else runtime.reject_plan(feedback)
+            else control.reject_plan(feedback)
         )
     except Exception as error:
         _print_command_error(action, error, output)
@@ -388,7 +432,7 @@ def _submit_plan_decision(
 
 
 def _drive_once(
-    runtime: RuntimeCommands,
+    control: ControlCommands,
     *,
     stdout: TextIO | None = None,
 ) -> int:
@@ -396,7 +440,7 @@ def _drive_once(
 
     output = stdout if stdout is not None else sys.stdout
     try:
-        driven = runtime.drive_next_activation()
+        driven = control.drive_owner_model()
     except Exception as error:
         _print_command_error("drive", error, output)
         return 1
@@ -426,7 +470,7 @@ def _drive_once(
 
 
 def _drive_tool_once(
-    runtime: RuntimeCommands,
+    control: ControlCommands,
     action: Action,
     *,
     stdout: TextIO | None = None,
@@ -435,7 +479,7 @@ def _drive_tool_once(
 
     output = stdout if stdout is not None else sys.stdout
     try:
-        driven = runtime.drive_activation_tool(action)
+        driven = control.drive_owner_tool(action)
     except Exception as error:
         _print_command_error("drive tool", error, output)
         return 1
@@ -472,7 +516,7 @@ def _drive_tool_once(
 
 
 def _drive_reply_once(
-    runtime: RuntimeCommands,
+    control: ControlCommands,
     content: str,
     *,
     stdout: TextIO | None = None,
@@ -481,13 +525,13 @@ def _drive_reply_once(
 
     return _finish_tool_drive(
         "reply",
-        lambda: runtime.reply_to_activation(content),
+        lambda: control.reply_owner(content),
         stdout=stdout,
     )
 
 
 def _drive_fail_once(
-    runtime: RuntimeCommands,
+    control: ControlCommands,
     reason: str,
     *,
     stdout: TextIO | None = None,
@@ -496,7 +540,7 @@ def _drive_fail_once(
 
     return _finish_tool_drive(
         "fail",
-        lambda: runtime.fail_activation(reason),
+        lambda: control.fail_owner(reason),
         stdout=stdout,
     )
 
@@ -541,7 +585,7 @@ def _finish_tool_drive(
 
 
 def _start_first_run(
-    runtime: RuntimeCommands,
+    control: ControlCommands,
     *,
     stdout: TextIO | None = None,
 ) -> int:
@@ -549,7 +593,7 @@ def _start_first_run(
 
     output = stdout if stdout is not None else sys.stdout
     try:
-        queued = runtime.start_first_run()
+        queued = control.start_first_run()
     except Exception as error:
         _print_command_error("start", error, output)
         return 1
@@ -576,7 +620,8 @@ def _start_first_run(
 
 
 def _drive_delivery_once(
-    runtime: RuntimeCommands,
+    control: ControlCommands,
+    query: ControlQuery,
     *,
     stdout: TextIO | None = None,
 ) -> int:
@@ -584,7 +629,7 @@ def _drive_delivery_once(
 
     output = stdout if stdout is not None else sys.stdout
     try:
-        before = runtime.project_control_view()
+        before = query.get_current()
         active_stage = next(
             (
                 stage_run
@@ -593,8 +638,8 @@ def _drive_delivery_once(
             ),
             None,
         )
-        outcome = runtime.drive_delivery()
-        after = runtime.project_control_view()
+        outcome = control.drive_delivery()
+        after = query.get_current()
         driven_stage = (
             next(
                 (
@@ -639,7 +684,7 @@ def _drive_delivery_once(
 
 
 def _show_view(
-    runtime: RuntimeCommands,
+    query: ControlQuery,
     *,
     stdout: TextIO | None = None,
 ) -> int:
@@ -647,7 +692,7 @@ def _show_view(
 
     output = stdout if stdout is not None else sys.stdout
     try:
-        view = runtime.project_control_view()
+        view = query.get_current()
     except Exception as error:
         _print_command_error("view", error, output)
         return 1

@@ -11,6 +11,7 @@ from typing import ClassVar
 
 import pytest
 
+from agentplanex.bootstrap import create_project_runtime
 from agentplanex.domains import (
     ActionOutput,
     ExecutionEvent,
@@ -42,7 +43,7 @@ from tests.runtime_support import compose_test_executions
 
 
 def _initialize_runtime(project_path: Path) -> None:
-    debug_tool_cli.create_project_runtime(
+    create_project_runtime(
         project_path=project_path,
         approval_mode="yolo",
     ).initialize()
@@ -1394,7 +1395,11 @@ def test_invalid_json_does_not_create_runtime(
     def unexpected_runtime(**_kwargs: object) -> None:
         raise AssertionError("invalid input must not create a Runtime")
 
-    monkeypatch.setattr(debug_tool_cli, "create_project_runtime", unexpected_runtime)
+    monkeypatch.setattr(
+        debug_tool_cli,
+        "create_project_runtime_control",
+        unexpected_runtime,
+    )
 
     result = debug_tool_cli.main(
         ["--cwd", str(tmp_path), "--print", "tool", "not-json"]
@@ -1405,6 +1410,33 @@ def test_invalid_json_does_not_create_runtime(
     assert response["ok"] is False
     assert response["result"] is None
     assert "Tool action must be a JSON object" in response["error"]
+
+
+def test_view_does_not_construct_privileged_control(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    _initialize_runtime(project_path)
+
+    def unexpected_control(**_kwargs: object) -> None:
+        raise AssertionError("view must remain a read-only Query")
+
+    monkeypatch.setattr(
+        debug_tool_cli,
+        "create_project_runtime_control",
+        unexpected_control,
+    )
+
+    result = debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "view"]
+    )
+
+    response = json.loads(capfd.readouterr().out)
+    assert result == 0
+    assert response["ok"] is True
+    assert response["action"] == "view"
 
 
 def test_missing_specs_are_returned_as_correctable_tool_error(

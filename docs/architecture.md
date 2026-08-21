@@ -481,7 +481,7 @@ flowchart TB
 
 ### Control
 
-通过真实 `ProjectRuntime` 执行有边界的命令：驱动 Owner Activation、发送消息、批准或拒绝 Plan、开始 Milestone、推进一个 Delivery step。它与 Web 最终使用相同的单 Feature Runtime 状态转换，但不经过 `WorkspaceService`，也不直接写数据库或 Git ref。
+通过特权 `ProjectRuntimeControl` 执行有边界的单步命令：驱动 Owner Activation、发送消息、批准或拒绝 Plan、开始 Milestone、推进一个 Delivery step。它不是第二套 Runtime 状态机：共享业务命令委托 `ProjectRuntimeService`，Owner 生命周期命令委托同一个 `ProjectRuntimeContext`，且不持有 Repository、Runner、Executor 或 Git。另行创建的 Runtime 与 Control 实例通过同一 SQLite/Git 事实和 `runtime.lock` 协作，而不是共享进程内对象。`view` 独立构造只读 `ProjectControlQuery`，不获取 operation lock，也不构造 Owner/Responses 命令图。
 
 ### Attribution
 
