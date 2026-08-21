@@ -25,13 +25,13 @@ from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectRuntimeStateRepository,
 )
+from agentplanex.project_runtime.errors import FeatureBusyError
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.project_runtime_context._owner import _OwnerRuntime
 from agentplanex.services.project_runtime_context._state import (
     StateMutation,
     apply_state_transition,
 )
-from agentplanex.services.project_runtime_error import FeatureBusyError
 
 
 @dataclass(slots=True)

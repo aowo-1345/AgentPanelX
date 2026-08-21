@@ -25,9 +25,9 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesTransport,
 )
 from agentplanex.project_runtime import ProjectRuntime
+from agentplanex.project_runtime.errors import FeatureBusyError
 from agentplanex.services.delivery import delivery_candidate_ref
 from agentplanex.services.project_control import ProjectControlQuery
-from agentplanex.services.project_runtime_error import FeatureBusyError
 from agentplanex.services.project_workspace import ProjectWorkspaceQuery
 from agentplanex.services.stage_executor import StageExecutionRequest
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, Settings, load_settings

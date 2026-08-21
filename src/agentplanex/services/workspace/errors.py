@@ -1,9 +1,7 @@
 """Stable Workspace scheduling failures exposed to external adapters."""
 
-from agentplanex.services.project_runtime_error import ProjectRuntimeCommandError
 
-
-class WorkspaceSchedulingError(ProjectRuntimeCommandError):
+class WorkspaceSchedulingError(RuntimeError):
     """A Workspace command was rejected before it changed Runtime state."""
 
     code: str

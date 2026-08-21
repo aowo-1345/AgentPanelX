@@ -15,7 +15,8 @@ from agentplanex.domains import (
     ProjectBoard,
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGitError
-from agentplanex.services.project_runtime_error import ProjectRuntimeCommandError
+from agentplanex.project_runtime.errors import FeatureBusyError
+from agentplanex.services.workspace.errors import WorkspaceSchedulingError
 from agentplanex.services.workspace.service import WorkspaceService
 from agentplanex.settings import load_settings
 
@@ -31,7 +32,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         LookupError,
         ValueError,
         WorkspaceGitError,
-        ProjectRuntimeCommandError,
+        FeatureBusyError,
+        WorkspaceSchedulingError,
     ) as error:
         print(str(error), file=sys.stderr)
         return 1

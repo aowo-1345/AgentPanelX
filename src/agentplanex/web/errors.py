@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from agentplanex.infrastructure.workspace_git import WorkspaceGitError
-from agentplanex.services.project_runtime_error import FeatureBusyError
+from agentplanex.project_runtime.errors import FeatureBusyError
 from agentplanex.services.workspace.errors import WorkspaceCapacityExhaustedError
 
 
