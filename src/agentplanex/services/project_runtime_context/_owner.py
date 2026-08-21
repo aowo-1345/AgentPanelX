@@ -28,7 +28,6 @@ from agentplanex.domains import (
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
-    SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
 )
@@ -83,17 +82,16 @@ class _OwnerRuntime:
     observation_skill: Path
     prompts: AgentPromptCatalog
     load_state: Callable[[], ProjectRuntimeState]
+    set_activation_initial_summary: Callable[
+        [sqlite3.Connection, str, str],
+        None,
+    ]
     owners: SQLiteProjectOwnerAgentRepository = field(
         default_factory=SQLiteProjectOwnerAgentRepository
     )
-    messages: SQLiteMessageHistoryRepository = field(
-        default_factory=SQLiteMessageHistoryRepository
-    )
+    messages: SQLiteMessageHistoryRepository = field(default_factory=SQLiteMessageHistoryRepository)
     summaries: SQLiteSummaryHistoryRepository = field(
         default_factory=SQLiteSummaryHistoryRepository
-    )
-    activations: SQLiteOwnerActivationRepository = field(
-        default_factory=SQLiteOwnerActivationRepository
     )
 
     def __post_init__(self) -> None:
@@ -175,9 +173,7 @@ class _OwnerRuntime:
         except Exception as error:
             result = _unhandled_exit(error)
         else:
-            result = _unhandled_exit(
-                RuntimeError("Project Owner Agent returned without an exit")
-            )
+            result = _unhandled_exit(RuntimeError("Project Owner Agent returned without an exit"))
         return result
 
     def execute_action(
@@ -213,7 +209,7 @@ class _OwnerRuntime:
                         {
                             "ok": False,
                             "error": f"{type(error).__name__}: {error}",
-                        }
+                        },
                     ),
                 ),
             )
@@ -224,24 +220,27 @@ class _OwnerRuntime:
         )
         return result
 
-    def reply_to_activation(
+    def append_reply(
         self,
+        connection: sqlite3.Connection,
         state: ProjectRuntimeState,
         activation: OwnerActivation,
         content: str,
     ) -> AgentExit:
-        """Persist a manual Owner reply and end the claimed loop."""
+        """Persist a manual reply inside the caller's terminalization transaction."""
 
         reply = content.strip()
         if not reply:
             raise ValueError("Project Owner reply must not be empty")
-        self._load_owner_for_activation(
+        owner = self._load_owner_for_activation_in_connection(
+            connection,
             state,
             activation,
             allow_advanced_checkpoint=True,
         )
-        self.append_messages(
-            state,
+        self._append_messages(
+            connection,
+            owner,
             ({"role": "assistant", "content": reply},),
         )
         return AgentExit(status=AgentExitStatus.REPLY_TO_HUMAN, content=reply)
@@ -259,19 +258,34 @@ class _OwnerRuntime:
                 f"{activation.activation_id} is {activation.status.value}"
             )
         with self.database.connection() as connection:
-            if state.triage_id != activation.triage_id:
-                raise LookupError(
-                    "Owner activation does not belong to this Project Runtime"
-                )
-            owner = self.restore_identity(connection, state)
-            if (
-                owner.message_id != activation.message_id
-                and not allow_advanced_checkpoint
-            ):
-                raise RuntimeError(
-                    "Owner activation checkpoint is not the current message: "
-                    f"{activation.message_id} != {owner.message_id}"
-                )
+            return self._load_owner_for_activation_in_connection(
+                connection,
+                state,
+                activation,
+                allow_advanced_checkpoint=allow_advanced_checkpoint,
+            )
+
+    def _load_owner_for_activation_in_connection(
+        self,
+        connection: sqlite3.Connection,
+        state: ProjectRuntimeState,
+        activation: OwnerActivation,
+        *,
+        allow_advanced_checkpoint: bool = False,
+    ) -> ProjectOwnerAgent:
+        if activation.status is not OwnerActivationStatus.RUNNING:
+            raise ValueError(
+                "Project Owner can only run a claimed activation: "
+                f"{activation.activation_id} is {activation.status.value}"
+            )
+        if state.triage_id != activation.triage_id:
+            raise LookupError("Owner activation does not belong to this Project Runtime")
+        owner = self.restore_identity(connection, state)
+        if owner.message_id != activation.message_id and not allow_advanced_checkpoint:
+            raise RuntimeError(
+                "Owner activation checkpoint is not the current message: "
+                f"{activation.message_id} != {owner.message_id}"
+            )
         return owner
 
     def _invocation_contract(
@@ -336,27 +350,17 @@ class _OwnerRuntime:
             runtime_context=context,
             activation=activation,
             invocation=self._invocation_contract(context, activation),
-            observation_instruction=(
-                self.settings.runtime.prompts.observation_instruction
-            ),
+            observation_instruction=(self.settings.runtime.prompts.observation_instruction),
             policy=OwnerContextPolicy(
                 model_name=owner_settings.selected_model.name,
                 capacity_tokens=owner_settings.context_memory.capacity_tokens,
-                compaction_threshold=(
-                    owner_settings.context_memory.compaction_threshold
-                ),
-                summary_context_header=(
-                    self.settings.runtime.prompts.summary_context_header
-                ),
-                trajectory_summary_prompt=(
-                    self.settings.runtime.prompts.trajectory_summary
-                ),
+                compaction_threshold=(owner_settings.context_memory.compaction_threshold),
+                summary_context_header=(self.settings.runtime.prompts.summary_context_header),
+                trajectory_summary_prompt=(self.settings.runtime.prompts.trajectory_summary),
                 initial_intent_summary_prompt=(
                     self.settings.runtime.prompts.initial_intent_summary
                 ),
-                update_intent_summary_prompt=(
-                    self.settings.runtime.prompts.update_intent_summary
-                ),
+                update_intent_summary_prompt=(self.settings.runtime.prompts.update_intent_summary),
             ),
             tools=fixed_tools,
             summary_model=self.responses,
@@ -375,10 +379,7 @@ class _OwnerRuntime:
                 self._execute_latest_context,
                 owner_context=owner_context,
                 approval=TerminalApproval(
-                    require_tty=os.getenv(
-                        "AGENTPLANEX_REQUIRE_INTERACTIVE_TERMINAL", "1"
-                    )
-                    != "0"
+                    require_tty=os.getenv("AGENTPLANEX_REQUIRE_INTERACTIVE_TERMINAL", "1") != "0"
                 ),
                 config=config,
             )
@@ -400,22 +401,15 @@ class _OwnerRuntime:
     ) -> object:
         """Atomically append native Owner messages and advance its checkpoint."""
         expected = (
-            _require_owner_revision(expected_revision)
-            if expected_revision is not None
-            else None
+            _require_owner_revision(expected_revision) if expected_revision is not None else None
         )
 
         with self.database.transaction() as connection:
             persisted_owner = self.owners.get_by_triage_id(connection, context.triage_id)
             if persisted_owner is None:
                 raise RuntimeError("Initialized Project Runtime has no Owner identity")
-            if (
-                expected is not None
-                and persisted_owner.message_id != expected.message_id
-            ):
-                raise RuntimeError(
-                    "Project Owner context changed before message append"
-                )
+            if expected is not None and persisted_owner.message_id != expected.message_id:
+                raise RuntimeError("Project Owner context changed before message append")
             if appended:
                 message_id = self._append_messages(
                     connection,
@@ -429,9 +423,7 @@ class _OwnerRuntime:
         return _ProjectOwnerRevision(
             message_id=message_id,
             summary_id=(
-                expected.summary_id
-                if expected is not None
-                else persisted_owner.summary_id
+                expected.summary_id if expected is not None else persisted_owner.summary_id
             ),
         )
 
@@ -467,7 +459,7 @@ class _OwnerRuntime:
                 summary_id=summary.summary_id,
             )
             if query_index == 0:
-                self.activations.set_initial_summary(
+                self.set_activation_initial_summary(
                     connection,
                     activation.activation_id,
                     summary.summary_id,
@@ -493,15 +485,9 @@ class _OwnerRuntime:
         attempt = notice.attempt
         attempted_revision = _require_owner_revision(revision)
         event_type = {
-            ContextCompactionPhase.STARTED: (
-                ExecutionEventType.CONTEXT_COMPACTION_STARTED
-            ),
-            ContextCompactionPhase.COMPLETED: (
-                ExecutionEventType.CONTEXT_COMPACTION_COMPLETED
-            ),
-            ContextCompactionPhase.FAILED: (
-                ExecutionEventType.CONTEXT_COMPACTION_FAILED
-            ),
+            ContextCompactionPhase.STARTED: (ExecutionEventType.CONTEXT_COMPACTION_STARTED),
+            ContextCompactionPhase.COMPLETED: (ExecutionEventType.CONTEXT_COMPACTION_COMPLETED),
+            ContextCompactionPhase.FAILED: (ExecutionEventType.CONTEXT_COMPACTION_FAILED),
         }[notice.phase]
         payload: dict[str, object] = {
             "compaction_id": attempt.compaction_id,
@@ -560,13 +546,9 @@ class _OwnerRuntime:
             summary_id=activation.summary_id,
         )
         if restored.triage_id != context.triage_id:
-            raise RuntimeError(
-                "Restored Owner context does not match the Activation owner"
-            )
+            raise RuntimeError("Restored Owner context does not match the Activation owner")
         if current_revision.message_id != activation.message_id:
-            raise RuntimeError(
-                "Owner activation checkpoint changed while restoring context"
-            )
+            raise RuntimeError("Owner activation checkpoint changed while restoring context")
         return LoadedOwnerContext(
             snapshot=restored,
             revision=_ProjectOwnerRevision(
@@ -610,8 +592,7 @@ def _load_live_owner_context(
         latest_id = latest.message_id if latest is not None else None
         if latest_id != owner.message_id:
             raise RuntimeError(
-                "Project Owner Agent latest message pointer does not match "
-                "message history"
+                "Project Owner Agent latest message pointer does not match message history"
             )
     return snapshot, _ProjectOwnerRevision(
         message_id=owner.message_id,

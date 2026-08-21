@@ -10,7 +10,7 @@ from agentplanex.bootstrap import create_project_runtime
 from agentplanex.domains import AgentExitStatus, OwnerActivation, ProjectRuntimeState
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.exception import ModelError
-from agentplanex.services.owner_activation import ActivationDriveResult
+from agentplanex.services.project_runtime_context import ActivationDriveResult
 
 type InputReader = Callable[[str], str]
 

@@ -9,6 +9,7 @@ import pytest
 import agentplanex.services as services
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteProjectRuntimeStateRepository,
 )
@@ -61,15 +62,9 @@ def test_failed_activation_insert_leaves_no_orphan_owner_input(
             connection,
             initialized.triage_id,
         )
-        message_count = connection.execute("SELECT COUNT(*) FROM message_history").fetchone()[
-            0
-        ]
-        activation_count = connection.execute(
-            "SELECT COUNT(*) FROM owner_activation"
-        ).fetchone()[0]
-        event_count = connection.execute("SELECT COUNT(*) FROM execution_event").fetchone()[
-            0
-        ]
+        message_count = connection.execute("SELECT COUNT(*) FROM message_history").fetchone()[0]
+        activation_count = connection.execute("SELECT COUNT(*) FROM owner_activation").fetchone()[0]
+        event_count = connection.execute("SELECT COUNT(*) FROM execution_event").fetchone()[0]
     assert state is not None
     assert state.status == "TRIAGE"
     assert owner is not None
@@ -82,3 +77,45 @@ def test_failed_activation_insert_leaves_no_orphan_owner_input(
 def test_services_package_does_not_export_legacy_project_owner_service() -> None:
     assert "ProjectOwnerService" not in services.__all__
     assert not hasattr(services, "ProjectOwnerService")
+
+
+def test_services_package_does_not_export_owner_activation_driver() -> None:
+    assert "OwnerActivationDriver" not in services.__all__
+    assert "ActivationDriveResult" not in services.__all__
+    assert not hasattr(services, "OwnerActivationDriver")
+    assert not hasattr(services, "ActivationDriveResult")
+
+
+def test_failed_owner_exit_and_runtime_block_are_one_transaction(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = _runtime(project_path)
+    runtime.initialize()
+    runtime.begin_feature()
+    pending = runtime.submit_message("force one deterministic Owner failure")
+    database = SQLiteDatabase.for_project(project_path)
+    with database.transaction() as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER reject_owner_block
+            BEFORE UPDATE OF status ON project_runtime_state
+            WHEN NEW.status = 'BLOCKED'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced block rollback');
+            END
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced block rollback"):
+        runtime.drive_next_activation()
+
+    with database.transaction() as connection:
+        activation = SQLiteOwnerActivationRepository().get(
+            connection,
+            pending.activation_id,
+        )
+        connection.execute("DROP TRIGGER reject_owner_block")
+    assert activation is not None
+    assert activation.status.value == "RUNNING"
+    assert runtime.fail_interrupted_work() is True

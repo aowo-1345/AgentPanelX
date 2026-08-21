@@ -17,7 +17,6 @@ from agentplanex.infrastructure.git_repository import GitRepository, GitReposito
 from agentplanex.services.delivery import (
     DeliveryError,
     DeliveryService,
-    ExecutionResultWriter,
     StageCompletion,
     delivery_candidate_ref,
     delivery_run_ref,
@@ -49,11 +48,7 @@ class DeliveryRunner:
         if self.lease_duration <= timedelta(0):
             raise ValueError("StageRun lease duration must be positive")
 
-    def drive_once(
-        self,
-        *,
-        append_execution_result: ExecutionResultWriter,
-    ) -> DeliveryDriveResult:
+    def drive_once(self) -> DeliveryDriveResult:
         """Claim, execute, and finalize exactly one StageRun when one is queued."""
         active = self.delivery.active_stage_run()
         if active is None:
@@ -141,7 +136,6 @@ class DeliveryRunner:
                 claim.stage_run.stage_run_id,
                 output_commit_sha=output_commit_sha,
                 finished_at=datetime.now(UTC),
-                append_execution_result=append_execution_result,
             )
             self.delivery.event_bus.publish(
                 ExecutionEvent(

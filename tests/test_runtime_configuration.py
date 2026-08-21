@@ -35,7 +35,7 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
 )
 from agentplanex.project_runtime import ProjectRuntime
-from agentplanex.services.owner_activation import ActivationDriveResult
+from agentplanex.services.project_runtime_context import ActivationDriveResult
 from agentplanex.services.project_runtime_context import _owner as project_owner_service
 from agentplanex.settings import (
     DEFAULT_SETTINGS_PATH,

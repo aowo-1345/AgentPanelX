@@ -260,7 +260,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 12
+    assert schema_version[0] == 13
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -476,16 +476,15 @@ def test_competing_connections_claim_only_one_activation(
     activations = SQLiteOwnerActivationRepository()
     initialize_schema(database)
     with database.transaction() as connection:
-        for index in range(2):
-            activations.insert(
-                connection,
-                OwnerActivation(
-                    activation_id=f"activation-{index}",
-                    triage_id="triage-claim",
-                    task_type=ProjectOwnerTaskType.USER_INPUT,
-                    message_id=f"message-{index}",
-                ),
-            )
+        activations.insert(
+            connection,
+            OwnerActivation(
+                activation_id="activation-claim",
+                triage_id="triage-claim",
+                task_type=ProjectOwnerTaskType.USER_INPUT,
+                message_id="message-claim",
+            ),
+        )
 
     def claim():
         with database.transaction() as connection:
@@ -511,7 +510,36 @@ def test_competing_connections_claim_only_one_activation(
     ) == 1
     assert [activation.status for activation in persisted].count(
         OwnerActivationStatus.PENDING
-    ) == 1
+    ) == 0
+
+
+def test_schema_allows_only_one_unfinished_owner_activation(
+    project_path: Path,
+) -> None:
+    database = SQLiteDatabase.for_project(project_path)
+    initialize_schema(database)
+    activations = SQLiteOwnerActivationRepository()
+
+    with database.transaction() as connection:
+        activations.insert(
+            connection,
+            OwnerActivation(
+                activation_id="activation-1",
+                triage_id="triage-1",
+                task_type=ProjectOwnerTaskType.USER_INPUT,
+                message_id="message-1",
+            ),
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            activations.insert(
+                connection,
+                OwnerActivation(
+                    activation_id="activation-2",
+                    triage_id="triage-1",
+                    task_type=ProjectOwnerTaskType.PLAN_DECISION,
+                    message_id="message-2",
+                ),
+            )
 
 
 def test_milestone_snapshot_round_trips_complete_ordered_view(

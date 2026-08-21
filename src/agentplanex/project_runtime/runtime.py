@@ -16,12 +16,14 @@ from agentplanex.project_owner_agent.models.responses import (
 from agentplanex.project_runtime.composition import compose_project_runtime
 from agentplanex.services import (
     ProjectControlView,
-    ToolActivationDriveResult,
 )
 from agentplanex.services.delivery import MilestoneRunQueued
 from agentplanex.services.delivery_runner import DeliveryDriveResult
-from agentplanex.services.owner_activation import ActivationDriveResult
 from agentplanex.services.planning import PlanDecision
+from agentplanex.services.project_runtime_context import (
+    ActivationDriveResult,
+    ToolActivationDriveResult,
+)
 from agentplanex.services.project_workspace import (
     ProjectWorkspaceView,
 )

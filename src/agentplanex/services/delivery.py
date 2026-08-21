@@ -17,6 +17,8 @@ from agentplanex.domains import (
     MilestoneSnapshot,
     MilestoneState,
     OwnerActivation,
+    ProjectOwnerTask,
+    ProjectOwnerTaskType,
     ProjectRuntimeState,
     RuntimeContextChangeReason,
     Stage,
@@ -60,11 +62,6 @@ class MilestoneReviewResult:
 
 
 type MilestoneHardGate = Callable[[MilestoneReviewRequest], MilestoneReviewResult]
-type ExecutionResultWriter = Callable[
-    [sqlite3.Connection, ProjectRuntimeState, str], OwnerActivation
-]
-
-
 def missing_milestone_hard_gate(_request: MilestoneReviewRequest) -> MilestoneReviewResult:
     """Fail closed when no Milestone Gate is bound at composition time."""
     raise DeliveryError("Milestone Hard Gate is not configured")
@@ -374,7 +371,6 @@ class DeliveryService:
         *,
         output_commit_sha: str,
         finished_at: datetime,
-        append_execution_result: ExecutionResultWriter,
     ) -> StageCompletion:
         """Record one committed Stage and queue only its ordered successor."""
         with self.context.transaction() as transaction:
@@ -435,15 +431,16 @@ class DeliveryService:
                         output_commit_sha,
                     ),
                 )
-                activation = append_execution_result(
-                    transaction.connection,
-                    updated,
-                    _candidate_ready_message(
-                        updated,
-                        milestone,
-                        running,
-                        output_commit_sha,
-                    ),
+                activation = transaction.submit_owner_input(
+                    ProjectOwnerTask(
+                        type=ProjectOwnerTaskType.EXECUTION_RESULT,
+                        content=_candidate_ready_message(
+                            updated,
+                            milestone,
+                            running,
+                            output_commit_sha,
+                        ),
+                    )
                 )
 
         self.event_bus.publish(

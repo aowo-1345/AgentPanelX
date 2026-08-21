@@ -19,9 +19,6 @@ from agentplanex.domains import (
     RuntimeContextChangeReason,
 )
 from agentplanex.infrastructure.git_repository import GitRepository
-from agentplanex.infrastructure.sqlite.repositories import (
-    SQLiteOwnerActivationRepository,
-)
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 
@@ -81,7 +78,6 @@ class PlanApprovalRequest:
 class PlanningService:
     project_path: Path
     context: ProjectRuntimeContext
-    activations: SQLiteOwnerActivationRepository
     git: GitRepository
     review_plan: PlanHardGate = missing_plan_hard_gate
     event_bus: EventBus = field(default_factory=EventBus)
@@ -231,15 +227,7 @@ class PlanningService:
                 reason=reason,
                 mutate=mutate,
             )
-            message_id, summary_id = transaction.append_owner_task(task)
-            activation = OwnerActivation(
-                activation_id=uuid4().hex,
-                triage_id=updated.triage_id,
-                task_type=ProjectOwnerTaskType.PLAN_DECISION,
-                message_id=message_id,
-                summary_id=summary_id,
-            )
-            self.activations.insert(transaction.connection, activation)
+            activation = transaction.submit_owner_input(task)
         return updated, activation
 
     def _spec_documents(self) -> tuple[Path, ...]:

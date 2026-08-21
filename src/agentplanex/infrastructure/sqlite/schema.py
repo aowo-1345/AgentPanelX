@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 _INITIAL_SCHEMA = (
     """
@@ -151,9 +151,13 @@ _INITIAL_SCHEMA = (
     ON owner_activation (triage_id, status, created_at, activation_id)
     """,
     """
-    CREATE UNIQUE INDEX owner_activation_one_running_idx
+    CREATE UNIQUE INDEX owner_activation_one_unfinished_idx
     ON owner_activation (triage_id)
-    WHERE status = 'RUNNING'
+    WHERE status IN ('PENDING', 'RUNNING')
+    """,
+    """
+    CREATE UNIQUE INDEX owner_activation_message_idx
+    ON owner_activation (triage_id, message_id)
     """,
     """
     CREATE TABLE execution_event (

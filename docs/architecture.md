@@ -191,7 +191,7 @@ AgentPanelX 不使用单个状态对象描述整个项目。不同事实由最�
 | --- | --- | --- | --- |
 | Project identity、Feature binding、worktree 路径 | Workspace Registry SQLite | Workspace Service / Registry | Project / Feature navigation |
 | 用户意图、Owner 回复、Tool activity | SQLite Message History | ProjectRuntimeContext 内部 Owner Runtime | Conversation |
-| Owner 运行状态与失败 | SQLite Owner Activation | Activation Driver | Runtime / Conversation |
+| Owner 运行状态与失败 | SQLite Owner Activation | ProjectRuntimeContext | Runtime / Conversation |
 | Rolling Summary 与 Owner 上下文 | SQLite Message / Summary History | Project Owner Runtime adapter | Owner ContextManager |
 | Feature 状态、pending action、Plan identity | SQLite `project_runtime_state` | Runtime / Planning / Delivery | Board / Runtime |
 | Plan 文档与批准版本 | Git working tree + Plan commit | Project Owner / Planning | Plan panel / Git |
@@ -238,7 +238,7 @@ sequenceDiagram
     participant Dispatcher as Workspace Dispatcher
     participant Runtime as Feature Project Runtime
     participant DB as SQLite
-    participant Driver as Activation Driver
+    participant Context as ProjectRuntimeContext
     participant Owner as Project Owner
     participant Tool as Runtime Tool
 
@@ -254,16 +254,16 @@ sequenceDiagram
     Dispatcher-->>WS: Activation
     WS-->>API: Activation
     API-->>Web: 202 Accepted
-    Runtime->>Driver: drive_next_activation
-    Driver->>DB: claim PENDING -> RUNNING
-    Driver->>Owner: restore context and run ReAct loop
+    Runtime->>Context: drive Owner work
+    Context->>DB: claim PENDING -> RUNNING
+    Context->>Owner: restore context and run ReAct loop
     loop Owner ReAct tool calls
         Owner->>Tool: execute typed Action
         Tool->>DB: persist result and state change
         Tool-->>Owner: structured Tool result
     end
     Owner->>DB: reply / exit / failure
-    Driver->>DB: RUNNING -> terminal status
+    Context->>DB: RUNNING -> terminal status + State policy
     loop Silent polling
         Web->>API: GET workspace
         API-->>Web: composed projection
@@ -515,7 +515,7 @@ flowchart LR
 | Workspace read projection | `src/agentplanex/services/workspace/queries.py`, `services/project_workspace.py` |
 | Project Runtime facade / composition / 协调 | `src/agentplanex/project_runtime/runtime.py`, `composition.py`, `services/project_runtime.py` |
 | Project Runtime Context 与内部 Owner Runtime | `src/agentplanex/services/project_runtime_context/` |
-| Owner Activation lifecycle | `src/agentplanex/services/owner_activation.py` |
+| Owner Activation lifecycle | `src/agentplanex/services/project_runtime_context/_activation.py` |
 | Owner Tool Contract 与执行 | `src/agentplanex/project_owner_agent/tools/base.py`, `project_runtime/executions/` |
 | Owner model context / Rolling Summary | `src/agentplanex/project_owner_agent/context/`, `services/project_runtime_context/_owner.py` |
 | Planning 与 Hard Gate | `src/agentplanex/services/planning.py`, `plan_hard_gate.py` |

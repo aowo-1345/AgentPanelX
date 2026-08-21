@@ -45,10 +45,10 @@ from agentplanex.domains import (  # noqa: E402
 )
 from agentplanex.services.delivery import MilestoneRunQueued  # noqa: E402
 from agentplanex.services.delivery_runner import DeliveryDriveResult  # noqa: E402
-from agentplanex.services.owner_activation import ActivationDriveResult  # noqa: E402
 from agentplanex.services.planning import PlanDecision  # noqa: E402
 from agentplanex.services.project_control import ProjectControlView  # noqa: E402
-from agentplanex.services.project_runtime import (  # noqa: E402
+from agentplanex.services.project_runtime_context import (  # noqa: E402
+    ActivationDriveResult,
     ToolActivationDriveResult,
 )
 

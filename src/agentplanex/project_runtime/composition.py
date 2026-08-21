@@ -5,9 +5,6 @@ from pathlib import Path
 
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
-from agentplanex.infrastructure.sqlite.repositories import (
-    SQLiteOwnerActivationRepository,
-)
 from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.models.responses import (
@@ -28,7 +25,6 @@ from agentplanex.services import (
 )
 from agentplanex.services.agent_contracts import resolve_observation_skill
 from agentplanex.services.delivery_runner import DeliveryRunner
-from agentplanex.services.owner_activation import OwnerActivationDriver
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 from agentplanex.services.project_runtime_context._owner import _OwnerRuntime
@@ -72,14 +68,12 @@ def compose_project_runtime(
         observation_skill=observation_skill,
     )
     hard_gate = CodexPlanHardGate(collaboration)
-    activations = SQLiteOwnerActivationRepository()
     git = GitRepository(project_path)
     planning = PlanningService(
         project_path=project_path,
         context=context,
         git=git,
         event_bus=event_bus,
-        activations=activations,
         review_plan=hard_gate.review,
     )
     delivery = DeliveryService(
@@ -127,15 +121,10 @@ def compose_project_runtime(
         observation_skill=collaboration.observation_skill,
         prompts=collaboration.prompts,
         load_state=context._reload_state,
+        set_activation_initial_summary=(context._set_owner_activation_initial_summary),
     )
     context._bind_owner_runtime(owner)
     context._seal()
-    driver = OwnerActivationDriver(
-        database=database,
-        run_owner=context.run_owner_activation,
-        activations=activations,
-        event_bus=event_bus,
-    )
     control_query = ProjectControlQuery(database=database, git=git)
     service = ProjectRuntimeService(
         planning=planning,
@@ -143,8 +132,6 @@ def compose_project_runtime(
         delivery_runner=delivery_runner,
         event_bus=event_bus,
         context=context,
-        activations=activations,
-        driver=driver,
     )
     return _ProjectRuntimeComponents(
         service=service,

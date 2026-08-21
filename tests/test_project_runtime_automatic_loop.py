@@ -3,18 +3,23 @@
 import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event
 
 import pytest
 
 from agentplanex.domains import (
+    ExecutionEvent,
+    ExecutionEventType,
     OwnerActivation,
+    OwnerActivationMode,
     ProjectOwnerTaskType,
 )
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteExecutionEventRepository,
     SQLiteMessageHistoryRepository,
     SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
@@ -798,6 +803,63 @@ def test_fail_interrupted_work_terminalizes_pending_activation_without_model(
     assert event.payload["activation_id"] == pending.activation_id
     assert event.payload["started"] is False
     assert event.payload["interrupted"] is True
+
+
+def test_interrupted_running_owner_closes_active_timeline_loop(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = ProjectRuntime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_UnexpectedOwner(),
+    )
+    state = runtime.initialize()
+    runtime.begin_feature()
+    pending = runtime.submit_message("Simulate a process crash after claim.")
+    database = SQLiteDatabase.for_project(project_path)
+    events = SQLiteExecutionEventRepository()
+    with database.transaction() as connection:
+        running = SQLiteOwnerActivationRepository().claim_next(
+            connection,
+            state.triage_id,
+            datetime.now(UTC),
+            OwnerActivationMode.MODEL,
+        )
+        assert running is not None
+        events.insert(
+            connection,
+            ExecutionEvent(
+                triage_id=state.triage_id,
+                event_type=ExecutionEventType.REACT_LOOP_ENTERED,
+                react_loop_id=pending.activation_id,
+                payload={"driver_mode": "MODEL"},
+            ),
+        )
+
+    assert runtime.fail_interrupted_work() is True
+
+    with database.connection() as connection:
+        assert events.get_active_react_loop_id(connection, state.triage_id) is None
+        timeline = events.list_by_triage_id(connection, state.triage_id)
+    owner_events = [
+        event
+        for event in timeline
+        if event.event_type
+        in {
+            ExecutionEventType.REACT_LOOP_ENTERED,
+            ExecutionEventType.REACT_LOOP_EXITED,
+            ExecutionEventType.OWNER_ACTIVATION_FAILED,
+        }
+    ]
+    assert [event.event_type for event in owner_events] == [
+        ExecutionEventType.REACT_LOOP_ENTERED,
+        ExecutionEventType.REACT_LOOP_EXITED,
+        ExecutionEventType.OWNER_ACTIVATION_FAILED,
+    ]
+    assert owner_events[1].react_loop_id == pending.activation_id
+    assert owner_events[1].payload["interrupted"] is True
 
 
 def test_fail_interrupted_work_terminalizes_queued_stage_and_preserves_cursor(
