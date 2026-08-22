@@ -68,130 +68,87 @@ Web Console 与外部 Coding Agent 是同一个 Runtime 的两个操作入口：
 
 ```mermaid
 flowchart TB
-    subgraph Interface[Interface]
-        React[React Web Console]
-        DebugCLI[Debug Tool CLI]
-        SkillCLI[Agent-native Skills]
+    subgraph Entry[入口]
+        Web[React / FastAPI]
+        WorkspaceCLI[Workspace CLI]
+        ControlClient[Debug CLI / Control Skill]
+        QueryClient[Web Query / Observe Skill]
     end
 
-    subgraph Application[Application Services]
+    subgraph Workspace[Workspace 层]
         WorkspaceService[Workspace Service]
-        WorkspaceDispatcher[Workspace Dispatcher]
-        WorkspaceQueries[Workspace Queries]
-        ProjectRuntime[ProjectRuntime Facade]
-        RuntimeControl[ProjectRuntimeControl]
+        Dispatcher[Workspace Dispatcher]
+        Queries[Workspace / Control Query]
+    end
+
+    subgraph FeatureRuntime[Feature Runtime]
+        Runtime[ProjectRuntime]
+        Control[ProjectRuntimeControl]
         RuntimeService[ProjectRuntimeService]
-        RuntimeContext[ProjectRuntimeContext]
-        ControlQuery[Project Control Query]
-    end
-
-    subgraph Orchestration[Agent Orchestration]
-        OwnerRuntime[Private Owner Runtime]
-        Activation[Durable Owner Activation]
+        Context[ProjectRuntimeContext]
         Planning[Planning Service]
-        HardGate[Plan / Milestone Hard Gate]
-        Collaboration[Agent Collaboration]
-        DeliveryService[Delivery Service]
-        DeliveryDriver[Private Stage Driver]
-        StageExecutor[Private Stage Executor Adapter]
+        Delivery[Delivery Service]
     end
 
-    subgraph Domain[Domain State]
-        RuntimeState[ProjectRuntimeState]
-        Messages[Message / Summary History]
-        Milestones[Milestone Snapshot / Stage Run]
-        Events[Execution Events]
+    subgraph Execution[内部执行]
+        Owner[Private Owner Runtime]
+        Executions[Project Executions]
+        StageDriver[Private Stage Driver]
     end
 
-    subgraph Infrastructure[Infrastructure]
-        API[FastAPI]
+    subgraph Facts[事实与外部执行]
         Registry[(Workspace Registry SQLite)]
-        DB[(SQLite)]
-        Git[(Git / Worktrees / Refs)]
-        Codex[Codex CLI Transport]
-        ModelGateway[Shared OpenAI Responses Transport]
-        Sandbox[Local Shell / Bubblewrap]
+        SQLite[(Feature SQLite)]
+        Git[(Git / Worktrees)]
+        Model[Model Gateway]
+        Codex[Codex CLI]
     end
 
-    Interface --> Application
-    WorkspaceService --> WorkspaceDispatcher
-    WorkspaceService --> WorkspaceQueries
+    Web --> WorkspaceService
+    WorkspaceCLI --> WorkspaceService
+    ControlClient --> Control
+    QueryClient --> Queries
+
+    WorkspaceService --> Dispatcher
+    WorkspaceService --> Queries
     WorkspaceService --> Registry
-    WorkspaceService --> ProjectRuntime
-    WorkspaceQueries --> Registry
-    ProjectRuntime --> RuntimeService
-    RuntimeControl --> RuntimeService
-    RuntimeControl --> RuntimeContext
-    RuntimeService --> RuntimeContext
-    RuntimeContext --> RuntimeState
-    RuntimeContext --> OwnerRuntime
-    RuntimeService --> Orchestration
-    ControlQuery --> Domain
-    Orchestration --> Domain
-    Domain --> DB
-    Orchestration --> Git
-    Collaboration --> Codex
-    DeliveryService --> DeliveryDriver
-    DeliveryDriver --> StageExecutor
-    StageExecutor --> Codex
-    OwnerRuntime --> ModelGateway
-    OwnerRuntime --> Sandbox
-    API --> WorkspaceService
+    Dispatcher --> Runtime
+
+    Runtime --> RuntimeService
+    Control --> RuntimeService
+    Control --> Context
+    RuntimeService --> Context
+    RuntimeService --> Planning
+    RuntimeService --> Delivery
+
+    Context --> Owner
+    Context --> Executions
+    Owner --> Executions
+    Executions --> Planning
+    Executions --> Delivery
+    Delivery --> StageDriver
+
+    Queries --> Registry
+    Queries --> SQLite
+    Queries --> Git
+    Context --> SQLite
+    Planning --> Git
+    StageDriver --> Git
+    StageDriver --> Codex
+    Owner --> Model
 ```
 
-### Workspace Service
+系统有三条入口：正常命令走 `ProjectRuntime`，人工单步介入走
+`ProjectRuntimeControl`，只读观察走 Query。三者共享 SQLite/Git 事实，但不共享接口。
 
-`WorkspaceService` 是用户级 Web 与已安装 CLI 唯一调用的 Workspace 接口。它根据
-`project_id + triage_id` 找到 Feature binding 和对应 `ProjectRuntime`，把公开命令
-映射为 Runtime 的显式方法。`WorkspaceQueries` 只组合 Registry、Feature SQLite 与
-Git 事实，不构造 Runtime 或模型，也不触发执行。
+`ProjectRuntimeService` 只协调 `Context / Planning / Delivery`；
+`ProjectRuntimeContext` 负责 Feature State、Owner Activation、事务与执行互斥。
 
-### Workspace Dispatcher
+`PlanningService` 处理 Plan 决策，`DeliveryService` 处理 Milestone、Stage 与 Candidate。
+Project Owner 通过 `ProjectExecutions` 调用它们，不直接接触数据库或 Git adapter。
 
-`WorkspaceDispatcher` 不扫描数据库，也不维护等待队列。它只在 Message、Plan 决策
-或首次 Delivery 请求到达时执行并发准入：同一 Feature 互斥，不同 Feature 最多按
-`workspace.max_parallel_features` 有界并行。准入成功后先持久化命令，再在后台调用该
-Feature 的 `ProjectRuntime.drive_until_waiting()`；容量已满或 Feature 正忙时，在持久化
-前立即拒绝。`begin-feature` 与删除只使用同 Feature 排他门，不占全局自动执行槽。
-
-### ProjectRuntime 与 ProjectRuntimeService
-
-`ProjectRuntime` 是一个 Feature 的正常命令 facade，只持有一个内部
-`ProjectRuntimeService`。它不暴露 Context、Git、Execution、查询或单步 Driver；人工
-介入使用独立的 `ProjectRuntimeControl`，只读界面使用独立 Query。composition root
-创建唯一 Context，把同一实例交给 Planning、Delivery 与 RuntimeService，再分别绑定
-抽象 Tool Executor 和私有 Owner Runtime，最后 seal 对象图并只返回所需 adapter。
-
-`ProjectRuntimeService` 负责协调 Project Owner、Planning 与 Delivery，并显式拥有每个
-写命令的 Context operation 范围和自动循环停止条件。Services 层的
-`ProjectRuntimeContext` 负责单 Feature 的 `ProjectRuntimeState`、事务、提交后事件、
-执行期缓存与互斥。查询投影从同一 SQLite/Git 事实独立读取，不参与调度。它保证：
-
-- 用户 Message 与 `PENDING` Owner Activation 在同一事务内创建；
-- 一个 Feature 同时只存在一个未完成 Owner Activation；
-- Owner 运行期间不能并发启动 Delivery，Delivery 运行期间不能提交冲突命令；
-- Plan 决策、Milestone 更新、Candidate 接受或拒绝均通过 Service Contract 执行；
-- Tool 驱动模式与模型驱动模式共享同一 Runtime、持久化和事件链路。
-
-`ProjectRuntime.drive_until_waiting()` 以持久化的 Activation、StageRun 与 State
-为依据，连续推进本 Feature 已获准执行的工作：中间 Stage 会继续到下一 Stage，
-最终 Candidate 会生成 `EXECUTION_RESULT` Activation 并再次交给 Owner。循环在
-人工 Tool、审批、Owner 回复、`BLOCKED`、`DONE` 或没有自动工作时返回。若 Owner
-或 Stage 失败，对应工作会进入 `FAILED` 且 State 进入 `BLOCKED`；Stage 失败不
-伪造 Owner Activation。`fail_interrupted_work()` 只把进程中断遗留的未完成工作
-归并为 `FAILED + BLOCKED`，不调用模型或 Stage Executor，也不自动续跑。
-
-### Project Owner Agent
-
-Project Owner 是长期目标的用户代理。它读取 Message History、Rolling Summary、不可变的 ProjectRuntimeState 与当前工作区，通过 ReAct loop 选择 `bash`、`talk_to_agent`、`request_plan_approval`、`update_milestones`、`run_next_milestone` 和 `decide_milestone_candidate` 等 Tool，将一次自然语言目标逐步推进为可审查、可执行、可恢复的交付过程。Services 层的 ProjectRuntimeContext 负责单 Feature 的 State、事务和执行互斥，不作为持久化记录或模型输入。
-
-`project_owner_agent.context.OwnerContextManager` 统一拥有模型可见上下文：它从 Runtime adapter 取得固定 Activation 检查点的原始 Message/Summary 事实，渲染 System Prompt 与 Invocation Contract，在每次请求前计算完整 token 使用量，并在超限时生成、校验和切换 Rolling Summary。Runtime adapter 只负责追加消息、返回新的上下文修订位置、以 CAS 原子提交 Summary，以及把压缩通知记录到 Timeline；Agent 不接触 SQLite、Repository、Transaction 或 EventBus。Summary 只有在 Runtime 确认提交后才替换内存表示，失败时继续使用完整原始上下文。
-
-Historical Project Owner 使用相同的检查点选择与 Summary/增量消息渲染规则，再叠加只读归因角色指令。旧 Message History、Summary History、Activation 指针和三类 Context Compaction 事件保持原有语义，不需要 Schema 迁移。
-
-每个 Runtime Tool 在对应的 `project_runtime/executions/` 模块内共同定义参数模型、模型可见说明与执行逻辑。`ToolCatalog` 从参数模型生成 provider schema，并在模型调用形成 `Action` 前执行同一份校验；`ProjectExecutions` 对调试或手工调用再次使用该 Contract 后才 dispatch。参数形状只定义一次，依赖当前 Runtime 状态的业务判断仍由 Execution 与 Service 负责。
-
-`bootstrap` 为每个 Workspace 创建一个共享的 OpenAI Responses Transport；Owner 主请求与 Rolling Summary 压缩复用其中的 OpenAI Client。超时和重试由 OpenAI SDK 负责，SDK 重试耗尽后统一抛出 `ModelGatewayError`，并沿 Runtime 现有的未处理异常路径使 Activation 进入 `FAILED`、State 进入 `BLOCKED`。
+`drive_until_waiting()` 持续推进可自动执行的 Owner 或 Delivery 工作，并在审批、人工
+Tool、Owner 回复、`BLOCKED`、`DONE` 或空闲时返回。
 
 ## 4. 权威数据与读写边界
 
@@ -540,7 +497,7 @@ flowchart LR
 | FastAPI 与 SPA host | `src/agentplanex/web/app.py` |
 | Project / Feature Registry | `src/agentplanex/infrastructure/workspace_registry.py` |
 | Workspace commands 与准入 | `src/agentplanex/services/workspace/service.py`, `dispatcher.py` |
-| Workspace read projection | `src/agentplanex/services/workspace/queries.py`, `services/project_workspace.py` |
+| Workspace read projection | `src/agentplanex/services/workspace/queries.py`, `services/web/project_workspace.py` |
 | 正常 Project Runtime facade / composition / 协调 | `src/agentplanex/project_runtime/runtime.py`, `composition.py`, `services/project_runtime.py` |
 | 特权单步 Runtime Control | `src/agentplanex/project_runtime/control.py` |
 | Project Runtime Context 与内部 Owner Runtime | `src/agentplanex/services/project_runtime_context/` |
