@@ -11,15 +11,7 @@ from typing import ClassVar
 import pytest
 
 from agentplanex.bootstrap import create_project_runtime_control
-from agentplanex.domains.delivery import (
-    Milestone,
-    MilestoneState,
-    Stage,
-    StageRun,
-    StageRunStatus,
-)
 from agentplanex.domains.execution_event import RuntimeContextChangeReason
-from agentplanex.domains.plan import PlanDocument, PlanSubject
 from agentplanex.infrastructure.codex import (
     CodexTurnRequest,
     CodexTurnResult,
@@ -39,8 +31,16 @@ from agentplanex.services.delivery._stage_executor import (
     StageExecutionRequest,
 )
 from agentplanex.services.delivery.contracts import MilestoneReviewRequest
+from agentplanex.services.delivery.models import (
+    Milestone,
+    MilestoneState,
+    Stage,
+    StageRun,
+    StageRunStatus,
+)
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning.contracts import PlanReviewRequest
+from agentplanex.services.planning.models import PlanDocument, PlanSubject
 from agentplanex.services.project_runtime_context import _owner as project_owner_service
 from agentplanex.settings import (
     DEFAULT_SETTINGS_PATH,

@@ -11,7 +11,7 @@ from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
     project_execution,
 )
-from agentplanex.services.planning import PlanningError
+from agentplanex.services.planning.contracts import PlanningError
 
 REQUEST_PLAN_APPROVAL_TOOL_NAME = "request_plan_approval"
 REQUEST_PLAN_APPROVAL_DESCRIPTION = (

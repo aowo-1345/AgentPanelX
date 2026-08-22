@@ -9,12 +9,6 @@ from uuid import uuid4
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
-    ProjectOwnerTask,
-)
-from agentplanex.domains.owner_activation import (
-    OwnerActivation,
-    OwnerActivationMode,
-    OwnerActivationStatus,
 )
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteOwnerActivationRepository,
@@ -23,6 +17,12 @@ from agentplanex.project_owner_agent.contracts import (
     AgentExit,
     AgentExitStatus,
     ToolExecutionResult,
+)
+from agentplanex.services.project_runtime_context.models import (
+    OwnerActivation,
+    OwnerActivationMode,
+    OwnerActivationStatus,
+    ProjectOwnerTask,
 )
 
 

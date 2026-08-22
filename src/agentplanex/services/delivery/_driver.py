@@ -9,21 +9,9 @@ from itertools import pairwise
 from pathlib import Path
 from uuid import uuid4
 
-from agentplanex.domains.delivery import (
-    CandidateIdentity,
-    Milestone,
-    MilestoneSnapshot,
-    Stage,
-    StageRun,
-    StageRunStatus,
-    delivery_candidate_ref,
-    delivery_run_ref,
-)
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
-    ProjectOwnerTask,
-    ProjectOwnerTaskType,
     RuntimeContextChangeReason,
 )
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
@@ -42,8 +30,22 @@ from agentplanex.services.delivery.contracts import (
     DeliveryWorkState,
     MilestoneRunQueued,
 )
+from agentplanex.services.delivery.models import (
+    CandidateIdentity,
+    Milestone,
+    MilestoneSnapshot,
+    Stage,
+    StageRun,
+    StageRunStatus,
+    delivery_candidate_ref,
+    delivery_run_ref,
+)
 from agentplanex.services.event_bus import EventBus
-from agentplanex.services.project_runtime_context import ProjectRuntimeContext
+from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext
+from agentplanex.services.project_runtime_context.models import (
+    ProjectOwnerTask,
+    ProjectOwnerTaskType,
+)
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,13 +6,13 @@ from enum import StrEnum
 from typing import Literal
 
 from agentplanex.domains.agent_collaboration import ArtifactDescriptor
-from agentplanex.domains.delivery import (
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.services.delivery.models import (
     CandidateIdentity,
     Milestone,
     MilestoneSnapshot,
     Stage,
 )
-from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 
 
 class DeliveryError(ValueError):

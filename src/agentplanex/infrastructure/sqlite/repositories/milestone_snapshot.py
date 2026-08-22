@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime
 from typing import cast
 
-from agentplanex.domains.delivery import (
+from agentplanex.services.delivery.models import (
     Milestone,
     MilestoneSnapshot,
     MilestoneState,

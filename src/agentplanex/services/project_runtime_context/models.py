@@ -1,10 +1,24 @@
-"""Durable inputs that start one Project Owner ReAct Loop."""
+"""Durable Owner work models owned by the Project Runtime Context."""
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from agentplanex.domains.execution_event import ProjectOwnerTaskType
+
+class ProjectOwnerTaskType(StrEnum):
+    """The external input kinds accepted by the Project Owner."""
+
+    USER_INPUT = "USER_INPUT"
+    PLAN_DECISION = "PLAN_DECISION"
+    EXECUTION_RESULT = "EXECUTION_RESULT"
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectOwnerTask:
+    """One external input submitted for durable Owner processing."""
+
+    type: ProjectOwnerTaskType
+    content: str
 
 
 class OwnerActivationStatus(StrEnum):

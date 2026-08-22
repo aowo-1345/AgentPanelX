@@ -11,7 +11,7 @@ from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
     project_execution,
 )
-from agentplanex.services.delivery import (
+from agentplanex.services.delivery.contracts import (
     DeliveryError,
     FirstRunApprovalRequested,
 )

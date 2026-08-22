@@ -15,8 +15,8 @@ from agentplanex.project_runtime.executions import ProjectExecutions
 from agentplanex.project_runtime.runtime import ProjectRuntime
 from agentplanex.services.delivery._stage_executor import StageExecutor
 from agentplanex.services.event_bus import EventBus
-from agentplanex.services.planning import PlanningService
-from agentplanex.services.project_runtime_context import ProjectRuntimeContext
+from agentplanex.services.planning._service import PlanningService
+from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext
 from agentplanex.settings import (
     DEFAULT_SETTINGS_PATH,
     RuntimeSettings,

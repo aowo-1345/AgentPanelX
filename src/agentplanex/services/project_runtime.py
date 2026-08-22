@@ -4,22 +4,25 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from agentplanex.domains.execution_event import (
-    ProjectOwnerTask,
-    ProjectOwnerTaskType,
     RuntimeContextChangeReason,
 )
-from agentplanex.domains.owner_activation import OwnerActivation
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
-from agentplanex.services.delivery import (
+from agentplanex.services.delivery._service import DeliveryService
+from agentplanex.services.delivery.contracts import (
     DeliveryDriveOutcome,
-    DeliveryService,
     DeliveryWorkState,
     MilestoneRunQueued,
 )
-from agentplanex.services.planning import PlanDecision, PlanningService
-from agentplanex.services.project_runtime_context import (
+from agentplanex.services.planning._service import PlanningService
+from agentplanex.services.planning.contracts import PlanDecision
+from agentplanex.services.project_runtime_context._activation import (
     OwnerWorkState,
-    ProjectRuntimeContext,
+)
+from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext
+from agentplanex.services.project_runtime_context.models import (
+    OwnerActivation,
+    ProjectOwnerTask,
+    ProjectOwnerTaskType,
 )
 
 

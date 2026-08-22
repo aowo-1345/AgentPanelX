@@ -22,7 +22,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.project_runtime.control import ProjectRuntimeControl
-from agentplanex.services.planning import PlanningService
+from agentplanex.services.planning._service import PlanningService
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 
 

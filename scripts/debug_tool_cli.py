@@ -38,26 +38,26 @@ from agentplanex.bootstrap import (  # noqa: E402
     create_project_control_query,
     create_project_runtime_control,
 )
-from agentplanex.domains.delivery import StageRun  # noqa: E402
-from agentplanex.domains.owner_activation import (  # noqa: E402
-    OwnerActivation,
-    OwnerActivationStatus,
-)
 from agentplanex.project_owner_agent.contracts import (  # noqa: E402
     Action,
     AgentExit,
     AgentExitStatus,
     ToolExecutionResult,
 )
-from agentplanex.services.delivery import (  # noqa: E402
+from agentplanex.services.delivery.contracts import (  # noqa: E402
     DeliveryDriveOutcome,
     MilestoneRunQueued,
 )
-from agentplanex.services.planning import PlanDecision  # noqa: E402
+from agentplanex.services.delivery.models import StageRun  # noqa: E402
+from agentplanex.services.planning.contracts import PlanDecision  # noqa: E402
 from agentplanex.services.project_control import ProjectControlView  # noqa: E402
-from agentplanex.services.project_runtime_context import (  # noqa: E402
+from agentplanex.services.project_runtime_context._activation import (  # noqa: E402
     ActivationDriveResult,
     ToolActivationDriveResult,
+)
+from agentplanex.services.project_runtime_context.models import (  # noqa: E402
+    OwnerActivation,
+    OwnerActivationStatus,
 )
 
 type ToolRunner = Callable[[Action], ToolExecutionResult]

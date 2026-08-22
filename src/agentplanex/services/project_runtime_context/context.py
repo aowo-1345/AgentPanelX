@@ -13,12 +13,7 @@ from uuid import uuid4
 
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
-    ProjectOwnerTask,
     RuntimeContextChangeReason,
-)
-from agentplanex.domains.owner_activation import (
-    OwnerActivation,
-    OwnerActivationStatus,
 )
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
@@ -48,6 +43,11 @@ from agentplanex.services.project_runtime_context._state import (
     apply_state_transition,
 )
 from agentplanex.services.project_runtime_context.contracts import RuntimeToolExecutor
+from agentplanex.services.project_runtime_context.models import (
+    OwnerActivation,
+    OwnerActivationStatus,
+    ProjectOwnerTask,
+)
 
 
 @dataclass(slots=True)

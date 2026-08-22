@@ -4,7 +4,6 @@ from typing import Literal
 
 from pydantic import Field
 
-from agentplanex.domains.delivery import CandidateIdentity
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.project_owner_agent.contracts import (
     AgentExit,
@@ -21,7 +20,8 @@ from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
     project_execution,
 )
-from agentplanex.services.delivery import DeliveryError
+from agentplanex.services.delivery.contracts import DeliveryError
+from agentplanex.services.delivery.models import CandidateIdentity
 
 DECIDE_MILESTONE_CANDIDATE_TOOL_NAME = "decide_milestone_candidate"
 DECIDE_MILESTONE_CANDIDATE_DESCRIPTION = (

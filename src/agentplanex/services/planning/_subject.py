@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from agentplanex.domains.plan import PLAN_DOCUMENT_NAMES, PlanDocument, PlanSubject
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.services.planning.contracts import PlanningError
+from agentplanex.services.planning.models import PLAN_DOCUMENT_NAMES, PlanDocument, PlanSubject
 
 
 def plan_document_paths(project_path: Path) -> tuple[Path, ...]:

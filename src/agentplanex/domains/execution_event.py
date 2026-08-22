@@ -54,18 +54,6 @@ class RuntimeContextChangeReason(StrEnum):
     TRIAGE_DEVELOPMENT_COMPLETED = "TRIAGE_DEVELOPMENT_COMPLETED"
 
 
-class ProjectOwnerTaskType(StrEnum):
-    USER_INPUT = "USER_INPUT"
-    PLAN_DECISION = "PLAN_DECISION"
-    EXECUTION_RESULT = "EXECUTION_RESULT"
-
-
-@dataclass(frozen=True, slots=True)
-class ProjectOwnerTask:
-    type: ProjectOwnerTaskType
-    content: str
-
-
 @dataclass(frozen=True, slots=True)
 class ExecutionEvent:
     """One event fact before or after Timeline persistence enrichment."""

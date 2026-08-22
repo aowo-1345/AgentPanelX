@@ -19,19 +19,19 @@ from agentplanex.project_runtime.executions import (
 from agentplanex.project_runtime.runtime import ProjectRuntime
 from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.agent_contracts import resolve_observation_skill
-from agentplanex.services.delivery import DeliveryService
+from agentplanex.services.delivery._service import DeliveryService
 from agentplanex.services.delivery._stage_executor import (
     CodexStageExecutor,
     StageExecutor,
 )
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.plan_hard_gate import CodexPlanHardGate
-from agentplanex.services.planning import PlanningService
+from agentplanex.services.planning._service import PlanningService
 from agentplanex.services.project_runtime import ProjectRuntimeService
-from agentplanex.services.project_runtime_context import ProjectRuntimeContext
 from agentplanex.services.project_runtime_context._assembly import (
     prepare_project_runtime_context,
 )
+from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext
 from agentplanex.settings import Settings
 
 

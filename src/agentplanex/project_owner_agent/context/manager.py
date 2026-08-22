@@ -6,7 +6,6 @@ from typing import Protocol
 from uuid import uuid4
 
 from agentplanex.agent_contracts import InvocationContract
-from agentplanex.domains.owner_activation import OwnerActivation
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.project_owner_agent.context.compaction import (
     ContextCompactionAttempt,
@@ -22,6 +21,7 @@ from agentplanex.project_owner_agent.context.models import MessageHistory, Summa
 from agentplanex.project_owner_agent.context.rendering import render_owner_context, render_summary
 from agentplanex.project_owner_agent.contracts import Message
 from agentplanex.project_owner_agent.tools import ToolCatalog
+from agentplanex.services.project_runtime_context.models import OwnerActivation
 
 
 @dataclass(frozen=True, slots=True)

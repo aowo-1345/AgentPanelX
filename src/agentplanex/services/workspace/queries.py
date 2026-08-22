@@ -3,7 +3,6 @@
 import sqlite3
 from dataclasses import dataclass, field
 
-from agentplanex.domains.delivery import StageRun
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.domains.workspace import (
     BoardFeature,
@@ -19,6 +18,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
+from agentplanex.services.delivery.models import StageRun
 from agentplanex.services.web import (
     ProjectWorkspaceQuery,
     ProjectWorkspaceView,

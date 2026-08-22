@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime
 from typing import cast
 
-from agentplanex.domains.delivery import StageRun, StageRunStatus
+from agentplanex.services.delivery.models import StageRun, StageRunStatus
 
 
 class SQLiteStageRunRepository:

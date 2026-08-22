@@ -1,4 +1,4 @@
-"""Typed delivery facts owned by the Project Runtime."""
+"""Business models owned by the Delivery service."""
 
 import hashlib
 import json

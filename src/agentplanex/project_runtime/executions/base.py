@@ -15,10 +15,10 @@ from agentplanex.project_owner_agent.tools import (
     ToolDefinition,
 )
 from agentplanex.services.agent_collaboration import AgentCollaborationService
-from agentplanex.services.delivery import DeliveryService
+from agentplanex.services.delivery._service import DeliveryService
 from agentplanex.services.event_bus import EventBus
-from agentplanex.services.planning import PlanningService
-from agentplanex.services.project_runtime_context import ProjectRuntimeContext
+from agentplanex.services.planning._service import PlanningService
+from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext
 from agentplanex.settings import RuntimeSettings
 
 

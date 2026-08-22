@@ -76,23 +76,21 @@ def test_failed_activation_insert_leaves_no_orphan_owner_input(
 
 
 def test_services_package_does_not_export_legacy_project_owner_service() -> None:
-    assert "ProjectOwnerService" not in services.__all__
     assert not hasattr(services, "ProjectOwnerService")
 
 
 def test_services_package_does_not_export_owner_activation_driver() -> None:
-    assert "OwnerActivationDriver" not in services.__all__
-    assert "ActivationDriveResult" not in services.__all__
     assert not hasattr(services, "OwnerActivationDriver")
     assert not hasattr(services, "ActivationDriveResult")
 
 
-def test_services_package_exports_only_independent_capabilities() -> None:
-    assert set(services.__all__) == {
+def test_services_package_does_not_aggregate_capability_exports() -> None:
+    for name in (
         "AgentCollaborationService",
         "EventBus",
         "HistoricalOwnerForkService",
-    }
+    ):
+        assert not hasattr(services, name)
 
 
 def test_failed_owner_exit_and_runtime_block_are_one_transaction(

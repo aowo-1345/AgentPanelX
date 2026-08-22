@@ -147,6 +147,10 @@ flowchart TB
 `PlanningService` 处理 Plan 决策，`DeliveryService` 处理 Milestone、Stage 与 Candidate。
 Project Owner 通过 `ProjectExecutions` 调用它们，不直接接触数据库或 Git adapter。
 
+Planning、Delivery 与 Project Runtime Context 各自在 `models.py` 中持有自己的纯业务模型；
+SQLite Repository 只依赖这些无副作用模型。跨越多个能力的 Runtime State、Execution Event
+与状态变更原因继续由 `domains/` 承载。
+
 `drive_until_waiting()` 持续推进可自动执行的 Owner 或 Delivery 工作，并在审批、人工
 Tool、Owner 回复、`BLOCKED`、`DONE` 或空闲时返回。
 
@@ -504,7 +508,7 @@ flowchart LR
 | Owner Activation lifecycle | `src/agentplanex/services/project_runtime_context/_activation.py` |
 | Owner Tool Contract 与执行 | `src/agentplanex/project_owner_agent/tools/base.py`, `project_runtime/executions/` |
 | Owner model context / Rolling Summary | `src/agentplanex/project_owner_agent/context/`, `services/project_runtime_context/_owner.py` |
-| Planning、Plan identity 与 Hard Gate | `src/agentplanex/services/planning/`, `domains/plan.py`, `plan_hard_gate.py` |
+| Planning、Plan identity 与 Hard Gate | `src/agentplanex/services/planning/`, `plan_hard_gate.py` |
 | Agent Collaboration | `src/agentplanex/services/agent_collaboration.py`, `agent_contracts.py` |
 | Delivery 状态机与私有 Stage 执行 | `src/agentplanex/services/delivery/` |
 | EventBus 与 Timeline | `src/agentplanex/services/event_bus.py`, `infrastructure/sqlite/timeline.py` |

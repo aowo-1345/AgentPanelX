@@ -5,12 +5,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from agentplanex.agent_contracts import InvocationContract, PromptRole
-from agentplanex.domains.execution_event import ProjectOwnerTaskType
-from agentplanex.domains.owner_activation import (
-    OwnerActivation,
-    OwnerActivationMode,
-    OwnerActivationStatus,
-)
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.project_owner_agent.context.compaction import (
     ContextCompactionNotice,
@@ -30,6 +24,12 @@ from agentplanex.project_owner_agent.tools import (
     NoToolArguments,
     ToolCatalog,
     ToolDefinition,
+)
+from agentplanex.services.project_runtime_context.models import (
+    OwnerActivation,
+    OwnerActivationMode,
+    OwnerActivationStatus,
+    ProjectOwnerTaskType,
 )
 
 

@@ -2,22 +2,11 @@
 
 from dataclasses import fields
 
-from agentplanex.services import delivery
-from agentplanex.services.delivery import CandidateDecision, MilestoneRunQueued
+from agentplanex.services.delivery.contracts import (
+    CandidateDecision,
+    MilestoneRunQueued,
+)
 from agentplanex.services.project_runtime import ProjectRuntimeService
-
-
-def test_delivery_exports_only_high_level_business_capabilities() -> None:
-    assert set(delivery.__all__) == {
-        "CandidateDecision",
-        "DeliveryDriveOutcome",
-        "DeliveryError",
-        "DeliveryService",
-        "DeliveryWorkState",
-        "FirstRunApprovalRequested",
-        "MilestoneRunQueued",
-        "MilestonesUpdated",
-    }
 
 
 def test_runtime_service_does_not_hold_delivery_mechanics() -> None:

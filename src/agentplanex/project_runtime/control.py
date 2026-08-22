@@ -2,17 +2,20 @@
 
 from dataclasses import dataclass, field
 
-from agentplanex.domains.owner_activation import OwnerActivation
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.project_owner_agent.contracts import Action, ToolExecutionResult
-from agentplanex.services.delivery import DeliveryDriveOutcome, MilestoneRunQueued
-from agentplanex.services.planning import PlanDecision
+from agentplanex.services.delivery.contracts import (
+    DeliveryDriveOutcome,
+    MilestoneRunQueued,
+)
+from agentplanex.services.planning.contracts import PlanDecision
 from agentplanex.services.project_runtime import ProjectRuntimeService
-from agentplanex.services.project_runtime_context import (
+from agentplanex.services.project_runtime_context._activation import (
     ActivationDriveResult,
-    ProjectRuntimeContext,
     ToolActivationDriveResult,
 )
+from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext
+from agentplanex.services.project_runtime_context.models import OwnerActivation
 
 
 @dataclass(eq=False, slots=True)

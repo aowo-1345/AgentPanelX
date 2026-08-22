@@ -26,8 +26,9 @@ the corresponding Runtime behavior exists or has completed.
 
 ## Repository map
 
-- `src/agentplanex/domains/`: domain objects and persisted contracts.
-- `src/agentplanex/services/`: Runtime orchestration and business decisions.
+- `src/agentplanex/domains/`: Runtime-wide domain objects and persisted contracts.
+- `src/agentplanex/services/`: capability-owned models, Runtime orchestration, and
+  business decisions.
 - `src/agentplanex/infrastructure/`: Git, SQLite, workspace, and process side effects.
 - `src/agentplanex/web/`: FastAPI host, API schemas, and web projections.
 - `src/agentplanex/project_owner_agent/`: Project Owner loop, models, and tools.

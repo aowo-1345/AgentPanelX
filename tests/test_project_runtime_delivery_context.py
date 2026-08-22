@@ -4,7 +4,7 @@ from dataclasses import fields
 
 import agentplanex.services as services
 from agentplanex.project_runtime.executions.base import ProjectExecutionDependencies
-from agentplanex.services.delivery import DeliveryService
+from agentplanex.services.delivery._service import DeliveryService
 from agentplanex.services.project_runtime import ProjectRuntimeService
 
 
@@ -24,7 +24,6 @@ def test_delivery_and_executions_have_one_runtime_state_path() -> None:
 
 
 def test_services_package_has_no_legacy_runtime_context_service() -> None:
-    assert "RuntimeContextService" not in services.__all__
     assert not hasattr(services, "RuntimeContextService")
 
 

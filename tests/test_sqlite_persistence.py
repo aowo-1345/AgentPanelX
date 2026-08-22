@@ -11,20 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from agentplanex.domains.delivery import (
-    Milestone,
-    MilestoneSnapshot,
-    MilestoneState,
-    Stage,
-    StageRun,
-    StageRunStatus,
-)
-from agentplanex.domains.execution_event import ProjectOwnerTaskType
-from agentplanex.domains.owner_activation import (
-    OwnerActivation,
-    OwnerActivationMode,
-    OwnerActivationStatus,
-)
 from agentplanex.domains.project_owner_agent import ProjectOwnerAgent
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
@@ -38,6 +24,20 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteSummaryHistoryRepository,
 )
 from agentplanex.project_owner_agent.context.models import MessageHistory, SummaryHistory
+from agentplanex.services.delivery.models import (
+    Milestone,
+    MilestoneSnapshot,
+    MilestoneState,
+    Stage,
+    StageRun,
+    StageRunStatus,
+)
+from agentplanex.services.project_runtime_context.models import (
+    OwnerActivation,
+    OwnerActivationMode,
+    OwnerActivationStatus,
+    ProjectOwnerTaskType,
+)
 
 
 @pytest.fixture

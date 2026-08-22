@@ -11,11 +11,6 @@ from agentplanex.agent_contracts import InvocationContract, PromptRole
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
-    ProjectOwnerTask,
-)
-from agentplanex.domains.owner_activation import (
-    OwnerActivation,
-    OwnerActivationStatus,
 )
 from agentplanex.domains.project_owner_agent import ProjectOwnerAgent
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
@@ -62,6 +57,11 @@ from agentplanex.services.agent_contracts import (
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.owner_history import select_owner_context_snapshot
 from agentplanex.services.project_runtime_context.contracts import RuntimeToolExecutor
+from agentplanex.services.project_runtime_context.models import (
+    OwnerActivation,
+    OwnerActivationStatus,
+    ProjectOwnerTask,
+)
 from agentplanex.settings import Settings
 
 

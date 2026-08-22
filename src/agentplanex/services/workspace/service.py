@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from agentplanex.domains.owner_activation import OwnerActivation
 from agentplanex.domains.workspace import (
     FeatureAction,
     FeatureBinding,
@@ -18,6 +17,7 @@ from agentplanex.domains.workspace import (
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.project_runtime import ProjectRuntime
+from agentplanex.services.project_runtime_context.models import OwnerActivation
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.queries import (
     FeatureWorkspaceView,

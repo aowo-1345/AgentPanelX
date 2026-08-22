@@ -4,7 +4,6 @@ from typing import Literal, Self
 
 from pydantic import Field, model_validator
 
-from agentplanex.domains.delivery import Milestone, MilestoneState, Stage
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.project_owner_agent.contracts import ToolExecutionResult
 from agentplanex.project_owner_agent.tools import (
@@ -17,7 +16,8 @@ from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
     project_execution,
 )
-from agentplanex.services.delivery import DeliveryError
+from agentplanex.services.delivery.contracts import DeliveryError
+from agentplanex.services.delivery.models import Milestone, MilestoneState, Stage
 
 UPDATE_MILESTONES_TOOL_NAME = "update_milestones"
 UPDATE_MILESTONES_DESCRIPTION = (

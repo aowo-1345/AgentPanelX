@@ -14,15 +14,9 @@ from agentplanex.bootstrap import (
     create_project_control_query,
     create_project_workspace_query,
 )
-from agentplanex.domains.delivery import delivery_candidate_ref
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
-    ProjectOwnerTaskType,
-)
-from agentplanex.domains.owner_activation import (
-    OwnerActivation,
-    OwnerActivationMode,
 )
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
@@ -39,9 +33,15 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesTransport,
 )
 from agentplanex.project_runtime.errors import FeatureBusyError
-from agentplanex.services.delivery import DeliveryError
 from agentplanex.services.delivery._stage_executor import StageExecutionRequest
+from agentplanex.services.delivery.contracts import DeliveryError
+from agentplanex.services.delivery.models import delivery_candidate_ref
 from agentplanex.services.project_control import ProjectControlQuery
+from agentplanex.services.project_runtime_context.models import (
+    OwnerActivation,
+    OwnerActivationMode,
+    ProjectOwnerTaskType,
+)
 from agentplanex.services.web import ProjectWorkspaceQuery
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, Settings, load_settings
 from tests.runtime_support import RuntimePair, compose_test_runtime

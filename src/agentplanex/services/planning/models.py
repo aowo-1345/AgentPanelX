@@ -1,4 +1,4 @@
-"""Canonical Plan document identity shared by Planning and projections."""
+"""Canonical Plan models owned by the Planning service."""
 
 import hashlib
 from dataclasses import dataclass

@@ -7,16 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from agentplanex.domains.delivery import MilestoneSnapshot, StageRun
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
-    ProjectOwnerTaskType,
 )
-from agentplanex.domains.owner_activation import (
-    OwnerActivation,
-    OwnerActivationStatus,
-)
-from agentplanex.domains.plan import PLAN_DOCUMENT_NAMES
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.domains.workspace import FeatureAction
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
@@ -32,6 +25,13 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.project_owner_agent.context.models import MessageHistory
 from agentplanex.project_owner_agent.contracts import Message
+from agentplanex.services.delivery.models import MilestoneSnapshot, StageRun
+from agentplanex.services.planning.models import PLAN_DOCUMENT_NAMES
+from agentplanex.services.project_runtime_context.models import (
+    OwnerActivation,
+    OwnerActivationStatus,
+    ProjectOwnerTaskType,
+)
 
 type ToolActivityStatus = Literal["running", "completed", "failed"]
 

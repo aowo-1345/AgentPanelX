@@ -10,12 +10,8 @@ from uuid import uuid4
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
-    ProjectOwnerTask,
-    ProjectOwnerTaskType,
     RuntimeContextChangeReason,
 )
-from agentplanex.domains.owner_activation import OwnerActivation
-from agentplanex.domains.plan import PLAN_DOCUMENT_NAMES, PlanSubject
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.services.event_bus import EventBus
@@ -33,7 +29,13 @@ from agentplanex.services.planning.contracts import (
     PlanReviewResult,
     missing_plan_hard_gate,
 )
-from agentplanex.services.project_runtime_context import ProjectRuntimeContext
+from agentplanex.services.planning.models import PLAN_DOCUMENT_NAMES, PlanSubject
+from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext
+from agentplanex.services.project_runtime_context.models import (
+    OwnerActivation,
+    ProjectOwnerTask,
+    ProjectOwnerTaskType,
+)
 
 _PLAN_CHECKPOINT_MESSAGE = "plan: checkpoint specifications"
 

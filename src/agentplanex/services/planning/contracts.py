@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 from agentplanex.domains.agent_collaboration import ArtifactDescriptor
-from agentplanex.domains.owner_activation import OwnerActivation
-from agentplanex.domains.plan import PlanSubject
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.services.planning.models import PlanSubject
+from agentplanex.services.project_runtime_context.models import OwnerActivation
 
 
 class PlanningError(ValueError):
