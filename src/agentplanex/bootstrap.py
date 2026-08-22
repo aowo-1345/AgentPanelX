@@ -16,7 +16,7 @@ from agentplanex.project_runtime.composition import (
 )
 from agentplanex.project_runtime.control import ProjectRuntimeControl
 from agentplanex.services.project_control import ProjectControlQuery
-from agentplanex.services.project_workspace import ProjectWorkspaceQuery
+from agentplanex.services.web import ProjectWorkspaceQuery
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.queries import WorkspaceQueries
 from agentplanex.services.workspace.service import WorkspaceService

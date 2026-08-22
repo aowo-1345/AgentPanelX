@@ -19,7 +19,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
-from agentplanex.services.project_workspace import (
+from agentplanex.services.web import (
     ProjectWorkspaceQuery,
     ProjectWorkspaceView,
 )

@@ -21,7 +21,7 @@ from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.project_runtime.errors import FeatureBusyError
-from agentplanex.services.project_workspace import ProjectWorkspaceView
+from agentplanex.services.web import ProjectWorkspaceView
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.errors import WorkspaceCapacityExhaustedError
 from agentplanex.services.workspace.queries import (

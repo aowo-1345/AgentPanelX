@@ -40,7 +40,7 @@ from agentplanex.project_runtime.errors import FeatureBusyError
 from agentplanex.services.delivery import DeliveryError
 from agentplanex.services.delivery._stage_executor import StageExecutionRequest
 from agentplanex.services.project_control import ProjectControlQuery
-from agentplanex.services.project_workspace import ProjectWorkspaceQuery
+from agentplanex.services.web import ProjectWorkspaceQuery
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, Settings, load_settings
 from tests.runtime_support import RuntimePair, compose_test_runtime
 
