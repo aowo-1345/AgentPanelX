@@ -4,11 +4,11 @@ import sqlite3
 from datetime import datetime
 from typing import cast
 
-from agentplanex.domains import (
+from agentplanex.domains.execution_event import ProjectOwnerTaskType
+from agentplanex.domains.owner_activation import (
     OwnerActivation,
     OwnerActivationMode,
     OwnerActivationStatus,
-    ProjectOwnerTaskType,
 )
 
 

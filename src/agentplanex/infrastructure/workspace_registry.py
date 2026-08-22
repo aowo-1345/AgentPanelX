@@ -4,7 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from agentplanex.domains import FeatureBinding, ManagedProject
+from agentplanex.domains.workspace import FeatureBinding, ManagedProject
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 
 REGISTRY_SCHEMA_VERSION = 1

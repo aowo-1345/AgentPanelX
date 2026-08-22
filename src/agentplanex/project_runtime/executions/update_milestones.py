@@ -4,13 +4,9 @@ from typing import Literal, Self
 
 from pydantic import Field, model_validator
 
-from agentplanex.domains import (
-    Milestone,
-    MilestoneState,
-    ProjectRuntimeState,
-    Stage,
-    ToolExecutionResult,
-)
+from agentplanex.domains.delivery import Milestone, MilestoneState, Stage
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.project_owner_agent.contracts import ToolExecutionResult
 from agentplanex.project_owner_agent.tools import (
     NonBlankText,
     ToolArgumentsModel,

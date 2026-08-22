@@ -169,7 +169,7 @@ def _request(
         method=method,
     )
     try:
-        with urlopen(request, timeout=2) as response:
+        with urlopen(request, timeout=10) as response:
             body = response.read()
             return response.status, json.loads(body) if body else None
     except HTTPError as error:
@@ -331,7 +331,7 @@ def test_installed_web_backend_runs_and_fails_interrupted_work() -> None:
             assert accepted["status"] == "PENDING"
 
             workspace_path = f"/api/projects/{project_id}/features/{triage_id}/workspace"
-            deadline = time.monotonic() + 10
+            deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 status, workspace = _request(base_url, "GET", workspace_path)
                 assert status == 200

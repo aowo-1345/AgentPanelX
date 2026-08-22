@@ -9,13 +9,13 @@ from typing import cast
 import pytest
 from fastapi.testclient import TestClient
 
-from agentplanex.domains import (
+from agentplanex.domains.execution_event import ProjectOwnerTaskType
+from agentplanex.domains.owner_activation import OwnerActivation
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.domains.workspace import (
     FeatureAction,
     FeatureBinding,
     ManagedProject,
-    OwnerActivation,
-    ProjectOwnerTaskType,
-    ProjectRuntimeState,
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry

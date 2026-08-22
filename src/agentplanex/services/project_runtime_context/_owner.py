@@ -8,23 +8,17 @@ from pathlib import Path
 from uuid import uuid4
 
 from agentplanex.agent_contracts import InvocationContract, PromptRole
-from agentplanex.domains import (
-    Action,
-    AgentExit,
-    AgentExitStatus,
+from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
-    Message,
-    MessageHistory,
+    ProjectOwnerTask,
+)
+from agentplanex.domains.owner_activation import (
     OwnerActivation,
     OwnerActivationStatus,
-    ProjectOwnerAgent,
-    ProjectOwnerTask,
-    ProjectRuntimeState,
-    SummaryHistory,
-    ToolExecutionResult,
-    ToolExecutor,
 )
+from agentplanex.domains.project_owner_agent import ProjectOwnerAgent
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
@@ -33,15 +27,25 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.project_owner_agent.agent import AgentConfig, DefaultAgent
 from agentplanex.project_owner_agent.approval import ApprovalMode, TerminalApproval
-from agentplanex.project_owner_agent.context import (
-    CommittedOwnerSummary,
+from agentplanex.project_owner_agent.context.compaction import (
     ContextCompactionNotice,
     ContextCompactionPhase,
+    OwnerContextPolicy,
+    SummaryDraft,
+)
+from agentplanex.project_owner_agent.context.manager import (
+    CommittedOwnerSummary,
     LoadedOwnerContext,
     OwnerContextManager,
-    OwnerContextPolicy,
     OwnerContextSnapshot,
-    SummaryDraft,
+)
+from agentplanex.project_owner_agent.context.models import MessageHistory, SummaryHistory
+from agentplanex.project_owner_agent.contracts import (
+    Action,
+    AgentExit,
+    AgentExitStatus,
+    Message,
+    ToolExecutionResult,
 )
 from agentplanex.project_owner_agent.exception import AgentFlowExit
 from agentplanex.project_owner_agent.interactive import InteractiveAgent
@@ -57,6 +61,7 @@ from agentplanex.services.agent_contracts import (
 )
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.owner_history import select_owner_context_snapshot
+from agentplanex.services.project_runtime_context.contracts import RuntimeToolExecutor
 from agentplanex.settings import Settings
 
 
@@ -76,7 +81,7 @@ class _OwnerRuntime:
     settings: Settings
     approval_mode: ApprovalMode
     tools: ToolCatalog
-    tool_executor: ToolExecutor
+    tool_executor: RuntimeToolExecutor
     event_bus: EventBus
     responses: ResponsesClient
     observation_skill: Path
@@ -167,7 +172,7 @@ class _OwnerRuntime:
             return _unhandled_exit(error)
 
         try:
-            agent.run(state)
+            agent.run()
         except AgentFlowExit as error:
             result = AgentExit(status=error.status, content=error.content)
         except Exception as error:
@@ -191,7 +196,7 @@ class _OwnerRuntime:
         )
         self.append_messages(state, (format_tool_call_message(action),))
         try:
-            result = self._execute_latest_context(state, action)
+            result = self._execute_latest_context(action)
         except Exception as error:
             self.append_messages(
                 state,
@@ -379,7 +384,6 @@ class _OwnerRuntime:
 
     def _execute_latest_context(
         self,
-        _context: ProjectRuntimeState,
         action: Action,
     ) -> ToolExecutionResult:
         return self.tool_executor(self.load_state(), action)

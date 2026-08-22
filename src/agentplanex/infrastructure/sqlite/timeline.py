@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field, replace
 
-from agentplanex.domains import ExecutionEvent
+from agentplanex.domains.execution_event import ExecutionEvent
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories.execution_event import (
     SQLiteExecutionEventRepository,

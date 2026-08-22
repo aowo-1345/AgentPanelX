@@ -7,19 +7,21 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from agentplanex.domains import (
-    PLAN_DOCUMENT_NAMES,
+from agentplanex.domains.delivery import (
     CandidateIdentity,
-    ExecutionEvent,
-    ExecutionEventType,
     Milestone,
     MilestoneSnapshot,
     MilestoneState,
-    ProjectRuntimeState,
-    RuntimeContextChangeReason,
     delivery_candidate_ref,
     milestone_view_digest,
 )
+from agentplanex.domains.execution_event import (
+    ExecutionEvent,
+    ExecutionEventType,
+    RuntimeContextChangeReason,
+)
+from agentplanex.domains.plan import PLAN_DOCUMENT_NAMES
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMilestoneSnapshotRepository,

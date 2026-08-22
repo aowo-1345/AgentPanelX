@@ -19,7 +19,7 @@ from openai_codex import (
     TextInput,
 )
 
-from agentplanex.domains import AgentCollaborationError
+from agentplanex.domains.agent_collaboration import AgentCollaborationError
 
 
 class CodexTransportError(AgentCollaborationError):

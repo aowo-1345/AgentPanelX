@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from agentplanex.domains import (
+from agentplanex.domains.agent_collaboration import (
     AgentCard,
     AgentCollaborationError,
     ArtifactDescriptor,

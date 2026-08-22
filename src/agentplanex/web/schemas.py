@@ -5,12 +5,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agentplanex.domains import (
+from agentplanex.domains.owner_activation import OwnerActivation
+from agentplanex.domains.workspace import (
     BoardFeature,
     FeatureAction,
     FeatureView,
     ManagedProject,
-    OwnerActivation,
 )
 from agentplanex.services.workspace.queries import FeatureWorkspaceView
 

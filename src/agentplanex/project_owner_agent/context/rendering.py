@@ -3,7 +3,8 @@
 from collections.abc import Sequence
 
 from agentplanex.agent_contracts import InvocationContract, render_invocation
-from agentplanex.domains import Message, MessageHistory, SummaryHistory
+from agentplanex.project_owner_agent.context.models import MessageHistory, SummaryHistory
+from agentplanex.project_owner_agent.contracts import Message
 
 
 def render_owner_context(

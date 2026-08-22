@@ -10,9 +10,8 @@ from typing import ClassVar
 
 import pytest
 
+import agentplanex.infrastructure.openai_responses as openai_responses_module
 from agentplanex.bootstrap import create_project_runtime
-from agentplanex.domains import ActionOutput, Message, SummaryHistory
-from agentplanex.infrastructure import openai_responses as openai_responses_module
 from agentplanex.infrastructure.openai_responses import OpenAIResponsesTransport
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
@@ -21,6 +20,8 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectRuntimeStateRepository,
     SQLiteSummaryHistoryRepository,
 )
+from agentplanex.project_owner_agent.context.models import SummaryHistory
+from agentplanex.project_owner_agent.contracts import ActionOutput, Message
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.responses import (
     ProjectOwnerModel,

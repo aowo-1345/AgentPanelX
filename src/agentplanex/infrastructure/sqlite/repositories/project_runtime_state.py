@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime
 from typing import cast
 
-from agentplanex.domains import ProjectRuntimeState
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 
 
 class SQLiteProjectRuntimeStateRepository:

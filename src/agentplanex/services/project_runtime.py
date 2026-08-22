@@ -3,13 +3,13 @@
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
-from agentplanex.domains import (
-    OwnerActivation,
+from agentplanex.domains.execution_event import (
     ProjectOwnerTask,
     ProjectOwnerTaskType,
-    ProjectRuntimeState,
     RuntimeContextChangeReason,
 )
+from agentplanex.domains.owner_activation import OwnerActivation
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.services.delivery import (
     DeliveryDriveOutcome,
     DeliveryService,

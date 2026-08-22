@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from agentplanex.domains import ProjectRuntimeState
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,

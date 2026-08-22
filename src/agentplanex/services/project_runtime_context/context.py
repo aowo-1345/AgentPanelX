@@ -2,7 +2,7 @@
 
 import fcntl
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -11,21 +11,25 @@ from threading import RLock, get_ident
 from typing import BinaryIO
 from uuid import uuid4
 
-from agentplanex.domains import (
-    Action,
-    AgentExit,
-    AgentExitStatus,
+from agentplanex.domains.execution_event import (
     ExecutionEvent,
+    ProjectOwnerTask,
+    RuntimeContextChangeReason,
+)
+from agentplanex.domains.owner_activation import (
     OwnerActivation,
     OwnerActivationStatus,
-    ProjectOwnerTask,
-    ProjectRuntimeState,
-    RuntimeContextChangeReason,
-    ToolExecutionResult,
 )
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectRuntimeStateRepository,
+)
+from agentplanex.project_owner_agent.contracts import (
+    Action,
+    AgentExit,
+    AgentExitStatus,
+    ToolExecutionResult,
 )
 from agentplanex.project_runtime.errors import FeatureBusyError
 from agentplanex.services.event_bus import EventBus
@@ -43,6 +47,7 @@ from agentplanex.services.project_runtime_context._state import (
     StateMutation,
     apply_state_transition,
 )
+from agentplanex.services.project_runtime_context.contracts import RuntimeToolExecutor
 
 
 @dataclass(slots=True)
@@ -65,10 +70,11 @@ class ProjectRuntimeContext:
         repr=False,
     )
     _owner_runtime: _OwnerRuntime | None = field(default=None, init=False, repr=False)
-    _tool_executor: Callable[
-        [ProjectRuntimeState, Action],
-        ToolExecutionResult,
-    ] | None = field(default=None, init=False, repr=False)
+    _tool_executor: RuntimeToolExecutor | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     _activation: _OwnerActivationLifecycle = field(
         default_factory=_OwnerActivationLifecycle,
         init=False,
@@ -86,10 +92,7 @@ class ProjectRuntimeContext:
         self,
         *,
         owner_runtime: _OwnerRuntime,
-        tool_executor: Callable[
-            [ProjectRuntimeState, Action],
-            ToolExecutionResult,
-        ],
+        tool_executor: RuntimeToolExecutor,
     ) -> None:
         """Install the private execution graph atomically during composition."""
         if (

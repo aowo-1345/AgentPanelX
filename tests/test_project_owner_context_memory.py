@@ -15,12 +15,12 @@ from agentplanex.bootstrap import (
     create_project_runtime_control,
     create_project_workspace_query,
 )
-from agentplanex.domains import SummaryHistory
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
 )
+from agentplanex.project_owner_agent.context.models import SummaryHistory
 from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
     ResponsesTransport,

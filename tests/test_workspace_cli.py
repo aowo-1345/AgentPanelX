@@ -14,7 +14,7 @@ import pytest
 import yaml
 
 from agentplanex.bootstrap import create_project_control_query, create_workspace
-from agentplanex.domains import FeatureBinding
+from agentplanex.domains.workspace import FeatureBinding
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectOwnerAgentRepository,

@@ -4,7 +4,7 @@ import json
 import sqlite3
 from typing import cast
 
-from agentplanex.domains import ProjectOwnerAgent
+from agentplanex.domains.project_owner_agent import ProjectOwnerAgent
 
 
 class SQLiteProjectOwnerAgentRepository:

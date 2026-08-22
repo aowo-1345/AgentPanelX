@@ -5,8 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from agentplanex.domains import Action, ProjectRuntimeState, ToolExecutionResult
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
+from agentplanex.project_owner_agent.contracts import Action, ToolExecutionResult
 from agentplanex.project_owner_agent.models.responses import (
     ResponsesClient,
     ResponsesRequest,

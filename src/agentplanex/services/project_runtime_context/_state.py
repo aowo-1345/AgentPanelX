@@ -5,12 +5,12 @@ from collections.abc import Callable
 from dataclasses import fields
 from datetime import datetime
 
-from agentplanex.domains import (
+from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
-    ProjectRuntimeState,
     RuntimeContextChangeReason,
 )
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectRuntimeStateRepository,
 )

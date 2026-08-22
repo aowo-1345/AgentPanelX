@@ -1,10 +1,8 @@
 """Model protocol used by the Agent loop."""
 
-from typing import Any, Protocol
+from typing import Protocol
 
-from agentplanex.domains import ActionOutput
-
-type Message = dict[str, Any]
+from agentplanex.project_owner_agent.contracts import ActionOutput, Message
 
 
 class Model(Protocol):

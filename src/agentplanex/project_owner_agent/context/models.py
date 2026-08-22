@@ -1,6 +1,24 @@
-"""Project Owner Agent summary history domain object."""
+"""Persisted context models owned by the Project Owner Agent."""
 
 from dataclasses import dataclass
+
+from agentplanex.project_owner_agent.contracts import Message
+
+
+@dataclass(frozen=True, slots=True)
+class MessageHistory:
+    """One append-only batch of messages for a Project Owner session."""
+
+    project_owner_session_id: str
+    message_id: str
+    sequence: int
+    message: tuple[Message, ...]
+
+    def __post_init__(self) -> None:
+        if self.sequence <= 0:
+            raise ValueError("message-history sequence must be positive")
+        if not self.message:
+            raise ValueError("message-history batch must not be empty")
 
 
 @dataclass(frozen=True, slots=True)

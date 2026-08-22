@@ -1,9 +1,9 @@
 """Project Runtime execution for requesting the next ordered Milestone Run."""
 
-from agentplanex.domains import (
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.project_owner_agent.contracts import (
     AgentExit,
     AgentExitStatus,
-    ProjectRuntimeState,
     ToolExecutionResult,
 )
 from agentplanex.project_owner_agent.tools import NoToolArguments, ToolDefinition

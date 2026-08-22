@@ -5,26 +5,27 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from agentplanex.agent_contracts import InvocationContract, PromptRole
-from agentplanex.domains import (
-    Message,
-    MessageHistory,
+from agentplanex.domains.execution_event import ProjectOwnerTaskType
+from agentplanex.domains.owner_activation import (
     OwnerActivation,
     OwnerActivationMode,
     OwnerActivationStatus,
-    ProjectOwnerTaskType,
-    ProjectRuntimeState,
-    SummaryHistory,
 )
-from agentplanex.project_owner_agent.context import (
-    CommittedOwnerSummary,
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.project_owner_agent.context.compaction import (
     ContextCompactionNotice,
     ContextCompactionPhase,
-    LoadedOwnerContext,
-    OwnerContextManager,
     OwnerContextPolicy,
-    OwnerContextSnapshot,
     SummaryDraft,
 )
+from agentplanex.project_owner_agent.context.manager import (
+    CommittedOwnerSummary,
+    LoadedOwnerContext,
+    OwnerContextManager,
+    OwnerContextSnapshot,
+)
+from agentplanex.project_owner_agent.context.models import MessageHistory, SummaryHistory
+from agentplanex.project_owner_agent.contracts import Message
 from agentplanex.project_owner_agent.tools import (
     NoToolArguments,
     ToolCatalog,

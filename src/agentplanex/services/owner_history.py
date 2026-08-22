@@ -2,14 +2,14 @@
 
 import sqlite3
 
-from agentplanex.domains import SummaryHistory
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
 )
-from agentplanex.project_owner_agent.context import OwnerContextSnapshot
+from agentplanex.project_owner_agent.context.manager import OwnerContextSnapshot
+from agentplanex.project_owner_agent.context.models import SummaryHistory
 
 
 def restore_owner_context(

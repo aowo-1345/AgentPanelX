@@ -3,13 +3,13 @@
 import sqlite3
 from dataclasses import dataclass, field
 
-from agentplanex.domains import (
+from agentplanex.domains.delivery import StageRun
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.domains.workspace import (
     BoardFeature,
     FeatureBinding,
     ManagedProject,
     ProjectBoard,
-    ProjectRuntimeState,
-    StageRun,
 )
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase

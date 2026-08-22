@@ -8,7 +8,7 @@ from agentplanex.agent_contracts import (
     PromptRole,
     render_invocation,
 )
-from agentplanex.domains import AgentCollaborationError
+from agentplanex.domains.agent_collaboration import AgentCollaborationError
 from agentplanex.settings import (
     AgentPromptSettings,
     PromptSettings,

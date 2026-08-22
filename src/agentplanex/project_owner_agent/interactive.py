@@ -1,25 +1,25 @@
 """Interactive confirmation layered on the default Agent."""
 
-from agentplanex.domains import (
-    Action,
-    ProjectRuntimeState,
-    ToolExecutionResult,
-    ToolExecutor,
-)
 from agentplanex.project_owner_agent.agent import (
     AgentConfig,
     DefaultAgent,
 )
 from agentplanex.project_owner_agent.approval import Approval
-from agentplanex.project_owner_agent.context import OwnerContextManager
-from agentplanex.project_owner_agent.models.base import Message, Model
+from agentplanex.project_owner_agent.context.manager import OwnerContextManager
+from agentplanex.project_owner_agent.contracts import (
+    Action,
+    AgentToolExecutor,
+    Message,
+    ToolExecutionResult,
+)
+from agentplanex.project_owner_agent.models.base import Model
 
 
 class InteractiveAgent(DefaultAgent):
     def __init__(
         self,
         model: Model,
-        execute_tool: ToolExecutor,
+        execute_tool: AgentToolExecutor,
         *,
         owner_context: OwnerContextManager,
         approval: Approval,
@@ -35,10 +35,9 @@ class InteractiveAgent(DefaultAgent):
 
     def execute_actions(
         self,
-        context: ProjectRuntimeState,
         message: Message,
     ) -> list[Message]:
-        self.add_messages(context, message)
+        self.add_messages(message)
         extra = message.get("extra")
         raw_actions = extra.get("actions", []) if isinstance(extra, dict) else []
         actions: list[Action] = [
@@ -48,7 +47,7 @@ class InteractiveAgent(DefaultAgent):
 
         results: list[ToolExecutionResult]
         if rejection is None:
-            results = [self.execute_tool(context, action) for action in actions]
+            results = [self.execute_tool(action) for action in actions]
         else:
             results = [
                 ToolExecutionResult(
@@ -64,4 +63,4 @@ class InteractiveAgent(DefaultAgent):
                 for _ in actions
             ]
 
-        return self._record_action_results(context, message, results)
+        return self._record_action_results(message, results)

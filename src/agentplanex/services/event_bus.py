@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from agentplanex.domains import ExecutionEvent
+from agentplanex.domains.execution_event import ExecutionEvent
 
 logger = logging.getLogger(__name__)
 

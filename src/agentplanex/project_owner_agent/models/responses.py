@@ -5,13 +5,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, NoReturn, Protocol, cast
 
-from agentplanex.domains import Action, ActionOutput, ToolSchema
+from agentplanex.project_owner_agent.contracts import (
+    Action,
+    ActionOutput,
+    Message,
+    ToolSchema,
+)
 from agentplanex.project_owner_agent.exception import (
     FormatError,
     ModelError,
     ReplyToHuman,
 )
-from agentplanex.project_owner_agent.models.base import Message
 from agentplanex.project_owner_agent.tools.base import ToolCatalog
 
 type ToolChoice = Literal["auto", "none"]

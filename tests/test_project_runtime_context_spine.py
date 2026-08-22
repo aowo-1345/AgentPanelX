@@ -14,7 +14,7 @@ from agentplanex.bootstrap import (
     create_project_runtime,
     create_project_runtime_control,
 )
-from agentplanex.domains import ProjectRuntimeState
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteExecutionEventRepository,

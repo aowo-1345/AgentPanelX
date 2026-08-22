@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass, field
 
-from agentplanex.domains import OwnerActivation, ProjectRuntimeState
+from agentplanex.domains.owner_activation import OwnerActivation
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.services.delivery import MilestoneRunQueued
 from agentplanex.services.planning import PlanDecision
 from agentplanex.services.project_runtime import ProjectRuntimeService

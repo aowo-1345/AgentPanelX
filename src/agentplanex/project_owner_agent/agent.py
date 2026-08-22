@@ -3,12 +3,12 @@
 from dataclasses import dataclass
 from typing import Never
 
-from agentplanex.domains import (
-    ProjectRuntimeState,
+from agentplanex.project_owner_agent.context.manager import OwnerContextManager
+from agentplanex.project_owner_agent.contracts import (
+    AgentToolExecutor,
+    Message,
     ToolExecutionResult,
-    ToolExecutor,
 )
-from agentplanex.project_owner_agent.context import OwnerContextManager
 from agentplanex.project_owner_agent.exception import (
     FormatError,
     RepeatedFormatError,
@@ -16,7 +16,7 @@ from agentplanex.project_owner_agent.exception import (
     StepLimitExceeded,
     ToolRequestedExit,
 )
-from agentplanex.project_owner_agent.models.base import Message, Model
+from agentplanex.project_owner_agent.models.base import Model
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +35,7 @@ class DefaultAgent:
     def __init__(
         self,
         model: Model,
-        execute_tool: ToolExecutor,
+        execute_tool: AgentToolExecutor,
         *,
         owner_context: OwnerContextManager,
         config: AgentConfig,
@@ -47,16 +47,16 @@ class DefaultAgent:
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
 
-    def run(self, context: ProjectRuntimeState, task: str = "") -> Never:
+    def run(self, task: str = "") -> Never:
         if task:
-            self.add_messages(context, {"role": "user", "content": task})
+            self.add_messages({"role": "user", "content": task})
 
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
 
         while True:
             try:
-                self.step(context)
+                self.step()
                 self.n_consecutive_format_errors = 0
             except FormatError as error:
                 self.n_consecutive_format_errors += 1
@@ -66,7 +66,6 @@ class DefaultAgent:
                 ):
                     raise RepeatedFormatError from error
                 self.add_messages(
-                    context,
                     {
                         "role": "user",
                         "content": error.content,
@@ -74,11 +73,11 @@ class DefaultAgent:
                     },
                 )
 
-    def step(self, context: ProjectRuntimeState) -> list[Message]:
+    def step(self) -> list[Message]:
         """Query the model and execute its actions."""
-        return self.execute_actions(context, self.query(context))
+        return self.execute_actions(self.query())
 
-    def query(self, context: ProjectRuntimeState) -> Message:
+    def query(self) -> Message:
         """Query the model, persisting only a terminal reply here."""
         if self.n_calls >= self.config.step_limit:
             raise StepLimitExceeded()
@@ -87,26 +86,24 @@ class DefaultAgent:
         try:
             message = self.model.query(messages)
         except ReplyToHuman as error:
-            self.add_messages(context, error.response)
+            self.add_messages(error.response)
             raise
         return message
 
     def execute_actions(
         self,
-        context: ProjectRuntimeState,
         message: Message,
     ) -> list[Message]:
         """Execute actions and append their provider-formatted observations."""
-        self.add_messages(context, message)
+        self.add_messages(message)
         extra = message.get("extra")
         raw_actions = extra.get("actions", []) if isinstance(extra, dict) else []
         actions = [action for action in raw_actions if isinstance(action, dict)]
-        results = [self.execute_tool(context, action) for action in actions]
-        return self._record_action_results(context, message, results)
+        results = [self.execute_tool(action) for action in actions]
+        return self._record_action_results(message, results)
 
     def _record_action_results(
         self,
-        context: ProjectRuntimeState,
         message: Message,
         results: list[ToolExecutionResult],
     ) -> list[Message]:
@@ -114,7 +111,7 @@ class DefaultAgent:
             message,
             [result.output for result in results],
         )
-        appended = [message, *self.add_messages(context, *observations)]
+        appended = [message, *self.add_messages(*observations)]
         exits = [result.exit for result in results if result.exit is not None]
         if not exits:
             return appended
@@ -125,7 +122,6 @@ class DefaultAgent:
 
     def add_messages(
         self,
-        context: ProjectRuntimeState,
         *messages: Message,
     ) -> list[Message]:
         appended = self.owner_context.append(messages)

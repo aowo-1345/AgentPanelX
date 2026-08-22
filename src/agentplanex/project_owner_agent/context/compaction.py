@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from agentplanex.domains import Message
+from agentplanex.project_owner_agent.contracts import Message
 from agentplanex.project_owner_agent.tools import ToolCatalog
 
 

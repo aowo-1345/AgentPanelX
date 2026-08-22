@@ -11,7 +11,11 @@ from pydantic import (
     ValidationError,
 )
 
-from agentplanex.domains import Action, ToolArguments, ToolSchema
+from agentplanex.project_owner_agent.contracts import (
+    Action,
+    ToolArguments,
+    ToolSchema,
+)
 
 
 class ToolArgumentError(ValueError):

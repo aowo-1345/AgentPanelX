@@ -6,13 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from agentplanex.domains import (
+from agentplanex.domains.owner_activation import OwnerActivation
+from agentplanex.domains.workspace import (
     FeatureAction,
     FeatureBinding,
     FeatureState,
     FeatureView,
     ManagedProject,
-    OwnerActivation,
     ProjectBoard,
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGit

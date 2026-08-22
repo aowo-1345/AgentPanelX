@@ -9,22 +9,24 @@ from itertools import pairwise
 from pathlib import Path
 from uuid import uuid4
 
-from agentplanex.domains import (
+from agentplanex.domains.delivery import (
     CandidateIdentity,
-    ExecutionEvent,
-    ExecutionEventType,
     Milestone,
     MilestoneSnapshot,
-    ProjectOwnerTask,
-    ProjectOwnerTaskType,
-    ProjectRuntimeState,
-    RuntimeContextChangeReason,
     Stage,
     StageRun,
     StageRunStatus,
     delivery_candidate_ref,
     delivery_run_ref,
 )
+from agentplanex.domains.execution_event import (
+    ExecutionEvent,
+    ExecutionEventType,
+    ProjectOwnerTask,
+    ProjectOwnerTaskType,
+    RuntimeContextChangeReason,
+)
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMilestoneSnapshotRepository,

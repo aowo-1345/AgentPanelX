@@ -12,27 +12,27 @@ import pytest
 import yaml
 from openai import APIConnectionError, omit
 
+import agentplanex.infrastructure.local_shell as local_shell_module
+import agentplanex.infrastructure.openai_responses as openai_responses_module
 from agentplanex import bootstrap, cli
 from agentplanex.bootstrap import (
     create_project_control_query,
     create_project_runtime_control,
 )
-from agentplanex.domains import (
-    ActionOutput,
-    AgentExit,
-    AgentExitStatus,
-    Message,
-    ProjectRuntimeState,
-    SummaryHistory,
-)
-from agentplanex.infrastructure import local_shell as local_shell_module
-from agentplanex.infrastructure import openai_responses as openai_responses_module
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.openai_responses import OpenAIResponsesTransport
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
+)
+from agentplanex.project_owner_agent.context.models import SummaryHistory
+from agentplanex.project_owner_agent.contracts import (
+    ActionOutput,
+    AgentExit,
+    AgentExitStatus,
+    Message,
 )
 from agentplanex.project_owner_agent.exception import ModelGatewayError, ReplyToHuman
 from agentplanex.project_owner_agent.models.responses import (

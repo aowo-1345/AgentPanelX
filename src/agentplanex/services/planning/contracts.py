@@ -4,12 +4,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from agentplanex.domains import (
-    ArtifactDescriptor,
-    OwnerActivation,
-    PlanSubject,
-    ProjectRuntimeState,
-)
+from agentplanex.domains.agent_collaboration import ArtifactDescriptor
+from agentplanex.domains.owner_activation import OwnerActivation
+from agentplanex.domains.plan import PlanSubject
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 
 
 class PlanningError(ValueError):

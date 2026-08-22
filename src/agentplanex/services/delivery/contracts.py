@@ -5,14 +5,14 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
-from agentplanex.domains import (
-    ArtifactDescriptor,
+from agentplanex.domains.agent_collaboration import ArtifactDescriptor
+from agentplanex.domains.delivery import (
     CandidateIdentity,
     Milestone,
     MilestoneSnapshot,
-    ProjectRuntimeState,
     Stage,
 )
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 
 
 class DeliveryError(ValueError):

@@ -8,7 +8,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agentplanex.agent_contracts import InvocationContract, PromptRole
-from agentplanex.domains import Milestone, Stage, StageRun
+from agentplanex.domains.delivery import Milestone, Stage, StageRun
 from agentplanex.infrastructure.codex import CodexTurnRequest, CodexTurnTransport
 from agentplanex.services.agent_contracts import (
     AgentPromptCatalog,

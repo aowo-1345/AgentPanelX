@@ -5,16 +5,18 @@ from uuid import uuid4
 
 from pydantic import Field, StringConstraints, field_validator
 
-from agentplanex.domains import (
+from agentplanex.domains.agent_collaboration import (
     AgentCollaborationError,
     AgentInteractionKind,
     ArtifactRef,
+    TalkToAgentRequest,
+)
+from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
-    ProjectRuntimeState,
-    TalkToAgentRequest,
-    ToolExecutionResult,
 )
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.project_owner_agent.contracts import ToolExecutionResult
 from agentplanex.project_owner_agent.tools import (
     NonBlankText,
     ToolArgumentsModel,

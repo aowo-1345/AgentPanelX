@@ -12,14 +12,11 @@ from typing import ClassVar
 import pytest
 
 from agentplanex.bootstrap import create_project_runtime
-from agentplanex.domains import (
-    ActionOutput,
+from agentplanex.domains.execution_event import (
     ExecutionEvent,
-    Message,
-    MessageHistory,
-    OwnerActivationStatus,
     RuntimeContextChangeReason,
 )
+from agentplanex.domains.owner_activation import OwnerActivationStatus
 from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.codex import (
     CodexTransportTimeout,
@@ -34,6 +31,8 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteOwnerActivationRepository,
     SQLiteProjectRuntimeStateRepository,
 )
+from agentplanex.project_owner_agent.context.models import MessageHistory
+from agentplanex.project_owner_agent.contracts import ActionOutput, Message
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.services.planning.contracts import PlanReviewRequest, PlanReviewResult
 from agentplanex.services.project_runtime_context import _owner as project_owner_service

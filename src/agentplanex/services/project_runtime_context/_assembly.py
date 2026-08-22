@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from agentplanex.domains import ToolExecutor
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.models.responses import ResponsesClient
@@ -12,6 +11,7 @@ from agentplanex.services.agent_contracts import AgentPromptCatalog
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.project_runtime_context._owner import _OwnerRuntime
 from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext
+from agentplanex.services.project_runtime_context.contracts import RuntimeToolExecutor
 from agentplanex.settings import Settings
 
 
@@ -31,7 +31,7 @@ class _ProjectRuntimeContextAssembly:
         self,
         *,
         tools: ToolCatalog,
-        tool_executor: ToolExecutor,
+        tool_executor: RuntimeToolExecutor,
     ) -> ProjectRuntimeContext:
         """Bind all private dependencies and seal the Context exactly once."""
         if self._completed:

@@ -14,17 +14,17 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agentplanex.agent_contracts import InvocationContract, PromptRole
-from agentplanex.domains import (
+from agentplanex.domains.agent_collaboration import (
     AgentCard,
     AgentCollaborationError,
     AgentInteractionKind,
     AgentRole,
     ArtifactDescriptor,
-    ProjectRuntimeState,
     ResolvedArtifact,
     TalkToAgentRequest,
     TalkToAgentResult,
 )
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.agent_workspace import (
     AgentInvocation,
     AgentWorkspaceStore,

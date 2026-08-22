@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from agentplanex.bootstrap import create_workspace
-from agentplanex.domains import FeatureAction, ManagedProject
+from agentplanex.domains.workspace import FeatureAction, ManagedProject
 from agentplanex.services.workspace.service import WorkspaceService
 from agentplanex.settings import Settings, load_settings
 from agentplanex.web.errors import install_error_handlers

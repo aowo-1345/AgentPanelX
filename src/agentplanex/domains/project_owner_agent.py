@@ -2,8 +2,7 @@
 
 from dataclasses import dataclass
 
-from agentplanex.domains.message_history import MessageHistory
-from agentplanex.domains.summary_history import SummaryHistory
+from agentplanex.project_owner_agent.context.models import MessageHistory, SummaryHistory
 
 
 @dataclass(frozen=True, slots=True)

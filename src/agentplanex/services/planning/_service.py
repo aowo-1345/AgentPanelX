@@ -7,17 +7,16 @@ from pathlib import Path
 from typing import Literal
 from uuid import uuid4
 
-from agentplanex.domains import (
-    PLAN_DOCUMENT_NAMES,
+from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
-    OwnerActivation,
-    PlanSubject,
     ProjectOwnerTask,
     ProjectOwnerTaskType,
-    ProjectRuntimeState,
     RuntimeContextChangeReason,
 )
+from agentplanex.domains.owner_activation import OwnerActivation
+from agentplanex.domains.plan import PLAN_DOCUMENT_NAMES, PlanSubject
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.planning._subject import (

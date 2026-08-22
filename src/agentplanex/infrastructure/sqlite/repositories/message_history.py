@@ -4,7 +4,8 @@ import json
 import sqlite3
 from typing import cast
 
-from agentplanex.domains import Message, MessageHistory
+from agentplanex.project_owner_agent.context.models import MessageHistory
+from agentplanex.project_owner_agent.contracts import Message
 
 
 class SQLiteMessageHistoryRepository:

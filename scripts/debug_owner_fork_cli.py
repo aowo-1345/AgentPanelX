@@ -18,7 +18,9 @@ from agentplanex.infrastructure.sqlite import (  # noqa: E402
     SQLiteDatabase,
     verify_schema,
 )
-from agentplanex.project_owner_agent.context import OwnerContextSnapshot  # noqa: E402
+from agentplanex.project_owner_agent.context.manager import (  # noqa: E402
+    OwnerContextSnapshot,
+)
 from agentplanex.project_owner_agent.context.rendering import (  # noqa: E402
     render_checkpoint,
 )

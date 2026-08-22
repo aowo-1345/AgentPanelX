@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol, TextIO
 
-from agentplanex.domains import Action
+from agentplanex.project_owner_agent.contracts import Action
 
 type ApprovalMode = Literal["confirm", "yolo"]
 

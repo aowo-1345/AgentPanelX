@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime
 from typing import cast
 
-from agentplanex.domains import ExecutionEvent, ExecutionEventType
+from agentplanex.domains.execution_event import ExecutionEvent, ExecutionEventType
 
 
 class SQLiteExecutionEventRepository:

@@ -7,7 +7,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
-from agentplanex.domains import ActionOutput
+from agentplanex.project_owner_agent.contracts import ActionOutput
 
 _INHERITED_ENVIRONMENT = (
     "LANG",

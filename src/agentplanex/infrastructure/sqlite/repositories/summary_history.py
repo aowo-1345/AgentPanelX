@@ -3,7 +3,7 @@
 import sqlite3
 from typing import cast
 
-from agentplanex.domains import SummaryHistory
+from agentplanex.project_owner_agent.context.models import SummaryHistory
 
 
 class SQLiteSummaryHistoryRepository:

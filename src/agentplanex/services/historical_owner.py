@@ -3,14 +3,14 @@
 from dataclasses import dataclass, field
 
 from agentplanex.agent_contracts import PromptRole
-from agentplanex.domains import (
+from agentplanex.domains.historical_owner import (
     HistoricalOwnerExchange,
     HistoricalOwnerFidelity,
-    Message,
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
-from agentplanex.project_owner_agent.context import OwnerContextSnapshot
+from agentplanex.project_owner_agent.context.manager import OwnerContextSnapshot
 from agentplanex.project_owner_agent.context.rendering import render_checkpoint
+from agentplanex.project_owner_agent.contracts import Message
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.base import Model
 from agentplanex.services.agent_contracts import AgentPromptCatalog

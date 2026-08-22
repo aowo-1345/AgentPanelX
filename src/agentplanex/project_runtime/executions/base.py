@@ -6,11 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, cast
 
-from agentplanex.domains import (
-    Action,
-    ProjectRuntimeState,
-    ToolExecutionResult,
-)
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.project_owner_agent.contracts import Action, ToolExecutionResult
 from agentplanex.project_owner_agent.tools import (
     ToolArgumentError,
     ToolArgumentsModel,

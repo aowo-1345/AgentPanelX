@@ -4,13 +4,10 @@ from dataclasses import replace
 
 from pydantic import Field
 
-from agentplanex.domains import (
-    BASH_TOOL_NAME,
-    ProjectRuntimeState,
-    RuntimeContextChangeReason,
-    ToolExecutionResult,
-)
-from agentplanex.infrastructure import run_local_shell
+from agentplanex.domains.execution_event import RuntimeContextChangeReason
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.infrastructure.local_shell import run_local_shell
+from agentplanex.project_owner_agent.contracts import ToolExecutionResult
 from agentplanex.project_owner_agent.tools import (
     NonBlankText,
     ToolArgumentsModel,
@@ -21,6 +18,7 @@ from agentplanex.project_runtime.executions.base import (
     project_execution,
 )
 
+BASH_TOOL_NAME = "bash"
 BASH_DESCRIPTION = (
     "Execute a Bash command with writes confined to the current Feature worktree, "
     "with .git and .agentplanex read-only and network access disabled. If the "

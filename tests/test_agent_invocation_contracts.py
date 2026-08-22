@@ -11,18 +11,15 @@ from typing import ClassVar
 import pytest
 
 from agentplanex.bootstrap import create_project_runtime_control
-from agentplanex.domains import (
-    ActionOutput,
-    Message,
+from agentplanex.domains.delivery import (
     Milestone,
     MilestoneState,
-    PlanDocument,
-    PlanSubject,
-    RuntimeContextChangeReason,
     Stage,
     StageRun,
     StageRunStatus,
 )
+from agentplanex.domains.execution_event import RuntimeContextChangeReason
+from agentplanex.domains.plan import PlanDocument, PlanSubject
 from agentplanex.infrastructure.codex import (
     CodexTurnRequest,
     CodexTurnResult,
@@ -32,6 +29,7 @@ from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectOwnerAgentRepository,
 )
+from agentplanex.project_owner_agent.contracts import ActionOutput, Message
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.services.agent_collaboration import AgentCollaborationService

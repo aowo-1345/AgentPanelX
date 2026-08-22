@@ -14,13 +14,15 @@ from agentplanex.bootstrap import (
     create_project_control_query,
     create_project_workspace_query,
 )
-from agentplanex.domains import (
+from agentplanex.domains.delivery import delivery_candidate_ref
+from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
+    ProjectOwnerTaskType,
+)
+from agentplanex.domains.owner_activation import (
     OwnerActivation,
     OwnerActivationMode,
-    ProjectOwnerTaskType,
-    delivery_candidate_ref,
 )
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.infrastructure.sqlite import SQLiteDatabase

@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from agentplanex.bootstrap import create_workspace
-from agentplanex.domains import (
+from agentplanex.domains.workspace import (
     BoardFeature,
     FeatureState,
     FeatureView,

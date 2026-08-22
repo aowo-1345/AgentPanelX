@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from openai_codex import ApprovalMode, Sandbox
 
-from agentplanex.infrastructure import codex as codex_module
+import agentplanex.infrastructure.codex as codex_module
 from agentplanex.infrastructure.codex import CodexTurnRequest, CodexTurnTransport
 
 

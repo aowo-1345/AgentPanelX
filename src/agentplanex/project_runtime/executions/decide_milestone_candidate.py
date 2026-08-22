@@ -4,11 +4,11 @@ from typing import Literal
 
 from pydantic import Field
 
-from agentplanex.domains import (
+from agentplanex.domains.delivery import CandidateIdentity
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.project_owner_agent.contracts import (
     AgentExit,
     AgentExitStatus,
-    CandidateIdentity,
-    ProjectRuntimeState,
     ToolExecutionResult,
 )
 from agentplanex.project_owner_agent.tools import (

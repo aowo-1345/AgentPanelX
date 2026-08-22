@@ -9,7 +9,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agentplanex.agent_contracts import InvocationContract, PromptRole
-from agentplanex.domains import AgentCollaborationError, AgentRole, ArtifactDescriptor
+from agentplanex.domains.agent_collaboration import (
+    AgentCollaborationError,
+    AgentRole,
+    ArtifactDescriptor,
+)
 from agentplanex.infrastructure.codex import CodexTurnRequest
 from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.delivery.contracts import (

@@ -38,13 +38,15 @@ from agentplanex.bootstrap import (  # noqa: E402
     create_project_control_query,
     create_project_runtime_control,
 )
-from agentplanex.domains import (  # noqa: E402
+from agentplanex.domains.delivery import StageRun  # noqa: E402
+from agentplanex.domains.owner_activation import (  # noqa: E402
+    OwnerActivation,
+    OwnerActivationStatus,
+)
+from agentplanex.project_owner_agent.contracts import (  # noqa: E402
     Action,
     AgentExit,
     AgentExitStatus,
-    OwnerActivation,
-    OwnerActivationStatus,
-    StageRun,
     ToolExecutionResult,
 )
 from agentplanex.services.delivery import (  # noqa: E402

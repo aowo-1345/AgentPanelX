@@ -1,7 +1,6 @@
 """Structured control-flow and provider errors for the Project Owner Agent."""
 
-from agentplanex.domains.agent_exit import AgentExit, AgentExitStatus
-from agentplanex.project_owner_agent.models.base import Message
+from agentplanex.project_owner_agent.contracts import AgentExit, AgentExitStatus, Message
 
 
 class InterruptAgentFlow(Exception):

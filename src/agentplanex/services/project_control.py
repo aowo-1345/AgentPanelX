@@ -2,15 +2,17 @@
 
 from dataclasses import dataclass, field
 
-from agentplanex.domains import (
-    ExecutionEvent,
+from agentplanex.domains.delivery import (
     MilestoneSnapshot,
-    OwnerActivation,
-    OwnerActivationStatus,
-    ProjectRuntimeState,
     StageRun,
     StageRunStatus,
 )
+from agentplanex.domains.execution_event import ExecutionEvent
+from agentplanex.domains.owner_activation import (
+    OwnerActivation,
+    OwnerActivationStatus,
+)
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (

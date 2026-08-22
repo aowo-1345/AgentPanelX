@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Protocol, TextIO
 
 from agentplanex.bootstrap import create_project_runtime_control
-from agentplanex.domains import AgentExitStatus, OwnerActivation, ProjectRuntimeState
+from agentplanex.domains.owner_activation import OwnerActivation
+from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.project_owner_agent.approval import ApprovalMode
+from agentplanex.project_owner_agent.contracts import AgentExitStatus
 from agentplanex.project_owner_agent.exception import ModelError
 from agentplanex.services.project_runtime_context import ActivationDriveResult
 
