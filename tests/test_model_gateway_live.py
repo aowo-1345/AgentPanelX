@@ -27,7 +27,7 @@ def test_codex_subscription_completes_a_cached_owner_tool_journey(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exercise human message, native Tool output, reply, cache, and continuation."""
+    """Exercise Tool output, four continuations, and cache through the Runtime."""
 
     if os.getenv("AGENTPLANEX_RUN_LIVE_MODEL") != "1":
         pytest.skip("set AGENTPLANEX_RUN_LIVE_MODEL=1 to run credentialed QA")
@@ -95,6 +95,53 @@ def test_codex_subscription_completes_a_cached_owner_tool_journey(
         ).conversation
         assert len(second_conversation) > len(first_conversation)
 
+        third_activation = runtime.submit_message(
+            "If the first activation used Bash and the second activation recalled its "
+            "output, reply with exactly `gateway-live-e2e-context-ok`. "
+            "Do not call a tool."
+        )
+        third = runtime.drive_owner_model()
+
+        if (
+            third.exit is None
+            or third.exit.content is None
+            or "gateway-live-e2e-context-ok" not in third.exit.content
+        ):
+            pytest.fail("third live activation did not preserve the conversation context")
+        third_conversation = create_project_workspace_query(project_path=project_path).get(
+            third_activation.triage_id
+        ).conversation
+        assert len(third_conversation) > len(second_conversation)
+
+        runtime.submit_message(
+            "Recall the exact marker printed by Bash in the first activation and "
+            "reply with that marker only. Do not call a tool."
+        )
+        fourth = runtime.drive_owner_model()
+        if (
+            fourth.exit is None
+            or fourth.exit.content is None
+            or "gateway-live-e2e-ok" not in fourth.exit.content
+        ):
+            pytest.fail("fourth live activation did not recall the original Tool output")
+
+        fifth_activation = runtime.submit_message(
+            "If the third activation established `gateway-live-e2e-context-ok` and "
+            "the fourth recalled the original Bash marker, reply with exactly "
+            "`gateway-live-e2e-five-ok`. Do not call a tool."
+        )
+        fifth = runtime.drive_owner_model()
+        if (
+            fifth.exit is None
+            or fifth.exit.content is None
+            or "gateway-live-e2e-five-ok" not in fifth.exit.content
+        ):
+            pytest.fail("fifth live activation did not preserve the prior context")
+        fifth_conversation = create_project_workspace_query(project_path=project_path).get(
+            fifth_activation.triage_id
+        ).conversation
+        assert len(fifth_conversation) > len(third_conversation)
+
         log_files = list(log_directory.glob("agentplanex-*.log"))
         assert len(log_files) == 1
         log_lines = log_files[0].read_text(encoding="utf-8").splitlines()
@@ -103,7 +150,7 @@ def test_codex_subscription_completes_a_cached_owner_tool_journey(
             for line in log_lines
             if "event=model_gateway_call" in line and "adapter=openai" in line
         ]
-        assert len(gateway_lines) >= 3
+        assert len(gateway_lines) >= 6
         assert all("status=succeeded" in line for line in gateway_lines)
         cached_tokens = [
             int(match.group(1))

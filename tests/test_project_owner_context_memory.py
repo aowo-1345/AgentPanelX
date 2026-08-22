@@ -407,8 +407,12 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
         for request in restarted_transport.requests
     )
     assert all(
-        request.instructions.startswith("Persisted Owner identity.")
+        request.instructions == "Persisted Owner identity."
         for request in restarted_transport.requests
+    )
+    assert all(
+        "AgentPlaneX invocation envelope" not in request.instructions
+        for request in [*first_transport.requests, *restarted_transport.requests]
     )
     restored_prefix = json.dumps(
         second_summary_requests[0].input[:-1],
@@ -419,6 +423,7 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
         "user",
         "assistant",
         "user",
+        "developer",
     ]
     assert "<intent-summary>" in restored_prefix
     assert "<trajectory-summary>" in restored_prefix
@@ -431,6 +436,7 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
     assert [message.get("role") for message in second_owner_request.input] == [
         "developer",
         "user",
+        "developer",
     ]
 
     with database.read_only_connection() as connection:
@@ -479,7 +485,8 @@ def test_summary_failure_keeps_the_original_owner_context(
     assert driven.exit is not None
     assert driven.exit.content == "owner-finished"
     owner_request = next(request for request in transport.requests if request.tool_choice == "auto")
-    assert str(owner_request.input[-1].get("content", "")).startswith("original-context")
+    assert str(owner_request.input[-2].get("content", "")).startswith("original-context")
+    assert owner_request.input[-1].get("role") == "developer"
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
     with database.read_only_connection() as connection:

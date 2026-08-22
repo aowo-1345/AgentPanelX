@@ -215,26 +215,47 @@ def test_manager_restores_one_model_view_and_keeps_appended_messages() -> None:
         "developer",
         "user",
         "user",
+        "developer",
     ]
-    assert "Project Owner" in str(restored[0]["content"])
-    assert '"activation_id": "activation-1"' in str(restored[0]["content"])
-    assert "Use the observation skill" in str(restored[0]["content"])
+    assert restored[0]["content"] == "You are the persisted Project Owner."
     assert restored[1] == {
         "role": "developer",
         "content": "Recovered rolling context.",
     }
-    assert restored[-1] == {"role": "user", "content": "Continue the refactor."}
-    assert "must not be repeated" not in str(restored)
-
-    manager.append(({"role": "assistant", "content": "Working."},))
-
-    assert manager.prepare_query(query_index=1)[-1] == {
-        "role": "assistant",
-        "content": "Working.",
+    assert restored[-2] == {"role": "user", "content": "Continue the refactor."}
+    assert restored[-1] == {
+        "role": "developer",
+        "content": (
+            "AgentPlaneX invocation envelope.\n"
+            '"activation_id": "activation-1"\n'
+            "Use the observation skill for current facts."
+        ),
     }
-    assert runtime.appended == [
-        ({"role": "assistant", "content": "Working."},)
-    ]
+    assert "must not be repeated" not in str(restored)
+    assert sum(
+        "AgentPlaneX invocation envelope" in str(message.get("content", ""))
+        for message in restored
+    ) == 1
+
+    tool_turn = (
+        {
+            "type": "function_call",
+            "call_id": "call-1",
+            "name": "bash",
+            "arguments": '{"command":"pwd"}',
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call-1",
+            "output": "project-root",
+        },
+    )
+    manager.append(tool_turn)
+
+    continued = manager.prepare_query(query_index=1)
+    assert continued[-3:-1] == tool_turn
+    assert continued[-1] == restored[-1]
+    assert runtime.appended == [tool_turn]
 
 
 def test_manager_switches_only_after_runtime_commits_the_summary() -> None:
@@ -296,6 +317,7 @@ def test_manager_switches_only_after_runtime_commits_the_summary() -> None:
         "system",
         "developer",
         "user",
+        "developer",
     ]
     assert "large context" not in str(compacted)
     assert "Build the clean context seam" in str(compacted)
