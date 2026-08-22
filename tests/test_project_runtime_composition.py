@@ -17,7 +17,7 @@ from agentplanex.project_owner_agent.tools import (
     ToolCatalog,
     ToolDefinition,
 )
-from agentplanex.services.agent_contracts import (
+from agentplanex.services.agent_invocation import (
     AgentPromptCatalog,
     resolve_observation_skill,
 )

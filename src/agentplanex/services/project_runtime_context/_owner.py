@@ -7,7 +7,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import uuid4
 
-from agentplanex.agent_contracts import InvocationContract, PromptRole
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
@@ -51,8 +50,10 @@ from agentplanex.project_owner_agent.models.responses import (
     format_tool_output_message,
 )
 from agentplanex.project_owner_agent.tools import ToolCatalog
-from agentplanex.services.agent_contracts import (
+from agentplanex.services.agent_invocation import (
     AgentPromptCatalog,
+    InvocationContract,
+    InvocationRole,
 )
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.owner_history import select_owner_context_snapshot
@@ -124,7 +125,7 @@ class _OwnerRuntime:
         owner = ProjectOwnerAgent(
             triage_id=state.triage_id,
             project_owner_session_id=uuid4().hex,
-            system_prompt=self.prompts.role_instructions(PromptRole.PROJECT_OWNER),
+            system_prompt=self.prompts.role_instructions(InvocationRole.PROJECT_OWNER),
             tools=tuple(tool.name for tool in self.tools.tools),
         )
         self.owners.insert(connection, owner)
@@ -311,7 +312,7 @@ class _OwnerRuntime:
             "current_candidate_commit_sha": context.current_candidate_commit_sha,
         }
         return InvocationContract(
-            role=PromptRole.PROJECT_OWNER,
+            role=InvocationRole.PROJECT_OWNER,
             operation=f"owner_activation:{activation.task_type.value}",
             project_root=self.database.path.parent.parent,
             observation_skill=self.observation_skill,
@@ -346,8 +347,9 @@ class _OwnerRuntime:
             runtime=self,
             runtime_context=context,
             activation=activation,
-            invocation=self._invocation_contract(context, activation),
-            observation_instruction=(self.settings.runtime.prompts.observation_instruction),
+            invocation_text=self.prompts.render_invocation(
+                self._invocation_contract(context, activation)
+            ),
             policy=OwnerContextPolicy(
                 model_name=owner_settings.selected_model.name,
                 capacity_tokens=owner_settings.context_memory.capacity_tokens,

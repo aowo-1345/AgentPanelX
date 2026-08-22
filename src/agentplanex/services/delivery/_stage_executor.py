@@ -7,10 +7,11 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from agentplanex.agent_contracts import InvocationContract, PromptRole
 from agentplanex.infrastructure.codex import CodexTurnRequest, CodexTurnTransport
-from agentplanex.services.agent_contracts import (
+from agentplanex.services.agent_invocation import (
     AgentPromptCatalog,
+    InvocationContract,
+    InvocationRole,
 )
 from agentplanex.services.delivery.models import Milestone, Stage, StageRun
 
@@ -65,7 +66,7 @@ class CodexStageExecutor:
                 thread_id=None,
                 workspace=request.worktree,
                 developer_instructions=self.prompts.role_instructions(
-                    PromptRole.STAGE_EXECUTOR
+                    InvocationRole.STAGE_EXECUTOR
                 ),
                 message=self._prompt(request, relative_document),
                 mentions=(),
@@ -118,7 +119,7 @@ class CodexStageExecutor:
                 json.dumps(contract, ensure_ascii=True, indent=2),
                 self.prompts.render_invocation(
                     InvocationContract(
-                        role=PromptRole.STAGE_EXECUTOR,
+                        role=InvocationRole.STAGE_EXECUTOR,
                         operation="execute_stage",
                         project_root=self.project_path,
                         observation_skill=self.observation_skill,
@@ -143,6 +144,6 @@ class CodexStageExecutor:
                         },
                     )
                 ),
-                self.prompts.task_instructions(PromptRole.STAGE_EXECUTOR),
+                self.prompts.task_instructions(InvocationRole.STAGE_EXECUTOR),
             )
         )

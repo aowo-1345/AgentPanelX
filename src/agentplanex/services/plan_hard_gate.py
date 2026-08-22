@@ -8,7 +8,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from agentplanex.agent_contracts import InvocationContract, PromptRole
 from agentplanex.domains.agent_collaboration import (
     AgentCollaborationError,
     AgentRole,
@@ -16,6 +15,7 @@ from agentplanex.domains.agent_collaboration import (
 )
 from agentplanex.infrastructure.codex import CodexTurnRequest
 from agentplanex.services.agent_collaboration import AgentCollaborationService
+from agentplanex.services.agent_invocation import InvocationContract, InvocationRole
 from agentplanex.services.delivery.contracts import (
     DeliveryError,
     MilestoneReviewRequest,
@@ -84,7 +84,7 @@ class CodexPlanHardGate:
 
         review = self._review_exact_subject(
             triage_id=request.triage_id,
-            role=PromptRole.PLAN_HARD_GATE,
+            role=InvocationRole.PLAN_HARD_GATE,
             subject_digest=subject.digest,
             fixed_work_object={
                 "subject_digest": subject.digest,
@@ -132,7 +132,7 @@ class CodexPlanHardGate:
 
         review = self._review_exact_subject(
             triage_id=request.triage_id,
-            role=PromptRole.MILESTONE_HARD_GATE,
+            role=InvocationRole.MILESTONE_HARD_GATE,
             subject_digest=request.subject_digest,
             fixed_work_object={
                 "subject_digest": request.subject_digest,
@@ -154,7 +154,7 @@ class CodexPlanHardGate:
         self,
         *,
         triage_id: str,
-        role: PromptRole,
+        role: InvocationRole,
         subject_digest: str,
         fixed_work_object: dict[str, object],
         mentions: Callable[[Path], tuple[tuple[str, Path], ...]],

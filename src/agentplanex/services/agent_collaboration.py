@@ -13,7 +13,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from agentplanex.agent_contracts import InvocationContract, PromptRole
 from agentplanex.domains.agent_collaboration import (
     AgentCard,
     AgentCollaborationError,
@@ -33,8 +32,10 @@ from agentplanex.infrastructure.codex import (
     CodexTurnRequest,
     CodexTurnTransport,
 )
-from agentplanex.services.agent_contracts import (
+from agentplanex.services.agent_invocation import (
     AgentPromptCatalog,
+    InvocationContract,
+    InvocationRole,
     resolve_observation_skill,
 )
 from agentplanex.settings import RuntimeSettings
@@ -210,7 +211,7 @@ class AgentCollaborationService:
                 thread_id=thread_id,
                 workspace=workspace.path,
                 developer_instructions=self.prompts.role_instructions(
-                    PromptRole(card.role.value),
+                    InvocationRole(card.role.value),
                     profile_instructions=card.profile_instructions,
                 ),
                 message=self._prompt(
@@ -339,7 +340,7 @@ class AgentCollaborationService:
                 message,
                 self.prompts.render_invocation(
                     InvocationContract(
-                        role=PromptRole(card.role.value),
+                        role=InvocationRole(card.role.value),
                         operation=f"{operation}:{kind.value}",
                         project_root=self.workspaces.project_path,
                         observation_skill=self.observation_skill,
@@ -353,6 +354,6 @@ class AgentCollaborationService:
                         output_contract=output_contract,
                     )
                 ),
-                self.prompts.task_instructions(PromptRole(card.role.value)),
+                self.prompts.task_instructions(InvocationRole(card.role.value)),
             )
         )

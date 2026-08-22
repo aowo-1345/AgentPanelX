@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import uuid4
 
-from agentplanex.agent_contracts import InvocationContract
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.project_owner_agent.context.compaction import (
     ContextCompactionAttempt,
@@ -157,8 +156,7 @@ class OwnerContextManager:
         runtime: OwnerContextRuntime,
         runtime_context: ProjectRuntimeState,
         activation: OwnerActivation,
-        invocation: InvocationContract,
-        observation_instruction: str,
+        invocation_text: str,
         policy: OwnerContextPolicy,
         tools: ToolCatalog,
         summary_model: SummaryModel,
@@ -176,9 +174,6 @@ class OwnerContextManager:
         )
         if selected_summary_id != activation.summary_id:
             raise RuntimeError("Restored Owner context does not match Activation Summary")
-        if invocation.triage_id != runtime_context.triage_id:
-            raise RuntimeError("Owner invocation does not match Runtime context")
-
         return cls(
             runtime=runtime,
             runtime_context=runtime_context,
@@ -187,8 +182,7 @@ class OwnerContextManager:
                 system_prompt=snapshot.system_prompt,
                 summary=snapshot.summary,
                 message_history=snapshot.message_history,
-                invocation=invocation,
-                observation_instruction=observation_instruction,
+                invocation_text=invocation_text,
                 summary_context_header=policy.summary_context_header,
             ),
             revision=loaded.revision,

@@ -25,7 +25,7 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
     ResponsesTransport,
 )
-from agentplanex.services.agent_contracts import AgentPromptCatalog
+from agentplanex.services.agent_invocation import AgentPromptCatalog
 from agentplanex.services.historical_owner import HistoricalOwnerForkService
 from agentplanex.settings import (
     DEFAULT_SETTINGS_PATH,

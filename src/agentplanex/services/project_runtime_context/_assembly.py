@@ -7,7 +7,7 @@ from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.models.responses import ResponsesClient
 from agentplanex.project_owner_agent.tools import ToolCatalog
-from agentplanex.services.agent_contracts import AgentPromptCatalog
+from agentplanex.services.agent_invocation import AgentPromptCatalog
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.project_runtime_context._owner import _OwnerRuntime
 from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext

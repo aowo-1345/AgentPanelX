@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass, field
 
-from agentplanex.agent_contracts import PromptRole
 from agentplanex.domains.historical_owner import (
     HistoricalOwnerExchange,
     HistoricalOwnerFidelity,
@@ -13,7 +12,7 @@ from agentplanex.project_owner_agent.context.rendering import render_checkpoint
 from agentplanex.project_owner_agent.contracts import Message
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.base import Model
-from agentplanex.services.agent_contracts import AgentPromptCatalog
+from agentplanex.services.agent_invocation import AgentPromptCatalog, InvocationRole
 from agentplanex.services.owner_history import (
     latest_owner_summary_id_through,
     restore_owner_context,
@@ -118,7 +117,7 @@ class HistoricalOwnerForkService:
             model=model,
             model_name=model_name,
             role_instructions=self.prompts.role_instructions(
-                PromptRole.HISTORICAL_OWNER
+                InvocationRole.HISTORICAL_OWNER
             ),
             summary_context_header=self.prompts.summary_context_header,
         )

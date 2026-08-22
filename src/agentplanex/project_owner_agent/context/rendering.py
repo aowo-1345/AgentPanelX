@@ -2,7 +2,6 @@
 
 from collections.abc import Sequence
 
-from agentplanex.agent_contracts import InvocationContract, render_invocation
 from agentplanex.project_owner_agent.context.models import MessageHistory, SummaryHistory
 from agentplanex.project_owner_agent.contracts import Message
 
@@ -12,8 +11,7 @@ def render_owner_context(
     system_prompt: str,
     summary: SummaryHistory | None,
     message_history: Sequence[MessageHistory],
-    invocation: InvocationContract,
-    observation_instruction: str,
+    invocation_text: str,
     summary_context_header: str,
 ) -> tuple[Message, ...]:
     """Render one checkpoint without interpreting persistence details."""
@@ -26,10 +24,13 @@ def render_owner_context(
             summary_context_header=summary_context_header,
         )
     )
+    invocation = invocation_text.strip()
+    if not invocation:
+        raise ValueError("Owner invocation text must not be empty")
     rendered[0]["content"] = "\n\n".join(
         (
             str(rendered[0].get("content", "")),
-            render_invocation(invocation, observation_instruction),
+            invocation,
         )
     )
     return tuple(rendered)

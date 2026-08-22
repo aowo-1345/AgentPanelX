@@ -18,7 +18,7 @@ from agentplanex.project_runtime.executions import (
 )
 from agentplanex.project_runtime.runtime import ProjectRuntime
 from agentplanex.services.agent_collaboration import AgentCollaborationService
-from agentplanex.services.agent_contracts import resolve_observation_skill
+from agentplanex.services.agent_invocation import resolve_observation_skill
 from agentplanex.services.delivery._service import DeliveryService
 from agentplanex.services.delivery._stage_executor import (
     CodexStageExecutor,

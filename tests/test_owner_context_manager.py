@@ -2,9 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 
-from agentplanex.agent_contracts import InvocationContract, PromptRole
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.project_owner_agent.context.compaction import (
     ContextCompactionNotice,
@@ -197,23 +195,15 @@ def test_manager_restores_one_model_view_and_keeps_appended_messages() -> None:
         driver_mode=OwnerActivationMode.MODEL,
         started_at=datetime.now(UTC),
     )
-    invocation = InvocationContract(
-        role=PromptRole.PROJECT_OWNER,
-        operation="owner_activation:USER_INPUT",
-        project_root=Path("/project"),
-        observation_skill=Path("/skills/observe/SKILL.md"),
-        triage_id="triage-1",
-        fixed_work_object={"activation_id": "activation-1"},
-        workspace={"runtime_mutation": "exposed_tools_only"},
-        output_contract={"one_of": ["tool_action", "concise_user_reply"]},
-    )
-
     manager = OwnerContextManager.restore(
         runtime=runtime,
         runtime_context=context,
         activation=activation,
-        invocation=invocation,
-        observation_instruction="Use the observation skill for current facts.",
+        invocation_text=(
+            "AgentPlaneX invocation envelope.\n"
+            '"activation_id": "activation-1"\n'
+            "Use the observation skill for current facts."
+        ),
         policy=_policy(capacity_tokens=128_000),
         tools=_tools(),
         summary_model=_SummaryModel(),
@@ -284,17 +274,7 @@ def test_manager_switches_only_after_runtime_commits_the_summary() -> None:
         runtime=runtime,
         runtime_context=context,
         activation=activation,
-        invocation=InvocationContract(
-            role=PromptRole.PROJECT_OWNER,
-            operation="owner_activation:USER_INPUT",
-            project_root=Path("/project"),
-            observation_skill=Path("/skills/observe/SKILL.md"),
-            triage_id="triage-1",
-            fixed_work_object={"activation_id": "activation-1"},
-            workspace={"runtime_mutation": "exposed_tools_only"},
-            output_contract={"one_of": ["tool_action", "concise_user_reply"]},
-        ),
-        observation_instruction="Use observed facts.",
+        invocation_text="AgentPlaneX owner invocation.",
         policy=_policy(capacity_tokens=1),
         tools=_tools(),
         summary_model=_SummaryModel(),
