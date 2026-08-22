@@ -19,10 +19,8 @@ from openai_codex import (
     TextInput,
 )
 
-from agentplanex.domains.agent_collaboration import AgentCollaborationError
 
-
-class CodexTransportError(AgentCollaborationError):
+class CodexTransportError(RuntimeError):
     """A known local Codex process, thread, or turn failure."""
 
 

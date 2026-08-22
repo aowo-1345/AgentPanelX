@@ -8,16 +8,21 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from agentplanex.domains.agent_collaboration import (
-    AgentCard,
-    AgentCollaborationError,
-    AgentRole,
-    ArtifactDescriptor,
+from agentplanex.domains.artifact import ArtifactDescriptor
+from agentplanex.infrastructure.agent_workspace import (
+    AgentWorkspaceError,
+    AgentWorkspaceStore,
 )
-from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
-from agentplanex.infrastructure.codex import CodexTurnRequest, CodexTurnTransport
+from agentplanex.infrastructure.codex import (
+    CodexTransportError,
+    CodexTurnRequest,
+    CodexTurnTransport,
+)
 from agentplanex.services.agent_invocation import (
+    AgentCard,
+    AgentInvocationError,
     AgentPromptCatalog,
+    DelegatedAgentRole,
     InvocationContract,
     InvocationRole,
 )
@@ -38,6 +43,10 @@ _SUMMARY_OUTPUT_SCHEMA: dict[str, Any] = {
     "required": ["summary"],
     "additionalProperties": False,
 }
+
+
+class _HardGateContractError(ValueError):
+    """A Reviewer result violates the Exact-subject contract."""
 
 
 class _HardGateArtifact(BaseModel):
@@ -78,7 +87,7 @@ class CodexHardGate:
     prompts: AgentPromptCatalog
 
     def __post_init__(self) -> None:
-        if self.reviewer.role is not AgentRole.REVIEWER:
+        if self.reviewer.role is not DelegatedAgentRole.REVIEWER:
             raise ValueError("Hard Gate Agent must use the reviewer Contract")
 
     def review_plan(self, request: PlanReviewRequest) -> PlanReviewResult:
@@ -174,7 +183,10 @@ class CodexHardGate:
         error_type: type[ValueError],
         subject_name: str,
     ) -> _HardGateReview:
-        workspace = self.workspaces.create(self.reviewer)
+        workspace = self.workspaces.create(
+            agent_id=self.reviewer.agent_id,
+            profile_digest=self.reviewer.profile_digest,
+        )
         invocation = self.workspaces.create_invocation(workspace)
         try:
             self.transport.run(
@@ -239,17 +251,17 @@ class CodexHardGate:
                 if (normalized := " ".join(change.split()))
             )
             if manifest.subject_digest != subject_digest:
-                raise AgentCollaborationError(
+                raise _HardGateContractError(
                     f"Reviewer result does not identify the supplied {subject_name}"
                 )
             if not summary:
-                raise AgentCollaborationError("Reviewer result summary is empty")
+                raise _HardGateContractError("Reviewer result summary is empty")
             if manifest.decision == "pass" and required_changes:
-                raise AgentCollaborationError(
+                raise _HardGateContractError(
                     "Reviewer pass result must not contain required changes"
                 )
             if manifest.decision == "revise" and not required_changes:
-                raise AgentCollaborationError(
+                raise _HardGateContractError(
                     "Reviewer revise result must contain required changes"
                 )
             artifact = manifest.artifacts[0]
@@ -258,7 +270,13 @@ class CodexHardGate:
                 artifact.path,
                 expected_name="review.md",
             )
-        except (AgentCollaborationError, ValidationError) as error:
+        except (
+            AgentInvocationError,
+            AgentWorkspaceError,
+            CodexTransportError,
+            _HardGateContractError,
+            ValidationError,
+        ) as error:
             raise error_type(f"{subject_name} Hard Gate failed: {error}") from error
         return _HardGateReview(
             subject_digest=manifest.subject_digest,

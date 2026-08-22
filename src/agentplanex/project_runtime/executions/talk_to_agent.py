@@ -5,12 +5,6 @@ from uuid import uuid4
 
 from pydantic import Field, StringConstraints, field_validator
 
-from agentplanex.domains.agent_collaboration import (
-    AgentCollaborationError,
-    AgentInteractionKind,
-    ArtifactRef,
-    TalkToAgentRequest,
-)
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
@@ -25,6 +19,12 @@ from agentplanex.project_owner_agent.tools import (
 from agentplanex.project_runtime.executions.base import (
     ProjectExecution,
     project_execution,
+)
+from agentplanex.services.agent_collaboration import (
+    AgentCollaborationError,
+    AgentInteractionKind,
+    ArtifactRef,
+    TalkToAgentRequest,
 )
 
 TALK_TO_AGENT_TOOL_NAME = "talk_to_agent"
@@ -107,7 +107,7 @@ class TalkToAgentExecution(ProjectExecution[TalkToAgentArguments]):
 
     def tool_definition(self) -> ToolDefinition[TalkToAgentArguments]:
         return create_talk_to_agent_tool(
-            self.dependencies.collaboration.catalog.card_description()
+            self.dependencies.collaboration.describe_agents()
         )
 
     def execute(
@@ -117,7 +117,7 @@ class TalkToAgentExecution(ProjectExecution[TalkToAgentArguments]):
     ) -> ToolExecutionResult:
         request = arguments.to_request()
         try:
-            self.dependencies.collaboration.catalog.get(request.agent_id)
+            self.dependencies.collaboration.require_agent(request.agent_id)
         except AgentCollaborationError as error:
             return ToolExecutionResult(
                 output={"ok": False, "error": str(error)},

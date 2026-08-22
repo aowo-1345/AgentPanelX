@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
+from agentplanex.infrastructure.codex import CodexTurnTransport
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
 from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
@@ -18,7 +20,11 @@ from agentplanex.project_runtime.executions import (
 )
 from agentplanex.project_runtime.runtime import ProjectRuntime
 from agentplanex.services.agent_collaboration import AgentCollaborationService
-from agentplanex.services.agent_invocation import resolve_observation_skill
+from agentplanex.services.agent_invocation import (
+    AgentCatalog,
+    AgentPromptCatalog,
+    resolve_observation_skill,
+)
 from agentplanex.services.delivery._service import DeliveryService
 from agentplanex.services.delivery._stage_executor import (
     CodexStageExecutor,
@@ -96,10 +102,28 @@ def _compose_command_graph(
     initialize_schema(database)
     event_bus = EventBus((SQLiteTimelineRecorder(database),))
     observation_skill = resolve_observation_skill()
-    collaboration = AgentCollaborationService.from_settings(
-        project_path,
-        settings.runtime,
+    runtime_settings = settings.runtime
+    codex_settings = runtime_settings.codex
+    catalog = AgentCatalog(runtime_settings)
+    workspaces = AgentWorkspaceStore(
+        project_path=project_path,
+        response_limit=codex_settings.response_limit,
+        artifact_limit=codex_settings.artifact_limit,
+    )
+    transport = CodexTurnTransport(
+        executable=codex_settings.executable,
+        model=codex_settings.model,
+        timeout_seconds=codex_settings.timeout_seconds,
+        response_limit=codex_settings.response_limit,
+        network_access=codex_settings.network_access,
+    )
+    prompts = AgentPromptCatalog(runtime_settings.prompts)
+    collaboration = AgentCollaborationService(
+        catalog=catalog,
+        workspaces=workspaces,
+        transport=transport,
         observation_skill=observation_skill,
+        prompts=prompts,
     )
     model_settings = settings.project_owner_agent.selected_model
     assembly = prepare_project_runtime_context(
@@ -112,16 +136,16 @@ def _compose_command_graph(
             model=model_settings.name,
             transport=responses_transport,
         ),
-        observation_skill=collaboration.observation_skill,
-        prompts=collaboration.prompts,
+        observation_skill=observation_skill,
+        prompts=prompts,
     )
     context = assembly.context
     hard_gate = CodexHardGate(
-        reviewer=collaboration.catalog.get(collaboration.catalog.plan_reviewer_id),
-        workspaces=collaboration.workspaces,
-        transport=collaboration.transport,
-        observation_skill=collaboration.observation_skill,
-        prompts=collaboration.prompts,
+        reviewer=catalog.get(catalog.hard_gate_reviewer_id),
+        workspaces=workspaces,
+        transport=transport,
+        observation_skill=observation_skill,
+        prompts=prompts,
     )
     planning = PlanningService(
         project_path=project_path,
@@ -139,9 +163,9 @@ def _compose_command_graph(
             if stage_executor is not None
             else CodexStageExecutor(
                 project_path,
-                collaboration.transport,
-                collaboration.observation_skill,
-                collaboration.prompts,
+                transport,
+                observation_skill,
+                prompts,
             )
         ),
         event_bus=event_bus,

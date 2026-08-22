@@ -15,18 +15,37 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from agentplanex.domains.agent_collaboration import (
-    AgentCard,
-    AgentCollaborationError,
-    ArtifactDescriptor,
-    ConversationReference,
-    ResolvedArtifact,
-)
+from agentplanex.domains.artifact import ArtifactDescriptor
 
 _RUNTIME_DIRECTORY = ".agentplanex"
 _WORKSPACE_DIRECTORY = "agent-workspaces"
 _CONVERSATION_PREFIX = "apx1."
 _SAFE_ID = re.compile(r"^[a-f0-9]{32}$")
+
+
+class AgentWorkspaceError(ValueError):
+    """A workspace, conversation reference, or artifact is invalid."""
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationReference:
+    """Decoded identity of one Codex thread and writable workspace."""
+
+    agent_id: str
+    profile_digest: str
+    workspace_id: str
+    thread_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedArtifact:
+    """A validated Artifact path and its observed integrity facts."""
+
+    uri: str
+    path: Path
+    media_type: str
+    size: int
+    sha256: str
 
 
 class _WorkspaceMetadata(BaseModel):
@@ -77,7 +96,7 @@ class AgentWorkspaceStore:
     def workspaces_root(self) -> Path:
         return self.runtime_root / _WORKSPACE_DIRECTORY
 
-    def create(self, card: AgentCard) -> AgentWorkspace:
+    def create(self, *, agent_id: str, profile_digest: str) -> AgentWorkspace:
         """Create a new persistent workspace for one Agent conversation."""
         self._ensure_workspace_root()
         self._ensure_runtime_git_excluded()
@@ -87,31 +106,33 @@ class AgentWorkspaceStore:
         (path / "outbox").mkdir()
         metadata = _WorkspaceMetadata(
             version=1,
-            agent_id=card.agent_id,
-            profile_digest=card.profile_digest,
+            agent_id=agent_id,
+            profile_digest=profile_digest,
             workspace_id=workspace_id,
         )
         self._atomic_write(path / "workspace.json", metadata.model_dump_json(indent=2))
         return AgentWorkspace(
             workspace_id=workspace_id,
-            agent_id=card.agent_id,
-            profile_digest=card.profile_digest,
+            agent_id=agent_id,
+            profile_digest=profile_digest,
             path=path,
         )
 
     def restore(
         self,
-        card: AgentCard,
+        *,
+        agent_id: str,
+        profile_digest: str,
         conversation_id: str,
     ) -> tuple[AgentWorkspace, str]:
         """Restore and validate the workspace and Codex thread in an opaque reference."""
         reference = self.decode_conversation(conversation_id)
-        if reference.agent_id != card.agent_id:
-            raise AgentCollaborationError(
+        if reference.agent_id != agent_id:
+            raise AgentWorkspaceError(
                 "conversation_id belongs to a different Agent"
             )
-        if reference.profile_digest != card.profile_digest:
-            raise AgentCollaborationError(
+        if reference.profile_digest != profile_digest:
+            raise AgentWorkspaceError(
                 "conversation_id belongs to an outdated Agent profile"
             )
         workspace = self._load(reference.workspace_id)
@@ -119,7 +140,7 @@ class AgentWorkspaceStore:
             workspace.agent_id != reference.agent_id
             or workspace.profile_digest != reference.profile_digest
         ):
-            raise AgentCollaborationError("conversation_id workspace binding is invalid")
+            raise AgentWorkspaceError("conversation_id workspace binding is invalid")
         return workspace, reference.thread_id
 
     def create_invocation(self, workspace: AgentWorkspace) -> AgentInvocation:
@@ -141,7 +162,7 @@ class AgentWorkspaceStore:
     ) -> str:
         """Encode the complete explicit resume identity as an opaque string."""
         if not thread_id.strip():
-            raise AgentCollaborationError("Codex returned an empty thread ID")
+            raise AgentWorkspaceError("Codex returned an empty thread ID")
         payload = json.dumps(
             {
                 "agent_id": workspace.agent_id,
@@ -160,16 +181,16 @@ class AgentWorkspaceStore:
     def decode_conversation(self, conversation_id: str) -> ConversationReference:
         """Decode an opaque resume reference without trusting any of its fields."""
         if not conversation_id.startswith(_CONVERSATION_PREFIX):
-            raise AgentCollaborationError("conversation_id has an unsupported format")
+            raise AgentWorkspaceError("conversation_id has an unsupported format")
         encoded = conversation_id.removeprefix(_CONVERSATION_PREFIX)
         if not encoded or len(encoded) > 8_192:
-            raise AgentCollaborationError("conversation_id has an invalid length")
+            raise AgentWorkspaceError("conversation_id has an invalid length")
         try:
             padding = "=" * (-len(encoded) % 4)
             decoded = base64.urlsafe_b64decode(encoded + padding)
             payload: object = json.loads(decoded.decode("utf-8"))
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise AgentCollaborationError("conversation_id is malformed") from error
+            raise AgentWorkspaceError("conversation_id is malformed") from error
         if not isinstance(payload, dict) or set(payload) != {
             "agent_id",
             "profile_digest",
@@ -177,9 +198,9 @@ class AgentWorkspaceStore:
             "version",
             "workspace_id",
         }:
-            raise AgentCollaborationError("conversation_id payload is invalid")
+            raise AgentWorkspaceError("conversation_id payload is invalid")
         if payload.get("version") != 1:
-            raise AgentCollaborationError("conversation_id version is unsupported")
+            raise AgentWorkspaceError("conversation_id version is unsupported")
         agent_id = payload.get("agent_id")
         profile_digest = payload.get("profile_digest")
         thread_id = payload.get("thread_id")
@@ -188,13 +209,13 @@ class AgentWorkspaceStore:
             isinstance(value, str) and value
             for value in (agent_id, profile_digest, thread_id, workspace_id)
         ):
-            raise AgentCollaborationError("conversation_id fields are invalid")
+            raise AgentWorkspaceError("conversation_id fields are invalid")
         assert isinstance(agent_id, str)
         assert isinstance(profile_digest, str)
         assert isinstance(thread_id, str)
         assert isinstance(workspace_id, str)
         if not _SAFE_ID.fullmatch(workspace_id):
-            raise AgentCollaborationError("conversation_id workspace is invalid")
+            raise AgentWorkspaceError("conversation_id workspace is invalid")
         return ConversationReference(
             agent_id=agent_id,
             profile_digest=profile_digest,
@@ -218,10 +239,10 @@ class AgentWorkspaceStore:
                 or not _SAFE_ID.fullmatch(parts[1])
                 or parts[2] != "documents"
             ):
-                raise AgentCollaborationError("Artifact URI is not an Agent document")
+                raise AgentWorkspaceError("Artifact URI is not an Agent document")
             base = self.runtime_root
         else:
-            raise AgentCollaborationError(f"Unsupported Artifact URI: {uri}")
+            raise AgentWorkspaceError(f"Unsupported Artifact URI: {uri}")
         path = self._bounded_path(base, relative)
         content = self._read_valid_text(path, self.artifact_limit)
         return ResolvedArtifact(
@@ -239,14 +260,14 @@ class AgentWorkspaceStore:
         )
         result_path = self._bounded_path(invocation.workspace.path, relative)
         if result_path != invocation.result_path:
-            raise AgentCollaborationError("Agent result.json path is invalid")
+            raise AgentWorkspaceError("Agent result.json path is invalid")
         content = self._read_valid_text(result_path, self.response_limit)
         try:
             payload: object = json.loads(content.decode("utf-8"))
         except json.JSONDecodeError as error:
-            raise AgentCollaborationError("Agent result.json is not valid JSON") from error
+            raise AgentWorkspaceError("Agent result.json is not valid JSON") from error
         if not isinstance(payload, dict):
-            raise AgentCollaborationError("Agent result.json must contain an object")
+            raise AgentWorkspaceError("Agent result.json must contain an object")
         return payload
 
     def output_artifact(
@@ -259,7 +280,7 @@ class AgentWorkspaceStore:
         """Validate and expose one Contract-declared workspace document."""
         relative = self._safe_relative(relative_path)
         if relative != PurePosixPath("documents") / expected_name:
-            raise AgentCollaborationError(
+            raise AgentWorkspaceError(
                 f"Agent Contract requires documents/{expected_name}"
             )
         path = self._bounded_path(workspace.path, relative)
@@ -283,7 +304,7 @@ class AgentWorkspaceStore:
 
     def _load(self, workspace_id: str) -> AgentWorkspace:
         if not _SAFE_ID.fullmatch(workspace_id):
-            raise AgentCollaborationError("Agent workspace ID is invalid")
+            raise AgentWorkspaceError("Agent workspace ID is invalid")
         path = self.workspaces_root / workspace_id
         metadata_path = self._bounded_path(
             self.workspaces_root,
@@ -294,9 +315,9 @@ class AgentWorkspaceStore:
                 metadata_path.read_text(encoding="utf-8")
             )
         except (OSError, ValidationError) as error:
-            raise AgentCollaborationError("Agent workspace metadata is invalid") from error
+            raise AgentWorkspaceError("Agent workspace metadata is invalid") from error
         if metadata.version != 1 or metadata.workspace_id != workspace_id:
-            raise AgentCollaborationError("Agent workspace metadata does not match its path")
+            raise AgentWorkspaceError("Agent workspace metadata does not match its path")
         return AgentWorkspace(
             workspace_id=workspace_id,
             agent_id=metadata.agent_id,
@@ -307,58 +328,58 @@ class AgentWorkspaceStore:
     @staticmethod
     def _safe_relative(value: str) -> PurePosixPath:
         if not value or "\x00" in value or "\\" in value:
-            raise AgentCollaborationError("Artifact path is invalid")
+            raise AgentWorkspaceError("Artifact path is invalid")
         path = PurePosixPath(value)
         if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
-            raise AgentCollaborationError("Artifact path must stay inside its namespace")
+            raise AgentWorkspaceError("Artifact path must stay inside its namespace")
         return path
 
     @staticmethod
     def _bounded_path(base: Path, relative: PurePosixPath) -> Path:
         if base.is_symlink():
-            raise AgentCollaborationError("Artifact base path must not be a symlink")
+            raise AgentWorkspaceError("Artifact base path must not be a symlink")
         candidate = base.joinpath(*relative.parts)
         current = base
         for part in relative.parts:
             current = current / part
             if current.is_symlink():
-                raise AgentCollaborationError("Artifact paths must not contain symlinks")
+                raise AgentWorkspaceError("Artifact paths must not contain symlinks")
         try:
             candidate.resolve().relative_to(base.resolve())
         except ValueError as error:
-            raise AgentCollaborationError("Artifact path escapes its namespace") from error
+            raise AgentWorkspaceError("Artifact path escapes its namespace") from error
         return candidate
 
     def _ensure_workspace_root(self) -> None:
         try:
             self.runtime_root.mkdir(exist_ok=True)
             if self.runtime_root.is_symlink():
-                raise AgentCollaborationError(
+                raise AgentWorkspaceError(
                     "Agent runtime directory must not be a symlink"
                 )
             self.workspaces_root.mkdir(exist_ok=True)
             if self.workspaces_root.is_symlink():
-                raise AgentCollaborationError(
+                raise AgentWorkspaceError(
                     "Agent workspaces directory must not be a symlink"
                 )
         except OSError as error:
-            raise AgentCollaborationError("Cannot create Agent workspace root") from error
+            raise AgentWorkspaceError("Cannot create Agent workspace root") from error
 
     @staticmethod
     def _read_valid_text(path: Path, limit: int) -> bytes:
         try:
             if not path.is_file() or path.is_symlink():
-                raise AgentCollaborationError(f"Artifact does not exist: {path}")
+                raise AgentWorkspaceError(f"Artifact does not exist: {path}")
             content = path.read_bytes()
             content.decode("utf-8")
         except UnicodeDecodeError as error:
-            raise AgentCollaborationError("Artifact must be UTF-8 text") from error
+            raise AgentWorkspaceError("Artifact must be UTF-8 text") from error
         except OSError as error:
-            raise AgentCollaborationError(f"Artifact cannot be read: {path}") from error
+            raise AgentWorkspaceError(f"Artifact cannot be read: {path}") from error
         if not content.strip():
-            raise AgentCollaborationError("Artifact must not be empty")
+            raise AgentWorkspaceError("Artifact must not be empty")
         if len(content) > limit:
-            raise AgentCollaborationError(f"Artifact exceeds the {limit}-byte limit")
+            raise AgentWorkspaceError(f"Artifact exceeds the {limit}-byte limit")
         return content
 
     def _ensure_runtime_git_excluded(self) -> None:
@@ -383,7 +404,7 @@ class AgentWorkspaceStore:
                 f"{existing}{separator}{_RUNTIME_DIRECTORY}/\n",
             )
         except OSError as error:
-            raise AgentCollaborationError("Cannot update project-local Git exclude") from error
+            raise AgentWorkspaceError("Cannot update project-local Git exclude") from error
 
     @staticmethod
     def _atomic_write(path: Path, content: str) -> None:

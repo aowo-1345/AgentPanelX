@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from agentplanex.domains.agent_collaboration import ArtifactDescriptor
+from agentplanex.domains.artifact import ArtifactDescriptor
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.services.planning.models import PlanSubject
 from agentplanex.services.project_runtime_context.models import OwnerActivation

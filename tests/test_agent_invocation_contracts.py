@@ -12,6 +12,7 @@ import pytest
 
 from agentplanex.bootstrap import create_project_runtime_control
 from agentplanex.domains.execution_event import RuntimeContextChangeReason
+from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.codex import (
     CodexTurnRequest,
     CodexTurnResult,
@@ -24,8 +25,11 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.project_owner_agent.contracts import ActionOutput, Message
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
-from agentplanex.services.agent_collaboration import AgentCollaborationService
-from agentplanex.services.agent_invocation import resolve_observation_skill
+from agentplanex.services.agent_invocation import (
+    AgentCatalog,
+    AgentPromptCatalog,
+    resolve_observation_skill,
+)
 from agentplanex.services.delivery._stage_executor import (
     CodexStageExecutor,
     StageExecutionRequest,
@@ -420,15 +424,28 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
         )
 
     monkeypatch.setattr(CodexTurnTransport, "run", record)
-    collaboration = AgentCollaborationService.from_settings(
-        project_path, _settings().runtime
+    runtime_settings = _settings().runtime
+    codex_settings = runtime_settings.codex
+    catalog = AgentCatalog(runtime_settings)
+    workspaces = AgentWorkspaceStore(
+        project_path,
+        codex_settings.response_limit,
+        codex_settings.artifact_limit,
     )
+    transport = CodexTurnTransport(
+        codex_settings.executable,
+        codex_settings.model,
+        codex_settings.timeout_seconds,
+        codex_settings.response_limit,
+        codex_settings.network_access,
+    )
+    prompts = AgentPromptCatalog(runtime_settings.prompts)
     gate = CodexHardGate(
-        reviewer=collaboration.catalog.get(collaboration.catalog.plan_reviewer_id),
-        workspaces=collaboration.workspaces,
-        transport=collaboration.transport,
-        observation_skill=collaboration.observation_skill,
-        prompts=collaboration.prompts,
+        reviewer=catalog.get(catalog.hard_gate_reviewer_id),
+        workspaces=workspaces,
+        transport=transport,
+        observation_skill=resolve_observation_skill(),
+        prompts=prompts,
     )
     specs = tuple(
         project_path / name
@@ -539,10 +556,7 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
         project_path,
         transport,
         resolve_observation_skill(),
-        AgentCollaborationService.from_settings(
-            project_path,
-            _settings().runtime,
-        ).prompts,
+        AgentPromptCatalog(_settings().runtime.prompts),
     ).execute(
         StageExecutionRequest(
             stage_run=stage_run,
