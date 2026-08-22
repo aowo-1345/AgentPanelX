@@ -5,7 +5,8 @@ project_owner_agent:
       name: "qwen3.7-max-preview"
       base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       api_key_env: "DASHSCOPE_API_KEY"
-      http_headers: {}
+      http_headers:
+        x-dashscope-session-cache: "enable"
       reasoning_effort: "high"
       service_tier: null
       timeout_seconds: 60.0
