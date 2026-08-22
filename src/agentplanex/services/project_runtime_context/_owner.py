@@ -4,6 +4,7 @@ import os
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
@@ -335,9 +336,15 @@ class _OwnerRuntime:
     ) -> DefaultAgent:
         owner_settings = self.settings.project_owner_agent
         fixed_tools = self.tools.select(owner.tools)
+        owner_responses = self.responses.with_cache_affinity(
+            _cache_affinity(owner.project_owner_session_id, purpose="owner")
+        )
+        summary_responses = self.responses.with_cache_affinity(
+            _cache_affinity(owner.project_owner_session_id, purpose="summary")
+        )
         model = ProjectOwnerModel(
             tools=fixed_tools,
-            responses=self.responses,
+            responses=owner_responses,
         )
         config = AgentConfig(
             step_limit=owner_settings.step_limit,
@@ -363,7 +370,7 @@ class _OwnerRuntime:
                 update_intent_summary_prompt=(self.settings.runtime.prompts.update_intent_summary),
             ),
             tools=fixed_tools,
-            summary_model=self.responses,
+            summary_model=summary_responses,
         )
 
         return (
@@ -604,6 +611,13 @@ def _unhandled_exit(error: Exception) -> AgentExit:
         status=AgentExitStatus.UNHANDLED_EXCEPTION,
         content=f"{type(error).__name__}: {error}",
     )
+
+
+def _cache_affinity(session_id: str, *, purpose: str) -> str:
+    """Derive an opaque, stable request affinity without persisting another fact."""
+
+    material = f"agentplanex:model-cache:v1:{purpose}:{session_id}"
+    return sha256(material.encode("utf-8")).hexdigest()
 
 
 def _require_owner_revision(revision: object) -> _ProjectOwnerRevision:

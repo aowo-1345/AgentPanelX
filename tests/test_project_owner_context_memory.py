@@ -303,6 +303,15 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
         request for request in first_transport.requests if request.tool_choice == "none"
     ]
     first_owner_request = first_transport.requests[0]
+    first_owner_affinity = first_owner_request.cache_affinity_key
+    first_summary_affinity = first_summary_requests[0].cache_affinity_key
+    assert first_owner_affinity is not None
+    assert first_summary_affinity is not None
+    assert first_owner_affinity != first_summary_affinity
+    assert all(
+        request.cache_affinity_key == first_summary_affinity
+        for request in first_summary_requests
+    )
     assert all(
         request.input[:-1] == first_summary_requests[0].input[:-1]
         for request in first_summary_requests
@@ -379,6 +388,11 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
     ]
     second_owner_request = next(
         request for request in restarted_transport.requests if request.tool_choice == "auto"
+    )
+    assert second_owner_request.cache_affinity_key == first_owner_affinity
+    assert all(
+        request.cache_affinity_key == first_summary_affinity
+        for request in second_summary_requests
     )
     assert len(second_summary_requests) == 2
     assert all(

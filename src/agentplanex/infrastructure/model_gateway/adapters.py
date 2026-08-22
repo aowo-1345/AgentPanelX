@@ -18,11 +18,12 @@ type ReasoningEffort = Literal[
 type ServiceTier = Literal["auto", "default", "flex", "scale", "priority"]
 
 
-class QwenResponsesAdapter:
-    """Send Qwen requests through one lazily-created OpenAI SDK client."""
+class _OpenAICompatibleResponsesAdapter:
+    """Shared SDK mechanics for one lazily-created Responses connection pool."""
 
-    name = "qwen"
-    reports_cache_usage = False
+    name: str
+    reports_cache_usage: bool
+    accepts_cache_affinity: bool
 
     def __init__(
         self,
@@ -51,8 +52,23 @@ class QwenResponsesAdapter:
             else omit
         )
         service_tier = self.service_tier if self.service_tier is not None else omit
+        cache_key = request.cache_affinity_key if self.accepts_cache_affinity else None
         try:
             if request.tools:
+                if cache_key is not None:
+                    return client.responses.create(
+                        model=request.model,
+                        instructions=request.instructions,
+                        input=cast(ResponseInputParam, list(request.input)),
+                        tools=cast(list[FunctionToolParam], list(request.tools)),
+                        store=False,
+                        stream=False,
+                        reasoning=reasoning,
+                        service_tier=service_tier,
+                        tool_choice=request.tool_choice,
+                        parallel_tool_calls=True,
+                        prompt_cache_key=cache_key,
+                    )
                 return client.responses.create(
                     model=request.model,
                     instructions=request.instructions,
@@ -64,6 +80,17 @@ class QwenResponsesAdapter:
                     service_tier=service_tier,
                     tool_choice=request.tool_choice,
                     parallel_tool_calls=True,
+                )
+            if cache_key is not None:
+                return client.responses.create(
+                    model=request.model,
+                    instructions=request.instructions,
+                    input=cast(ResponseInputParam, list(request.input)),
+                    store=False,
+                    stream=False,
+                    reasoning=reasoning,
+                    service_tier=service_tier,
+                    prompt_cache_key=cache_key,
                 )
             return client.responses.create(
                 model=request.model,
@@ -109,3 +136,19 @@ class QwenResponsesAdapter:
                             f"Failed to initialize Responses gateway: {error}"
                         ) from error
         return self.client
+
+
+class QwenResponsesAdapter(_OpenAICompatibleResponsesAdapter):
+    """Qwen Responses without AgentPlaneX cache controls or metrics."""
+
+    name = "qwen"
+    reports_cache_usage = False
+    accepts_cache_affinity = False
+
+
+class OpenAIResponsesAdapter(_OpenAICompatibleResponsesAdapter):
+    """Official or locally proxied OpenAI Responses with cache affinity."""
+
+    name = "openai"
+    reports_cache_usage = True
+    accepts_cache_affinity = True

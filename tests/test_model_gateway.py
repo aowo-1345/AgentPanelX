@@ -1,12 +1,15 @@
 """Critical Model Gateway configuration and transport invariants."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
+import agentplanex.infrastructure.model_gateway.adapters as adapters_module
+from agentplanex import bootstrap
 from agentplanex.infrastructure.logging import configure_logging
-from agentplanex.infrastructure.model_gateway import ModelGateway
+from agentplanex.infrastructure.model_gateway import ModelGateway, OpenAIResponsesAdapter
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 
@@ -82,3 +85,84 @@ def test_gateway_close_is_idempotent() -> None:
     gateway.close()
 
     assert adapter.closed == 1
+
+
+def test_openai_adapter_is_lazy_and_maps_cache_affinity_and_usage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clients: list[dict[str, object]] = []
+    requests: list[dict[str, object]] = []
+    provider_response = SimpleNamespace(
+        usage=SimpleNamespace(
+            input_tokens=4096,
+            output_tokens=12,
+            input_tokens_details=SimpleNamespace(cached_tokens=3072),
+        ),
+        output=[],
+    )
+
+    class _Responses:
+        def create(self, **kwargs: object) -> object:
+            requests.append(kwargs)
+            return provider_response
+
+    class _Client:
+        responses = _Responses()
+
+        def close(self) -> None:
+            pass
+
+    def create_client(**kwargs: object) -> _Client:
+        clients.append(kwargs)
+        return _Client()
+
+    monkeypatch.setenv("CLIPROXY_API_KEY", "local-proxy-secret")
+    monkeypatch.setattr(adapters_module, "OpenAI", create_client)
+    adapter = OpenAIResponsesAdapter(
+        base_url="http://127.0.0.1:8317/v1",
+        timeout_seconds=60,
+        api_key_env="CLIPROXY_API_KEY",
+        service_tier=None,
+    )
+    assert clients == []
+    configure_logging(tmp_path)
+
+    gateway = ModelGateway(adapter=adapter)
+    response = gateway.create(
+        ResponsesRequest(
+            model="gpt-5.6-luna",
+            instructions="Reply briefly.",
+            input=({"role": "user", "content": "hello"},),
+            tools=(),
+            tool_choice="none",
+            cache_affinity_key="stable-affinity",
+        )
+    )
+
+    assert response is provider_response
+    assert len(clients) == 1
+    assert requests[0]["prompt_cache_key"] == "stable-affinity"
+    adapter.create(_request())
+    assert "prompt_cache_key" not in requests[1]
+    event = next(tmp_path.glob("agentplanex-*.log")).read_text(encoding="utf-8")
+    assert "adapter=openai" in event
+    assert "cached_tokens=3072" in event
+    assert "stable-affinity" not in event
+    assert "local-proxy-secret" not in event
+
+
+def test_bootstrap_binds_the_explicit_openai_adapter_without_connecting() -> None:
+    configured = load_settings(DEFAULT_SETTINGS_PATH)
+    settings = configured.model_copy(
+        update={
+            "project_owner_agent": configured.project_owner_agent.model_copy(
+                update={"active_model": "codex"}
+            )
+        }
+    )
+
+    gateway = bootstrap.create_responses_transport(settings)
+
+    assert isinstance(gateway.adapter, OpenAIResponsesAdapter)
+    assert gateway.adapter.client is None

@@ -4,7 +4,11 @@ from pathlib import Path
 
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.logging import configure_logging
-from agentplanex.infrastructure.model_gateway import ModelGateway, QwenResponsesAdapter
+from agentplanex.infrastructure.model_gateway import (
+    ModelGateway,
+    OpenAIResponsesAdapter,
+    QwenResponsesAdapter,
+)
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
@@ -118,8 +122,18 @@ def create_workspace(settings: Settings) -> WorkspaceService:
 def create_responses_transport(settings: Settings) -> ModelGateway:
     """Bind the selected model Adapter to one application Gateway."""
     model = settings.project_owner_agent.selected_model
+    adapter: QwenResponsesAdapter | OpenAIResponsesAdapter
     if model.adapter == "qwen":
         adapter = QwenResponsesAdapter(
+            base_url=model.base_url,
+            timeout_seconds=model.timeout_seconds,
+            api_key_env=model.api_key_env,
+            http_headers=model.http_headers,
+            reasoning_effort=model.reasoning_effort,
+            service_tier=model.service_tier,
+        )
+    elif model.adapter == "openai":
+        adapter = OpenAIResponsesAdapter(
             base_url=model.base_url,
             timeout_seconds=model.timeout_seconds,
             api_key_env=model.api_key_env,

@@ -26,7 +26,7 @@ class _SettingsModel(BaseModel):
 class ModelSettings(_SettingsModel):
     """Project Owner model connection settings."""
 
-    adapter: Literal["qwen"]
+    adapter: Literal["qwen", "openai"]
     name: str = Field(min_length=1)
     base_url: str = Field(default=DEFAULT_OPENAI_BASE_URL, min_length=1)
     api_key_env: str = Field(default="OPENAI_API_KEY", min_length=1)

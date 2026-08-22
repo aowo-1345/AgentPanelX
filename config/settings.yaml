@@ -11,6 +11,14 @@ project_owner_agent:
       reasoning_effort: "high"
       service_tier: null
       timeout_seconds: 60.0
+    codex:
+      adapter: "openai"
+      name: "gpt-5.6-luna"
+      base_url: "http://127.0.0.1:8317/v1"
+      api_key_env: "CLIPROXY_API_KEY"
+      reasoning_effort: "high"
+      service_tier: null
+      timeout_seconds: 60.0
   step_limit: 200
   max_consecutive_format_errors: 3
   context_memory:

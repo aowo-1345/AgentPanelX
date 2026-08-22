@@ -154,6 +154,14 @@ Bootstrap 根据 `active_model` 的显式 `adapter` 配置构造唯一 `ModelGat
 逻辑调用的最外层写一条安全的 Token/耗时事件；Loguru 是应用级基础设置，文件按日期写入
 全局 `.logs/` 并保留三天，日志失败不改变模型调用结果。
 
+同一个 Gateway 也可以显式绑定通用 OpenAI Responses Adapter；`base_url` 决定它连接官方
+Endpoint 还是用户管理的兼容本地代理，Bootstrap 不探测、不动态切换、也不做跨 Adapter
+回退。Runtime 从持久化的 `project_owner_session_id` 按 Owner 与 Summary 两种用途分别派生
+稳定的不透明 affinity，并只放入当前 `ResponsesRequest`。OpenAI Adapter 将它映射为
+`prompt_cache_key`，Qwen Adapter 忽略它；该值不成为新的 SQLite 或 Web Contract。Provider
+返回缓存 usage 时，Gateway 记录对应 Token 数，但不记录 affinity、Prompt、Response、Tool
+内容、call ID、request ID 或凭据。
+
 Planning、Delivery 与 Project Runtime Context 各自在 `models.py` 中持有自己的纯业务模型；
 SQLite Repository 只依赖这些无副作用模型。跨越多个能力的 Runtime State、Execution Event
 与状态变更原因继续由 `domains/` 承载。

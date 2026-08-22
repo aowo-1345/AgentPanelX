@@ -274,6 +274,7 @@ def test_responses_transport_applies_selected_gateway_configuration(
             input=({"role": "user", "content": "hello"},),
             tools=(),
             tool_choice="none",
+            cache_affinity_key="qwen-must-ignore-this",
         )
     )
 

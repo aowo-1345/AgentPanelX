@@ -68,7 +68,7 @@ class ModelGateway:
         duration_ms: int,
         response: object | None,
     ) -> None:
-        usage = _mapping(_value(response, "usage"))
+        usage = _value(response, "usage")
         fields: list[tuple[str, object | None]] = [
             ("event", "model_gateway_call"),
             ("adapter", self.adapter.name),
@@ -79,7 +79,7 @@ class ModelGateway:
             ("output_tokens", _value(usage, "output_tokens")),
         ]
         if self.adapter.reports_cache_usage:
-            details = _mapping(_value(usage, "input_tokens_details"))
+            details = _value(usage, "input_tokens_details")
             cached_tokens = _value(details, "cached_tokens")
             if cached_tokens is not None:
                 fields.append(("cached_tokens", cached_tokens))
@@ -95,10 +95,6 @@ def _duration_ms(started: float) -> int:
     return max(0, round((monotonic() - started) * 1000))
 
 
-def _mapping(value: object | None) -> Mapping[str, object]:
-    return value if isinstance(value, Mapping) else {}
-
-
 def _value(source: object | None, name: str) -> object | None:
     if isinstance(source, Mapping):
         return source.get(name)
@@ -106,8 +102,8 @@ def _value(source: object | None, name: str) -> object | None:
 
 
 def _cache_write_tokens(
-    usage: Mapping[str, object],
-    details: Mapping[str, object],
+    usage: object | None,
+    details: object | None,
 ) -> object | None:
     for name in ("cache_write_tokens", "cache_creation_tokens"):
         value = _value(details, name)

@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, NoReturn, Protocol, cast
 
 from agentplanex.project_owner_agent.contracts import (
@@ -30,6 +30,7 @@ class ResponsesRequest:
     input: tuple[Message, ...]
     tools: tuple[ToolSchema, ...]
     tool_choice: ToolChoice
+    cache_affinity_key: str | None = None
 
 
 class ResponsesTransport(Protocol):
@@ -42,6 +43,12 @@ class ResponsesClient:
 
     model: str
     transport: ResponsesTransport
+    cache_affinity_key: str | None = None
+
+    def with_cache_affinity(self, key: str) -> "ResponsesClient":
+        """Bind a provider-neutral affinity value to subsequent requests."""
+
+        return replace(self, cache_affinity_key=key)
 
     def request(
         self,
@@ -57,6 +64,7 @@ class ResponsesClient:
             input=tuple(response_input),
             tools=tuple(tools.provider_schemas()) if tools is not None else (),
             tool_choice=tool_choice,
+            cache_affinity_key=self.cache_affinity_key,
         )
         response = self.transport.create(request)
         message = _serialize(response)
