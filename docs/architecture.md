@@ -162,6 +162,11 @@ Endpoint 还是用户管理的兼容本地代理，Bootstrap 不探测、不动�
 返回缓存 usage 时，Gateway 记录对应 Token 数，但不记录 affinity、Prompt、Response、Tool
 内容、call ID、request ID 或凭据。
 
+Tool 参数仍由同一 Pydantic Contract 在 Runtime 强制校验；面向严格函数调用的 Provider
+Schema 会展开带 sibling metadata 的本地 `$ref`，无法由 OpenAI JSON Schema 子集表达的
+跨集合约束仅作为描述提供，不能取代执行前的 Runtime 校验。已完成的 Responses output 在
+下一轮作为 input 重放时会移除输出态 `status`，同时保留 Tool `call_id` 关联。
+
 Planning、Delivery 与 Project Runtime Context 各自在 `models.py` 中持有自己的纯业务模型；
 SQLite Repository 只依赖这些无副作用模型。跨越多个能力的 Runtime State、Execution Event
 与状态变更原因继续由 `domains/` 承载。

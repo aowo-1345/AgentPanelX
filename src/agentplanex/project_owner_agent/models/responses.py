@@ -183,7 +183,7 @@ def _prepare_input(messages: list[Message]) -> tuple[str, list[Message]]:
             instructions = str(message.get("content", ""))
         elif message.get("object") == "response":
             result.extend(
-                _without_extra(_serialize(item))
+                _as_response_input(_serialize(item))
                 for item in _as_list(message.get("output"))
             )
         else:
@@ -267,6 +267,16 @@ def _action_parts(action: Action) -> tuple[str, str, dict[str, Any]]:
 
 def _without_extra(message: Message) -> Message:
     return {key: value for key, value in message.items() if key != "extra"}
+
+
+def _as_response_input(message: Message) -> Message:
+    """Remove output-only metadata before replaying a completed item as input."""
+
+    return {
+        key: value
+        for key, value in message.items()
+        if key not in {"extra", "status"}
+    }
 
 
 def _serialize(value: object) -> Message:

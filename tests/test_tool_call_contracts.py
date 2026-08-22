@@ -129,7 +129,15 @@ def test_tool_catalog_rejects_invalid_complete_milestone_views(
     )
 
     for index, arguments in enumerate(invalid_arguments):
-        assert list(Draft202012Validator(provider_schema).iter_errors(arguments))
+        provider_errors = list(
+            Draft202012Validator(provider_schema).iter_errors(arguments)
+        )
+        if index == 2:
+            # OpenAI's strict JSON Schema subset cannot express array `contains`;
+            # the authoritative Runtime validator still enforces this invariant.
+            assert not provider_errors
+        else:
+            assert provider_errors
         with pytest.raises(ToolArgumentError):
             tools.create_action(
                 name="update_milestones",
@@ -204,7 +212,8 @@ def test_every_tool_uses_the_shared_argument_contract(
                 arguments=arguments,
             )
 
-    assert {schema["name"] for schema in tools.provider_schemas()} == {
+    provider_schemas = tools.provider_schemas()
+    assert {schema["name"] for schema in provider_schemas} == {
         "bash",
         "request_plan_approval",
         "talk_to_agent",
@@ -212,6 +221,8 @@ def test_every_tool_uses_the_shared_argument_contract(
         "run_next_milestone",
         "decide_milestone_candidate",
     }
+    assert "$ref" not in json.dumps(provider_schemas)
+    assert "$defs" not in json.dumps(provider_schemas)
 
 
 def test_direct_execution_uses_the_same_argument_contract(
@@ -422,3 +433,52 @@ def test_model_preserves_call_ids_for_multiple_tool_calls(
             "arguments": {"command": "sed -n '1,80p' architecture.md"},
         },
     ]
+
+
+def test_response_history_preserves_call_id_without_output_only_status() -> None:
+    requests: list[ResponsesRequest] = []
+
+    class RecordingTransport:
+        def create(self, request: ResponsesRequest) -> object:
+            requests.append(request)
+            return {
+                "object": "response",
+                "output": [
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "done"}],
+                    }
+                ],
+            }
+
+    responses = ResponsesClient(model="test-model", transport=RecordingTransport())
+    responses.request(
+        [
+            {"role": "system", "content": "Test Owner."},
+            {
+                "object": "response",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "id": "provider-item-id",
+                        "call_id": "call-preserved",
+                        "name": "bash",
+                        "arguments": '{"command":"pwd"}',
+                        "status": "completed",
+                    }
+                ],
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call-preserved",
+                "output": '{"ok":true}',
+            },
+        ],
+        tools=None,
+        tool_choice="none",
+    )
+
+    function_call = requests[0].input[0]
+    assert function_call["call_id"] == "call-preserved"
+    assert "status" not in function_call
