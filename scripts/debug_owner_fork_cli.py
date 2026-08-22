@@ -28,7 +28,7 @@ from agentplanex.project_owner_agent.models.responses import (  # noqa: E402
     ProjectOwnerModel,
     ResponsesClient,
 )
-from agentplanex.services.agent_contracts import AgentPromptCatalog  # noqa: E402
+from agentplanex.services.agent_invocation import AgentPromptCatalog  # noqa: E402
 from agentplanex.services.historical_owner import (  # noqa: E402
     HistoricalOwnerForkService,
 )
