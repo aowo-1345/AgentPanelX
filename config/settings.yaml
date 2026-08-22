@@ -2,6 +2,7 @@ project_owner_agent:
   active_model: "qwen"
   models:
     qwen:
+      adapter: "qwen"
       name: "qwen3.8-max"
       base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       api_key_env: "DASHSCOPE_API_KEY"

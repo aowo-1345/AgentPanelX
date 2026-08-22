@@ -1,4 +1,4 @@
-"""Shared OpenAI SDK transport for Responses requests."""
+"""Provider-specific adapters for Responses-compatible endpoints."""
 
 import os
 from collections.abc import Mapping
@@ -18,15 +18,18 @@ type ReasoningEffort = Literal[
 type ServiceTier = Literal["auto", "default", "flex", "scale", "priority"]
 
 
-class OpenAIResponsesTransport:
-    """Send Owner and Summary requests through one shared OpenAI client."""
+class QwenResponsesAdapter:
+    """Send Qwen requests through one lazily-created OpenAI SDK client."""
+
+    name = "qwen"
+    reports_cache_usage = False
 
     def __init__(
         self,
         *,
         base_url: str,
         timeout_seconds: float,
-        api_key_env: str = "OPENAI_API_KEY",
+        api_key_env: str,
         http_headers: Mapping[str, str] | None = None,
         reasoning_effort: ReasoningEffort | None = None,
         service_tier: ServiceTier | None = "priority",
@@ -72,9 +75,7 @@ class OpenAIResponsesTransport:
                 service_tier=service_tier,
             )
         except OpenAIError as error:
-            raise ModelGatewayError(
-                f"Responses gateway request failed: {error}"
-            ) from error
+            raise ModelGatewayError(f"Responses gateway request failed: {error}") from error
 
     def close(self) -> None:
         """Close the shared SDK client when the application shuts down."""

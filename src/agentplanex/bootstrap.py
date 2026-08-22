@@ -3,7 +3,8 @@
 from pathlib import Path
 
 from agentplanex.infrastructure.git_repository import GitRepository
-from agentplanex.infrastructure.openai_responses import OpenAIResponsesTransport
+from agentplanex.infrastructure.logging import configure_logging
+from agentplanex.infrastructure.model_gateway import ModelGateway, QwenResponsesAdapter
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
@@ -31,6 +32,7 @@ def create_project_runtime(
     responses_transport: ResponsesTransport | None = None,
 ) -> ProjectRuntime:
     """Create a Runtime from explicit invocation inputs and loaded settings."""
+    configure_logging()
     configured = settings or load_settings()
     return compose_project_runtime(
         project_path=project_path,
@@ -52,6 +54,7 @@ def create_project_runtime_control(
     responses_transport: ResponsesTransport | None = None,
 ) -> ProjectRuntimeControl:
     """Create the privileged intervention surface over the real command graph."""
+    configure_logging()
     configured = settings or load_settings()
     return compose_project_runtime_control(
         project_path=project_path,
@@ -89,6 +92,7 @@ def create_project_workspace_query(*, project_path: Path) -> ProjectWorkspaceQue
 
 def create_workspace(settings: Settings) -> WorkspaceService:
     """Compose the user-level Workspace over real Registry, Git, and Runtimes."""
+    configure_logging()
     responses_transport = create_responses_transport(settings)
     registry = WorkspaceRegistry.at(settings.workspace.data_home / "registry.sqlite3")
     registry.initialize()
@@ -111,14 +115,18 @@ def create_workspace(settings: Settings) -> WorkspaceService:
     )
 
 
-def create_responses_transport(settings: Settings) -> OpenAIResponsesTransport:
-    """Create the configured OpenAI transport at a composition boundary."""
+def create_responses_transport(settings: Settings) -> ModelGateway:
+    """Bind the selected model Adapter to one application Gateway."""
     model = settings.project_owner_agent.selected_model
-    return OpenAIResponsesTransport(
-        base_url=model.base_url,
-        timeout_seconds=model.timeout_seconds,
-        api_key_env=model.api_key_env,
-        http_headers=model.http_headers,
-        reasoning_effort=model.reasoning_effort,
-        service_tier=model.service_tier,
-    )
+    if model.adapter == "qwen":
+        adapter = QwenResponsesAdapter(
+            base_url=model.base_url,
+            timeout_seconds=model.timeout_seconds,
+            api_key_env=model.api_key_env,
+            http_headers=model.http_headers,
+            reasoning_effort=model.reasoning_effort,
+            service_tier=model.service_tier,
+        )
+    else:
+        raise AssertionError(f"Validated model adapter is not implemented: {model.adapter}")
+    return ModelGateway(adapter=adapter)

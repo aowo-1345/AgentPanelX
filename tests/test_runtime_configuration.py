@@ -13,14 +13,14 @@ import yaml
 from openai import APIConnectionError, omit
 
 import agentplanex.infrastructure.local_shell as local_shell_module
-import agentplanex.infrastructure.openai_responses as openai_responses_module
+import agentplanex.infrastructure.model_gateway.adapters as gateway_adapters_module
 from agentplanex import bootstrap, cli
 from agentplanex.bootstrap import (
     create_project_control_query,
     create_project_runtime_control,
 )
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
-from agentplanex.infrastructure.openai_responses import OpenAIResponsesTransport
+from agentplanex.infrastructure.model_gateway import QwenResponsesAdapter
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
@@ -180,7 +180,7 @@ def _settings(
         update={
             "project_owner_agent": ProjectOwnerAgentSettings(
                 active_model="test",
-                models={"test": ModelSettings(name="test-model")},
+                models={"test": ModelSettings(adapter="qwen", name="test-model")},
             ),
             "runtime": configured.runtime.model_copy(
                 update={
@@ -201,6 +201,7 @@ def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> Non
         "active_model": "configured",
         "models": {
             "configured": {
+                "adapter": "qwen",
                 "name": "configured-model",
                 "base_url": "https://example.test/v1",
                 "api_key_env": "EXAMPLE_API_KEY",
@@ -220,6 +221,7 @@ def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> Non
 
     model = settings.project_owner_agent.selected_model
     assert settings.project_owner_agent.active_model == "configured"
+    assert model.adapter == "qwen"
     assert model.name == "configured-model"
     assert model.base_url == "https://example.test/v1"
     assert model.api_key_env == "EXAMPLE_API_KEY"
@@ -255,8 +257,8 @@ def test_responses_transport_applies_selected_gateway_configuration(
         return _Client()
 
     monkeypatch.setenv("TOOLCODE_API_KEY", "test-secret")
-    monkeypatch.setattr(openai_responses_module, "OpenAI", create_client)
-    transport = OpenAIResponsesTransport(
+    monkeypatch.setattr(gateway_adapters_module, "OpenAI", create_client)
+    transport = QwenResponsesAdapter(
         base_url="https://toolcode.example",
         timeout_seconds=240.0,
         api_key_env="TOOLCODE_API_KEY",
@@ -290,6 +292,7 @@ def test_responses_transport_applies_selected_gateway_configuration(
     assert request["model"] == "gpt-5.6-sol"
     assert request["reasoning"] == {"effort": "high"}
     assert request["service_tier"] is omit
+    assert "prompt_cache_key" not in request
 
 
 def test_responses_transport_allows_multiple_tool_calls(
@@ -307,11 +310,11 @@ def test_responses_transport_allows_multiple_tool_calls(
 
     monkeypatch.setenv("TOOLCODE_API_KEY", "test-secret")
     monkeypatch.setattr(
-        openai_responses_module,
+        gateway_adapters_module,
         "OpenAI",
         lambda **_kwargs: _Client(),
     )
-    transport = OpenAIResponsesTransport(
+    transport = QwenResponsesAdapter(
         base_url="https://toolcode.example",
         timeout_seconds=60.0,
         api_key_env="TOOLCODE_API_KEY",
@@ -357,11 +360,11 @@ def test_responses_transport_exposes_final_sdk_failure_as_gateway_error(
 
     monkeypatch.setenv("TOOLCODE_API_KEY", "test-secret")
     monkeypatch.setattr(
-        openai_responses_module,
+        gateway_adapters_module,
         "OpenAI",
         lambda **_kwargs: _Client(),
     )
-    transport = OpenAIResponsesTransport(
+    transport = QwenResponsesAdapter(
         base_url="https://toolcode.example",
         timeout_seconds=60.0,
         api_key_env="TOOLCODE_API_KEY",
@@ -401,7 +404,7 @@ def test_workspace_runtimes_share_one_responses_transport(
         transports.append(kwargs["responses_transport"])
         return cast(ProjectRuntime, object())
 
-    monkeypatch.setattr(bootstrap, "OpenAIResponsesTransport", create_transport)
+    monkeypatch.setattr(bootstrap, "create_responses_transport", lambda _settings: transport)
     monkeypatch.setattr(bootstrap, "create_project_runtime", create_runtime)
     configured = load_settings(DEFAULT_SETTINGS_PATH)
     settings = configured.model_copy(

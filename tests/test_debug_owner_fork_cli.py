@@ -10,9 +10,9 @@ from typing import ClassVar
 
 import pytest
 
-import agentplanex.infrastructure.openai_responses as openai_responses_module
+import agentplanex.infrastructure.model_gateway.adapters as gateway_adapters_module
 from agentplanex.bootstrap import create_project_runtime
-from agentplanex.infrastructure.openai_responses import OpenAIResponsesTransport
+from agentplanex.infrastructure.model_gateway import ModelGateway, QwenResponsesAdapter
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
@@ -216,9 +216,9 @@ def test_owner_fork_cli_keeps_two_interrogation_turns_in_memory_only(
     assert isinstance(responses, ResponsesClient)
     assert responses.model == configured_model.selected_model.name
     transport = responses.transport
-    assert isinstance(transport, OpenAIResponsesTransport)
-    assert transport.base_url == configured_model.selected_model.base_url
-    assert transport.api_key_env == configured_model.selected_model.api_key_env
+    assert isinstance(transport, ModelGateway)
+    assert transport.adapter.base_url == configured_model.selected_model.base_url
+    assert transport.adapter.api_key_env == configured_model.selected_model.api_key_env
     assert "Historical Project Owner Fork" in str(
         _WitnessModel.queries[0][0]["content"]
     )
@@ -265,7 +265,7 @@ def test_project_owner_model_omits_tool_surface_for_historical_fork(
         responses = _Responses()
 
     monkeypatch.setattr(
-        openai_responses_module,
+        gateway_adapters_module,
         "OpenAI",
         lambda **_kwargs: _Client(),
     )
@@ -273,9 +273,10 @@ def test_project_owner_model_omits_tool_surface_for_historical_fork(
         tools=None,
         responses=ResponsesClient(
             model="owner-model",
-            transport=OpenAIResponsesTransport(
+            transport=QwenResponsesAdapter(
                 base_url="https://api.openai.com/v1",
                 timeout_seconds=60.0,
+                api_key_env="OPENAI_API_KEY",
             ),
         ),
     )

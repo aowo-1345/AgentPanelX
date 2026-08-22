@@ -100,7 +100,7 @@ def _settings(*, owner_prompt: str | None = None) -> Settings:
         update={
             "project_owner_agent": ProjectOwnerAgentSettings(
                 active_model="test",
-                models={"test": ModelSettings(name="test-model")},
+                models={"test": ModelSettings(adapter="qwen", name="test-model")},
             ),
             "runtime": configured.runtime.model_copy(update={"prompts": prompts}),
         }

@@ -147,6 +147,13 @@ flowchart TB
 `PlanningService` 处理 Plan 决策，`DeliveryService` 处理 Milestone、Stage 与 Candidate。
 Project Owner 通过 `ProjectExecutions` 调用它们，不直接接触数据库或 Git adapter。
 
+Bootstrap 根据 `active_model` 的显式 `adapter` 配置构造唯一 `ModelGateway`。Gateway 保持
+`ResponsesTransport.create` 边界，在 Workspace 的所有 Feature Runtime 间共享所选 Adapter
+及其惰性 SDK Client/连接池，并由 Workspace 关闭生命周期统一释放。Qwen Adapter 保留现有
+非流式 Responses、SDK 重试与异常归一化语义，不发送或解释缓存控制字段。Gateway 只在一次
+逻辑调用的最外层写一条安全的 Token/耗时事件；Loguru 是应用级基础设置，文件按日期写入
+全局 `.logs/` 并保留三天，日志失败不改变模型调用结果。
+
 Planning、Delivery 与 Project Runtime Context 各自在 `models.py` 中持有自己的纯业务模型；
 SQLite Repository 只依赖这些无副作用模型。跨越多个能力的 Runtime State、Execution Event
 与状态变更原因继续由 `domains/` 承载。
@@ -514,6 +521,7 @@ flowchart LR
 | Delegated Agent Collaboration | `src/agentplanex/services/agent_collaboration.py` |
 | Delivery 状态机与私有 Stage 执行 | `src/agentplanex/services/delivery/` |
 | EventBus 与 Timeline | `src/agentplanex/services/event_bus.py`, `infrastructure/sqlite/timeline.py` |
+| Model Gateway、Provider Adapter 与应用日志 | `src/agentplanex/infrastructure/model_gateway/`, `infrastructure/logging.py` |
 | Git / worktree 基础设施 | `src/agentplanex/infrastructure/git_repository.py`, `workspace_git.py`, `agent_workspace.py` |
 | React Board / Workspace | `frontend/src/pages/BoardPage.tsx`, `WorkspacePage.tsx` |
 | Agent-native Skills | `.codex/skills/agentplanex-project-observe/`, `agentplanex-project-control/`, `agentplanex-project-attribution/` |
