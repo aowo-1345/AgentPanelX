@@ -147,6 +147,26 @@ flowchart TB
 `PlanningService` 处理 Plan 决策，`DeliveryService` 处理 Milestone、Stage 与 Candidate。
 Project Owner 通过 `ProjectExecutions` 调用它们，不直接接触数据库或 Git adapter。
 
+Bootstrap 根据 `active_model` 的显式 `adapter` 配置构造唯一 `ModelGateway`。Gateway 保持
+`ResponsesTransport.create` 边界，在 Workspace 的所有 Feature Runtime 间共享所选 Adapter
+及其惰性 SDK Client/连接池，并由 Workspace 关闭生命周期统一释放。Qwen Adapter 保留现有
+非流式 Responses、SDK 重试与异常归一化语义，不发送或解释缓存控制字段。Gateway 只在一次
+逻辑调用的最外层写一条安全的 Token/耗时事件；Loguru 是应用级基础设置，文件按日期写入
+全局 `.logs/` 并保留三天，日志失败不改变模型调用结果。
+
+同一个 Gateway 也可以显式绑定通用 OpenAI Responses Adapter；`base_url` 决定它连接官方
+Endpoint 还是用户管理的兼容本地代理，Bootstrap 不探测、不动态切换、也不做跨 Adapter
+回退。Runtime 从持久化的 `project_owner_session_id` 按 Owner 与 Summary 两种用途分别派生
+稳定的不透明 affinity，并只放入当前 `ResponsesRequest`。OpenAI Adapter 将它映射为
+`prompt_cache_key`，Qwen Adapter 忽略它；该值不成为新的 SQLite 或 Web Contract。Provider
+返回缓存 usage 时，Gateway 记录对应 Token 数，但不记录 affinity、Prompt、Response、Tool
+内容、call ID、request ID 或凭据。
+
+Tool 参数仍由同一 Pydantic Contract 在 Runtime 强制校验；面向严格函数调用的 Provider
+Schema 会展开带 sibling metadata 的本地 `$ref`，无法由 OpenAI JSON Schema 子集表达的
+跨集合约束仅作为描述提供，不能取代执行前的 Runtime 校验。已完成的 Responses output 在
+下一轮作为 input 重放时会移除输出态 `status`，同时保留 Tool `call_id` 关联。
+
 Planning、Delivery 与 Project Runtime Context 各自在 `models.py` 中持有自己的纯业务模型；
 SQLite Repository 只依赖这些无副作用模型。跨越多个能力的 Runtime State、Execution Event
 与状态变更原因继续由 `domains/` 承载。
@@ -521,6 +541,7 @@ flowchart LR
 | Delegated Agent Collaboration、Catalog 与 Plan / Milestone Hard Gate | `src/agentplanex/services/agent_collaboration/` |
 | Delivery 状态机与私有 Stage 执行 | `src/agentplanex/services/delivery/` |
 | EventBus 与 Timeline | `src/agentplanex/services/event_bus.py`, `infrastructure/sqlite/timeline.py` |
+| Model Gateway、Provider Adapter 与应用日志 | `src/agentplanex/infrastructure/model_gateway/`, `infrastructure/logging.py` |
 | Git / worktree 基础设施 | `src/agentplanex/infrastructure/git_repository.py`, `workspace_git.py`, `agent_workspace.py` |
 | React Board / Workspace | `frontend/src/pages/BoardPage.tsx`, `WorkspacePage.tsx` |
 | Agent-native Skills | `.codex/skills/agentplanex-project-observe/`, `agentplanex-project-control/`, `agentplanex-project-attribution/` |

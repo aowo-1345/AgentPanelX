@@ -1,12 +1,11 @@
 """Synchronous in-process event distribution."""
 
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from agentplanex.domains.execution_event import ExecutionEvent
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from agentplanex.domains.execution_event import ExecutionEvent
 
 type EventHandler = Callable[[ExecutionEvent], None]
 
@@ -22,9 +21,7 @@ class EventBus:
                 handler(event)
             except Exception:
                 logger.exception(
-                    "Execution event handler failed",
-                    extra={
-                        "triage_id": event.triage_id,
-                        "event_type": event.event_type.value,
-                    },
+                    "Execution event handler failed triage_id={} event_type={}",
+                    event.triage_id,
+                    event.event_type.value,
                 )

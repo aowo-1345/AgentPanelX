@@ -17,7 +17,7 @@ from agentplanex.project_owner_agent.context.compaction import (
     generate_summary,
 )
 from agentplanex.project_owner_agent.context.models import MessageHistory, SummaryHistory
-from agentplanex.project_owner_agent.context.rendering import render_owner_context, render_summary
+from agentplanex.project_owner_agent.context.rendering import render_checkpoint, render_summary
 from agentplanex.project_owner_agent.contracts import Message
 from agentplanex.project_owner_agent.tools import ToolCatalog
 from agentplanex.services.project_runtime_context.models import OwnerActivation
@@ -133,6 +133,7 @@ class OwnerContextManager:
         runtime_context: ProjectRuntimeState,
         activation: OwnerActivation,
         messages: Sequence[Message],
+        invocation_text: str,
         revision: object,
         has_source_summary: bool,
         policy: OwnerContextPolicy,
@@ -143,6 +144,13 @@ class OwnerContextManager:
         self._runtime_context = runtime_context
         self._activation = activation
         self._messages = [dict(message) for message in messages]
+        invocation = invocation_text.strip()
+        if not invocation:
+            raise ValueError("Owner invocation text must not be empty")
+        self._invocation_message: Message = {
+            "role": "developer",
+            "content": invocation,
+        }
         self._revision = revision
         self._policy = policy
         self._tools = tools
@@ -178,13 +186,13 @@ class OwnerContextManager:
             runtime=runtime,
             runtime_context=runtime_context,
             activation=activation,
-            messages=render_owner_context(
+            messages=render_checkpoint(
                 system_prompt=snapshot.system_prompt,
                 summary=snapshot.summary,
                 message_history=snapshot.message_history,
-                invocation_text=invocation_text,
                 summary_context_header=policy.summary_context_header,
             ),
+            invocation_text=invocation_text,
             revision=loaded.revision,
             has_source_summary=snapshot.summary is not None,
             policy=policy,
@@ -197,9 +205,10 @@ class OwnerContextManager:
 
         if query_index < 0:
             raise ValueError("query_index must not be negative")
-        frozen = tuple(dict(message) for message in self._messages)
-        if not frozen or frozen[0].get("role") != "system":
+        persisted = tuple(dict(message) for message in self._messages)
+        if not persisted or persisted[0].get("role") != "system":
             raise RuntimeError("Owner context must start with a System Prompt")
+        frozen = self._with_invocation(persisted)
         estimate = count_tokens(
             self._policy.model_name,
             frozen,
@@ -252,7 +261,7 @@ class OwnerContextManager:
         self._revision = committed.revision
         self._has_source_summary = True
         self._messages = [
-            dict(frozen[0]),
+            dict(persisted[0]),
             *render_summary(summary, self._policy.summary_context_header),
         ]
         self._record_notice(
@@ -262,7 +271,7 @@ class OwnerContextManager:
             ),
             revision=attempt_revision,
         )
-        return tuple(dict(message) for message in self._messages)
+        return self._with_invocation(self._messages)
 
     def append(self, messages: Sequence[Message]) -> tuple[Message, ...]:
         """Persist messages, then advance the in-memory view and revision."""
@@ -290,4 +299,15 @@ class OwnerContextManager:
             self._activation,
             notice,
             revision=revision,
+        )
+
+    def _with_invocation(
+        self,
+        messages: Sequence[Message],
+    ) -> tuple[Message, ...]:
+        """Append the current Activation envelope without persisting it."""
+
+        return (
+            *(dict(message) for message in messages),
+            dict(self._invocation_message),
         )

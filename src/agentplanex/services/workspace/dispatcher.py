@@ -1,15 +1,14 @@
 """In-process admission and execution for Feature-scoped Runtime work."""
 
-import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from threading import Lock
 
+from loguru import logger
+
 from agentplanex.project_runtime.errors import FeatureBusyError
 from agentplanex.services.workspace.errors import WorkspaceCapacityExhaustedError
-
-_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -86,7 +85,7 @@ class WorkspaceDispatcher:
         try:
             drive()
         except BaseException:
-            _LOGGER.exception("Feature Runtime drive failed for %s", triage_id)
+            logger.exception("Feature Runtime drive failed for {}", triage_id)
             raise
         finally:
             self._release(triage_id)

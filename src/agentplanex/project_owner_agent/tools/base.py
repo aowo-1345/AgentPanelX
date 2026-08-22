@@ -70,7 +70,7 @@ class ToolDefinition[ArgumentsT: ToolArgumentsModel]:
 
     def provider_schema(self) -> ToolSchema:
         """Render the provider schema from the same contract used at Runtime."""
-        parameters = self.arguments_type.model_json_schema()
+        parameters = _inline_local_references(self.arguments_type.model_json_schema())
         parameters.setdefault("required", [])
         return {
             "type": "function",
@@ -134,3 +134,47 @@ class ToolCatalog:
             if tool.name == name:
                 return tool
         raise ValueError(f"Unknown tool: {name!r}")
+
+
+def _inline_local_references(schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve Pydantic's local definitions for strict function providers."""
+
+    definitions = schema.get("$defs", {})
+    if not isinstance(definitions, dict):
+        raise TypeError("Tool argument schema $defs must be an object")
+
+    def expand(value: Any, resolving: frozenset[str]) -> Any:
+        if isinstance(value, list):
+            return [expand(item, resolving) for item in value]
+        if not isinstance(value, dict):
+            return value
+
+        reference = value.get("$ref")
+        if reference is not None:
+            prefix = "#/$defs/"
+            if not isinstance(reference, str) or not reference.startswith(prefix):
+                raise ValueError(f"Tool argument schema has unsupported reference: {reference!r}")
+            name = reference.removeprefix(prefix).replace("~1", "/").replace("~0", "~")
+            if name in resolving:
+                raise ValueError(f"Tool argument schema has a recursive reference: {name!r}")
+            target = definitions.get(name)
+            if not isinstance(target, dict):
+                raise ValueError(f"Tool argument schema reference is missing: {name!r}")
+            resolved = expand(target, resolving | {name})
+            siblings = {
+                key: expand(item, resolving)
+                for key, item in value.items()
+                if key != "$ref"
+            }
+            return {**resolved, **siblings}
+
+        return {
+            key: expand(item, resolving)
+            for key, item in value.items()
+            if key != "$defs"
+        }
+
+    expanded = expand(schema, frozenset())
+    if not isinstance(expanded, dict):
+        raise TypeError("Tool argument schema must be an object")
+    return expanded

@@ -1,12 +1,15 @@
-"""Shared OpenAI SDK transport for Responses requests."""
+"""Provider-specific adapters for Responses-compatible endpoints."""
 
 import os
 from collections.abc import Mapping
 from threading import Lock
 from typing import Literal, cast
 
-from openai import Omit, OpenAI, OpenAIError, omit
+from openai import OpenAI, OpenAIError
 from openai.types.responses import FunctionToolParam, ResponseInputParam
+from openai.types.responses.response_create_params import (
+    ResponseCreateParamsNonStreaming,
+)
 from openai.types.shared_params import Reasoning
 
 from agentplanex.project_owner_agent.exception import ModelGatewayError
@@ -18,15 +21,19 @@ type ReasoningEffort = Literal[
 type ServiceTier = Literal["auto", "default", "flex", "scale", "priority"]
 
 
-class OpenAIResponsesTransport:
-    """Send Owner and Summary requests through one shared OpenAI client."""
+class _OpenAICompatibleResponsesAdapter:
+    """Shared SDK mechanics for one lazily-created Responses connection pool."""
+
+    name: str
+    reports_cache_usage: bool
+    accepts_cache_affinity: bool
 
     def __init__(
         self,
         *,
         base_url: str,
         timeout_seconds: float,
-        api_key_env: str = "OPENAI_API_KEY",
+        api_key_env: str,
         http_headers: Mapping[str, str] | None = None,
         reasoning_effort: ReasoningEffort | None = None,
         service_tier: ServiceTier | None = "priority",
@@ -42,39 +49,28 @@ class OpenAIResponsesTransport:
 
     def create(self, request: ResponsesRequest) -> object:
         client = self._client()
-        reasoning: Reasoning | Omit = (
-            {"effort": self.reasoning_effort}
-            if self.reasoning_effort is not None
-            else omit
-        )
-        service_tier = self.service_tier if self.service_tier is not None else omit
+        params: ResponseCreateParamsNonStreaming = {
+            "model": request.model,
+            "instructions": request.instructions,
+            "input": cast(ResponseInputParam, list(request.input)),
+            "store": False,
+            "stream": False,
+        }
+        if self.reasoning_effort is not None:
+            params["reasoning"] = cast(Reasoning, {"effort": self.reasoning_effort})
+        if self.service_tier is not None:
+            params["service_tier"] = self.service_tier
+        if request.tools:
+            params["tools"] = cast(list[FunctionToolParam], list(request.tools))
+            params["tool_choice"] = request.tool_choice
+            params["parallel_tool_calls"] = True
+        cache_key = request.cache_affinity_key if self.accepts_cache_affinity else None
+        if cache_key is not None:
+            params["prompt_cache_key"] = cache_key
         try:
-            if request.tools:
-                return client.responses.create(
-                    model=request.model,
-                    instructions=request.instructions,
-                    input=cast(ResponseInputParam, list(request.input)),
-                    tools=cast(list[FunctionToolParam], list(request.tools)),
-                    store=False,
-                    stream=False,
-                    reasoning=reasoning,
-                    service_tier=service_tier,
-                    tool_choice=request.tool_choice,
-                    parallel_tool_calls=True,
-                )
-            return client.responses.create(
-                model=request.model,
-                instructions=request.instructions,
-                input=cast(ResponseInputParam, list(request.input)),
-                store=False,
-                stream=False,
-                reasoning=reasoning,
-                service_tier=service_tier,
-            )
+            return client.responses.create(**params)
         except OpenAIError as error:
-            raise ModelGatewayError(
-                f"Responses gateway request failed: {error}"
-            ) from error
+            raise ModelGatewayError(f"Responses gateway request failed: {error}") from error
 
     def close(self) -> None:
         """Close the shared SDK client when the application shuts down."""
@@ -108,3 +104,19 @@ class OpenAIResponsesTransport:
                             f"Failed to initialize Responses gateway: {error}"
                         ) from error
         return self.client
+
+
+class QwenResponsesAdapter(_OpenAICompatibleResponsesAdapter):
+    """Qwen Responses without AgentPlaneX cache controls or metrics."""
+
+    name = "qwen"
+    reports_cache_usage = False
+    accepts_cache_affinity = False
+
+
+class OpenAIResponsesAdapter(_OpenAICompatibleResponsesAdapter):
+    """Official or locally proxied OpenAI Responses with cache affinity."""
+
+    name = "openai"
+    reports_cache_usage = True
+    accepts_cache_affinity = True

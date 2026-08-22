@@ -20,6 +20,7 @@ from agentplanex.infrastructure.codex import (
 )
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteMessageHistoryRepository,
     SQLiteProjectOwnerAgentRepository,
 )
 from agentplanex.project_owner_agent.contracts import ActionOutput, Message
@@ -100,7 +101,7 @@ def _settings(*, owner_prompt: str | None = None) -> Settings:
         update={
             "project_owner_agent": ProjectOwnerAgentSettings(
                 active_model="test",
-                models={"test": ModelSettings(name="test-model")},
+                models={"test": ModelSettings(adapter="qwen", name="test-model")},
             ),
             "runtime": configured.runtime.model_copy(update={"prompts": prompts}),
         }
@@ -137,7 +138,9 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
     activation = runtime.submit_message("Clarify the current project work.")
     runtime.drive_owner_model()
 
-    instructions = str(_RecordingOwnerModel.queries[-1][0]["content"])
+    query = _RecordingOwnerModel.queries[-1]
+    instructions = str(query[0]["content"])
+    invocation = str(query[-1]["content"])
     skill_path = resolve_observation_skill()
     assert "Project Owner" in instructions
     assert "three canonical project-root Specs" in instructions
@@ -157,13 +160,40 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
     assert "one or more appropriate Tool Actions" in _normalized(instructions)
     assert "MULTIPLE tool calls in a single response" in _normalized(instructions)
     assert "tool calls are independent" in instructions
-    assert "agentplanex-project-observe" in instructions
     assert skill_path.is_file()
-    assert f'"observation_skill": "{skill_path}"' in instructions
-    assert f'"project_root": "{project_path.resolve()}"' in instructions
-    assert f'"triage_id": "{activation.triage_id}"' in instructions
-    assert f'"activation_id": "{activation.activation_id}"' in instructions
-    assert '"operation": "owner_activation:USER_INPUT"' in instructions
+    assert query[-1]["role"] == "developer"
+    assert "agentplanex-project-observe" in invocation
+    assert f'"observation_skill": "{skill_path}"' in invocation
+    assert f'"project_root": "{project_path.resolve()}"' in invocation
+    assert f'"triage_id": "{activation.triage_id}"' in invocation
+    assert f'"activation_id": "{activation.activation_id}"' in invocation
+    assert '"operation": "owner_activation:USER_INPUT"' in invocation
+
+    next_activation = runtime.submit_message("Continue with the same Owner contract.")
+    runtime.drive_owner_model()
+    next_query = _RecordingOwnerModel.queries[-1]
+    next_invocation = str(next_query[-1]["content"])
+
+    assert next_query[0]["content"] == query[0]["content"]
+    assert next_query[-1]["role"] == "developer"
+    assert next_invocation != invocation
+    assert f'"activation_id": "{next_activation.activation_id}"' in next_invocation
+    assert f'"activation_id": "{activation.activation_id}"' not in next_invocation
+
+    database = SQLiteDatabase.for_project(project_path)
+    owners = SQLiteProjectOwnerAgentRepository()
+    histories = SQLiteMessageHistoryRepository()
+    with database.read_only_connection() as connection:
+        owner = owners.get_by_triage_id(connection, activation.triage_id)
+        assert owner is not None
+        persisted = histories.list_by_session_id(
+            connection,
+            owner.project_owner_session_id,
+        )
+    assert "AgentPlaneX invocation envelope" not in json.dumps(
+        [history.message for history in persisted],
+        ensure_ascii=False,
+    )
 
 
 def test_existing_owner_prompt_remains_the_session_contract_after_restart(
@@ -198,8 +228,9 @@ def test_existing_owner_prompt_remains_the_session_contract_after_restart(
 
     runtime.drive_owner_model()
 
-    instructions = str(_RecordingOwnerModel.queries[-1][0]["content"])
-    assert instructions.startswith(old_prompt)
+    query = _RecordingOwnerModel.queries[-1]
+    instructions = str(query[0]["content"])
+    assert instructions == old_prompt
     assert current_prompt not in instructions
     with database.read_only_connection() as connection:
         owner = owners.get_by_triage_id(connection, activation.triage_id)
