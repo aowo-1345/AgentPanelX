@@ -679,12 +679,14 @@ def test_attribution_uses_the_summary_available_at_its_checkpoint(
     runtime.submit_message("first-history " * 600)
     first = runtime.drive_owner_model()
     checkpoint = runtime.submit_message("historical checkpoint")
-    runtime.drive_owner_model()
+    at_checkpoint = runtime.drive_owner_model()
     runtime.submit_message("future-history " * 600)
     future = runtime.drive_owner_model()
 
     assert first.activation is not None
     assert first.activation.summary_id is not None
+    assert at_checkpoint.activation is not None
+    assert at_checkpoint.activation.summary_id is not None
     assert future.activation is not None
     assert future.activation.summary_id is not None
     database = SQLiteDatabase.for_project(project_path)
@@ -695,17 +697,16 @@ def test_attribution_uses_the_summary_available_at_its_checkpoint(
     )
     selected_summary_id = contexts.latest_summary_id_through(checkpoint.message_id)
 
-    assert selected_summary_id == first.activation.summary_id
+    assert selected_summary_id == at_checkpoint.activation.summary_id
     assert contexts.restore(checkpoint.message_id).summary is None
     restored = contexts.restore(
         checkpoint.message_id,
         summary_id=selected_summary_id,
     )
     assert restored.summary is not None
-    assert restored.summary.summary_id == first.activation.summary_id
-    assert restored.message_history[-1].message[-1]["content"] == (
-        "historical checkpoint"
-    )
+    assert restored.summary.summary_id == at_checkpoint.activation.summary_id
+    assert restored.summary.covered_through_message_id == checkpoint.message_id
+    assert restored.message_history == ()
     with pytest.raises(ValueError, match="must not follow activation message"):
         contexts.restore(
             checkpoint.message_id,
