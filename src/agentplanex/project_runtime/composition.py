@@ -29,7 +29,9 @@ from agentplanex.services.plan_hard_gate import CodexPlanHardGate
 from agentplanex.services.planning import PlanningService
 from agentplanex.services.project_runtime import ProjectRuntimeService
 from agentplanex.services.project_runtime_context import ProjectRuntimeContext
-from agentplanex.services.project_runtime_context._owner import _OwnerRuntime
+from agentplanex.services.project_runtime_context._assembly import (
+    prepare_project_runtime_context,
+)
 from agentplanex.settings import Settings
 
 
@@ -84,7 +86,7 @@ def _compose_command_graph(
     responses_transport: ResponsesTransport,
     stage_executor: StageExecutor | None,
 ) -> _ProjectCommandGraph:
-    """Build, bind, and seal the sole command graph for one adapter instance."""
+    """Build the sole sealed command graph for one adapter instance."""
     project_path = project_path.resolve()
     if not project_path.is_dir():
         raise ValueError(f"Project path is not a directory: {project_path}")
@@ -93,18 +95,27 @@ def _compose_command_graph(
     database = SQLiteDatabase.for_project(project_path)
     initialize_schema(database)
     event_bus = EventBus((SQLiteTimelineRecorder(database),))
-    context = ProjectRuntimeContext(
-        project_path=project_path,
-        database=database,
-        event_bus=event_bus,
-    )
-
     observation_skill = resolve_observation_skill()
     collaboration = AgentCollaborationService.from_settings(
         project_path,
         settings.runtime,
         observation_skill=observation_skill,
     )
+    model_settings = settings.project_owner_agent.selected_model
+    assembly = prepare_project_runtime_context(
+        project_path=project_path,
+        database=database,
+        event_bus=event_bus,
+        settings=settings,
+        approval_mode=approval_mode,
+        responses=ResponsesClient(
+            model=model_settings.name,
+            transport=responses_transport,
+        ),
+        observation_skill=collaboration.observation_skill,
+        prompts=collaboration.prompts,
+    )
+    context = assembly.context
     hard_gate = CodexPlanHardGate(collaboration)
     planning = PlanningService(
         project_path=project_path,
@@ -139,26 +150,10 @@ def _compose_command_graph(
         collaboration=collaboration,
         event_bus=event_bus,
     )
-    context._bind_tool_executor(executions.execute)
-    model_settings = settings.project_owner_agent.selected_model
-    owner = _OwnerRuntime(
-        database=database,
-        settings=settings,
-        approval_mode=approval_mode,
+    assembly.complete(
         tools=executions.tools,
         tool_executor=executions.execute,
-        event_bus=event_bus,
-        responses=ResponsesClient(
-            model=model_settings.name,
-            transport=responses_transport,
-        ),
-        observation_skill=collaboration.observation_skill,
-        prompts=collaboration.prompts,
-        load_state=context._reload_state,
-        set_activation_initial_summary=context._set_owner_activation_initial_summary,
     )
-    context._bind_owner_runtime(owner)
-    context._seal()
     service = ProjectRuntimeService(
         planning=planning,
         delivery=delivery,

@@ -82,30 +82,24 @@ class ProjectRuntimeContext:
         if database_project_path != self.project_path:
             raise ValueError("Runtime Context database does not belong to project path")
 
-    def _bind_owner_runtime(
+    def _complete(
         self,
+        *,
         owner_runtime: _OwnerRuntime,
-    ) -> None:
-        """Bind the private Owner runtime during composition only."""
-        if self._sealed or self._owner_runtime is not None:
-            raise RuntimeError("Project Runtime Context dependencies are already bound")
-        self._owner_runtime = owner_runtime
-
-    def _bind_tool_executor(
-        self,
         tool_executor: Callable[
             [ProjectRuntimeState, Action],
             ToolExecutionResult,
         ],
     ) -> None:
-        """Bind the Owner-independent Tool path during composition only."""
-        if self._sealed or self._tool_executor is not None:
-            raise RuntimeError("Project Runtime Context dependencies are already bound")
+        """Install the private execution graph atomically during composition."""
+        if (
+            self._sealed
+            or self._owner_runtime is not None
+            or self._tool_executor is not None
+        ):
+            raise RuntimeError("Project Runtime Context composition is already complete")
+        self._owner_runtime = owner_runtime
         self._tool_executor = tool_executor
-
-    def _seal(self) -> None:
-        if self._owner_runtime is None or self._tool_executor is None:
-            raise RuntimeError("Project Runtime Context composition is incomplete")
         self._sealed = True
 
     @contextmanager
