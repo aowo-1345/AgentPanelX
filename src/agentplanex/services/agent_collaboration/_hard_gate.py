@@ -18,11 +18,13 @@ from agentplanex.infrastructure.codex import (
     CodexTurnRequest,
     CodexTurnTransport,
 )
-from agentplanex.services.agent_invocation import (
+from agentplanex.services.agent_collaboration._catalog import (
     AgentCard,
+    DelegatedAgentRole,
+)
+from agentplanex.services.agent_invocation import (
     AgentInvocationError,
     AgentPromptCatalog,
-    DelegatedAgentRole,
     InvocationContract,
     InvocationRole,
 )

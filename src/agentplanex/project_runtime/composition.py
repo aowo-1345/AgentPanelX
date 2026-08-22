@@ -20,8 +20,9 @@ from agentplanex.project_runtime.executions import (
 )
 from agentplanex.project_runtime.runtime import ProjectRuntime
 from agentplanex.services.agent_collaboration import AgentCollaborationService
+from agentplanex.services.agent_collaboration._catalog import AgentCatalog
+from agentplanex.services.agent_collaboration._hard_gate import CodexHardGate
 from agentplanex.services.agent_invocation import (
-    AgentCatalog,
     AgentPromptCatalog,
     resolve_observation_skill,
 )
@@ -31,7 +32,6 @@ from agentplanex.services.delivery._stage_executor import (
     StageExecutor,
 )
 from agentplanex.services.event_bus import EventBus
-from agentplanex.services.hard_gate import CodexHardGate
 from agentplanex.services.planning._service import PlanningService
 from agentplanex.services.project_runtime import ProjectRuntimeService
 from agentplanex.services.project_runtime_context._assembly import (

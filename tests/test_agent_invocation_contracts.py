@@ -25,8 +25,9 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.project_owner_agent.contracts import ActionOutput, Message
 from agentplanex.project_owner_agent.exception import ReplyToHuman
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
+from agentplanex.services.agent_collaboration._catalog import AgentCatalog
+from agentplanex.services.agent_collaboration._hard_gate import CodexHardGate
 from agentplanex.services.agent_invocation import (
-    AgentCatalog,
     AgentPromptCatalog,
     resolve_observation_skill,
 )
@@ -42,7 +43,6 @@ from agentplanex.services.delivery.models import (
     StageRun,
     StageRunStatus,
 )
-from agentplanex.services.hard_gate import CodexHardGate
 from agentplanex.services.planning.contracts import PlanReviewRequest
 from agentplanex.services.planning.models import PlanDocument, PlanSubject
 from agentplanex.services.project_runtime_context import _owner as project_owner_service

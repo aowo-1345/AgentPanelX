@@ -509,9 +509,8 @@ flowchart LR
 | Owner Tool Contract 与执行 | `src/agentplanex/project_owner_agent/tools/base.py`, `project_runtime/executions/` |
 | Owner model context / Rolling Summary | `src/agentplanex/project_owner_agent/context/`, `services/project_runtime_context/_owner.py` |
 | Planning 与 Plan identity | `src/agentplanex/services/planning/` |
-| Plan / Milestone Exact-subject Hard Gate | `src/agentplanex/services/hard_gate.py` |
 | Agent Invocation Contract 与 Prompt | `src/agentplanex/services/agent_invocation.py` |
-| Delegated Agent Collaboration | `src/agentplanex/services/agent_collaboration.py` |
+| Delegated Agent Collaboration、Catalog 与 Plan / Milestone Hard Gate | `src/agentplanex/services/agent_collaboration/` |
 | Delivery 状态机与私有 Stage 执行 | `src/agentplanex/services/delivery/` |
 | EventBus 与 Timeline | `src/agentplanex/services/event_bus.py`, `infrastructure/sqlite/timeline.py` |
 | Git / worktree 基础设施 | `src/agentplanex/infrastructure/git_repository.py`, `workspace_git.py`, `agent_workspace.py` |
