@@ -668,7 +668,7 @@ def test_attribution_uses_the_summary_available_at_its_checkpoint(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    settings = _settings()
+    settings = _settings(capacity_tokens=3_000)
     runtime = create_project_runtime_control(
         project_path=project_path,
         settings=settings,
