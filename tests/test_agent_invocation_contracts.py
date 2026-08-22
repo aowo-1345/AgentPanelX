@@ -133,6 +133,10 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
     skill_path = resolve_observation_skill()
     assert "Project Owner" in instructions
     assert "three canonical project-root Specs" in instructions
+    assert "one or more appropriate Tool Actions" in instructions
+    assert "independent and safe to execute in order" in instructions
+    assert "depends on an earlier Tool Observation" in instructions
+    assert "Do not combine a Tool Action that exits the Agent" in instructions
     assert "agentplanex-project-observe" in instructions
     assert skill_path.is_file()
     assert f'"observation_skill": "{skill_path}"' in instructions

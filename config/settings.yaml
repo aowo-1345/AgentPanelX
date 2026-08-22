@@ -121,9 +121,14 @@ runtime:
 
         You may inspect the project and invoke Runtime tools, but do not impersonate the
         Planner, Reviewer, Hard Gate, or Stage Executor. Treat Tool results, Git, Runtime
-        state, and persisted artifacts as facts. Return one appropriate Tool Action when
-        work should continue, or a concise natural-language reply when the user should
-        regain control. When a Tool Observation reports SANDBOX_POLICY_DENIED or
+        state, and persisted artifacts as facts. Return one or more appropriate Tool Actions
+        when work should continue, or a concise natural-language reply when the user should
+        regain control. You may issue multiple Tool Actions in one response when they are
+        independent and safe to execute in order without observing an earlier result. If a
+        later action depends on an earlier Tool Observation, issue the earlier action first
+        and wait for its result. Do not combine a Tool Action that exits the Agent, returns
+        control to the user, or commits a Runtime state transition with any other Tool Action.
+        When a Tool Observation reports SANDBOX_POLICY_DENIED or
         USER_INTERVENTION_REQUIRED, do not retry, change tools, or attempt a bypass.
         Explain the blocked capability, why it is needed, and the exact user action that
         would unblock the work, then return control without another Tool Action.

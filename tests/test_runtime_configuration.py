@@ -290,6 +290,55 @@ def test_responses_transport_applies_selected_gateway_configuration(
     assert request["service_tier"] is omit
 
 
+def test_responses_transport_allows_multiple_tool_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[dict[str, object]] = []
+
+    class _Responses:
+        def create(self, **kwargs: object) -> object:
+            requests.append(kwargs)
+            return object()
+
+    class _Client:
+        responses = _Responses()
+
+    monkeypatch.setenv("TOOLCODE_API_KEY", "test-secret")
+    monkeypatch.setattr(
+        openai_responses_module,
+        "OpenAI",
+        lambda **_kwargs: _Client(),
+    )
+    transport = OpenAIResponsesTransport(
+        base_url="https://toolcode.example",
+        timeout_seconds=60.0,
+        api_key_env="TOOLCODE_API_KEY",
+    )
+
+    transport.create(
+        ResponsesRequest(
+            model="gpt-5.6-sol",
+            instructions="Inspect the project.",
+            input=({"role": "user", "content": "Inspect independent files."},),
+            tools=(
+                {
+                    "type": "function",
+                    "name": "bash",
+                    "description": "Run one shell command.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                    },
+                },
+            ),
+            tool_choice="auto",
+        )
+    )
+
+    assert requests[0]["parallel_tool_calls"] is True
+
+
 def test_responses_transport_exposes_final_sdk_failure_as_gateway_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

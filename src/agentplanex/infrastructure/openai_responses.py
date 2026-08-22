@@ -60,7 +60,7 @@ class OpenAIResponsesTransport:
                     reasoning=reasoning,
                     service_tier=service_tier,
                     tool_choice=request.tool_choice,
-                    parallel_tool_calls=False,
+                    parallel_tool_calls=True,
                 )
             return client.responses.create(
                 model=request.model,

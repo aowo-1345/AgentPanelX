@@ -365,3 +365,60 @@ def test_model_tool_call_normalizes_empty_conversation_id_before_action(
             },
         }
     ]
+
+
+def test_model_preserves_call_ids_for_multiple_tool_calls(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    tools = compose_test_executions(
+        project_path,
+        load_settings(DEFAULT_SETTINGS_PATH).runtime,
+    ).executions.tools
+
+    class MultipleToolCallTransport:
+        def create(self, _request: ResponsesRequest) -> object:
+            return {
+                "object": "response",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "name": "bash",
+                        "call_id": "call-read-requirements",
+                        "arguments": json.dumps(
+                            {"command": "sed -n '1,80p' requirements.md"}
+                        ),
+                    },
+                    {
+                        "type": "function_call",
+                        "name": "bash",
+                        "call_id": "call-read-architecture",
+                        "arguments": json.dumps(
+                            {"command": "sed -n '1,80p' architecture.md"}
+                        ),
+                    },
+                ],
+            }
+
+    model = ProjectOwnerModel(
+        tools=tools,
+        responses=ResponsesClient(
+            model="test-model",
+            transport=MultipleToolCallTransport(),
+        ),
+    )
+
+    message = model.query([{"role": "system", "content": "Test Owner."}])
+
+    assert message["extra"]["actions"] == [
+        {
+            "tool": "bash",
+            "call_id": "call-read-requirements",
+            "arguments": {"command": "sed -n '1,80p' requirements.md"},
+        },
+        {
+            "tool": "bash",
+            "call_id": "call-read-architecture",
+            "arguments": {"command": "sed -n '1,80p' architecture.md"},
+        },
+    ]

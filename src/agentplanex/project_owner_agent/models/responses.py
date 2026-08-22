@@ -109,11 +109,6 @@ class ProjectOwnerModel:
             if self.tools is not None
             else []
         )
-        if len(actions) > 1:
-            _raise_format_error(
-                "Response must contain at most one tool call.",
-                message,
-            )
         if actions:
             message["extra"] = {"actions": actions}
             return message
