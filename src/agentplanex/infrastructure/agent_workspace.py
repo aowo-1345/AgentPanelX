@@ -102,8 +102,11 @@ class AgentWorkspaceStore:
         self._ensure_runtime_git_excluded()
         workspace_id = uuid4().hex
         path = self.workspaces_root / workspace_id
-        (path / "documents").mkdir(parents=True)
-        (path / "outbox").mkdir()
+        try:
+            (path / "documents").mkdir(parents=True)
+            (path / "outbox").mkdir()
+        except OSError as error:
+            raise AgentWorkspaceError("Cannot create Agent workspace") from error
         metadata = _WorkspaceMetadata(
             version=1,
             agent_id=agent_id,
@@ -148,7 +151,10 @@ class AgentWorkspaceStore:
         invocation_id = uuid4().hex
         outbox = self._bounded_path(workspace.path, PurePosixPath("outbox"))
         result_path = outbox / invocation_id / "result.json"
-        result_path.parent.mkdir(parents=True)
+        try:
+            result_path.parent.mkdir(parents=True)
+        except OSError as error:
+            raise AgentWorkspaceError("Cannot create Agent invocation Outbox") from error
         return AgentInvocation(
             invocation_id=invocation_id,
             workspace=workspace,
@@ -383,12 +389,22 @@ class AgentWorkspaceStore:
         return content
 
     def _ensure_runtime_git_excluded(self) -> None:
-        result = subprocess.run(
-            ["git", "-C", str(self.project_path), "rev-parse", "--git-path", "info/exclude"],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(self.project_path),
+                    "rev-parse",
+                    "--git-path",
+                    "info/exclude",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as error:
+            raise AgentWorkspaceError("Cannot inspect project-local Git exclude") from error
         if result.returncode != 0:
             return
         exclude_path = Path(result.stdout.strip())
@@ -410,7 +426,10 @@ class AgentWorkspaceStore:
     def _atomic_write(path: Path, content: str) -> None:
         temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
         try:
-            temporary.write_text(content, encoding="utf-8")
-            temporary.replace(path)
-        finally:
-            temporary.unlink(missing_ok=True)
+            try:
+                temporary.write_text(content, encoding="utf-8")
+                temporary.replace(path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        except OSError as error:
+            raise AgentWorkspaceError(f"Cannot write Agent workspace file: {path}") from error

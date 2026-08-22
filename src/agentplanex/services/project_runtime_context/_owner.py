@@ -343,13 +343,14 @@ class _OwnerRuntime:
             step_limit=owner_settings.step_limit,
             max_consecutive_format_errors=owner_settings.max_consecutive_format_errors,
         )
+        invocation = self._invocation_contract(context, activation)
+        if invocation.triage_id != context.triage_id:
+            raise RuntimeError("Owner invocation does not match Runtime context")
         owner_context = OwnerContextManager.restore(
             runtime=self,
             runtime_context=context,
             activation=activation,
-            invocation_text=self.prompts.render_invocation(
-                self._invocation_contract(context, activation)
-            ),
+            invocation_text=self.prompts.render_invocation(invocation),
             policy=OwnerContextPolicy(
                 model_name=owner_settings.selected_model.name,
                 capacity_tokens=owner_settings.context_memory.capacity_tokens,

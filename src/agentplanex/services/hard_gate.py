@@ -183,12 +183,12 @@ class CodexHardGate:
         error_type: type[ValueError],
         subject_name: str,
     ) -> _HardGateReview:
-        workspace = self.workspaces.create(
-            agent_id=self.reviewer.agent_id,
-            profile_digest=self.reviewer.profile_digest,
-        )
-        invocation = self.workspaces.create_invocation(workspace)
         try:
+            workspace = self.workspaces.create(
+                agent_id=self.reviewer.agent_id,
+                profile_digest=self.reviewer.profile_digest,
+            )
+            invocation = self.workspaces.create_invocation(workspace)
             self.transport.run(
                 CodexTurnRequest(
                     thread_id=None,
