@@ -1,4 +1,4 @@
-"""Real Codex-backed Plan Hard Gate using a configured generic Reviewer."""
+"""Codex-backed Exact-subject Hard Gates for Plans and Milestones."""
 
 import json
 from collections.abc import Callable
@@ -9,13 +9,18 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agentplanex.domains.agent_collaboration import (
+    AgentCard,
     AgentCollaborationError,
     AgentRole,
     ArtifactDescriptor,
 )
-from agentplanex.infrastructure.codex import CodexTurnRequest
-from agentplanex.services.agent_collaboration import AgentCollaborationService
-from agentplanex.services.agent_invocation import InvocationContract, InvocationRole
+from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
+from agentplanex.infrastructure.codex import CodexTurnRequest, CodexTurnTransport
+from agentplanex.services.agent_invocation import (
+    AgentPromptCatalog,
+    InvocationContract,
+    InvocationRole,
+)
 from agentplanex.services.delivery.contracts import (
     DeliveryError,
     MilestoneReviewRequest,
@@ -63,12 +68,20 @@ class _HardGateReview:
 
 
 @dataclass(frozen=True, slots=True)
-class CodexPlanHardGate:
-    """Own the protected Plan decision Contract over one configured Reviewer."""
+class CodexHardGate:
+    """Review exact Plan and Milestone subjects in isolated Codex workspaces."""
 
-    collaboration: AgentCollaborationService
+    reviewer: AgentCard
+    workspaces: AgentWorkspaceStore
+    transport: CodexTurnTransport
+    observation_skill: Path
+    prompts: AgentPromptCatalog
 
-    def review(self, request: PlanReviewRequest) -> PlanReviewResult:
+    def __post_init__(self) -> None:
+        if self.reviewer.role is not AgentRole.REVIEWER:
+            raise ValueError("Hard Gate Agent must use the reviewer Contract")
+
+    def review_plan(self, request: PlanReviewRequest) -> PlanReviewResult:
         """Run and validate one isolated Reviewer workspace fail closed."""
         subject = request.subject
 
@@ -161,34 +174,25 @@ class CodexPlanHardGate:
         error_type: type[ValueError],
         subject_name: str,
     ) -> _HardGateReview:
-        card = self.collaboration.catalog.get(
-            self.collaboration.catalog.plan_reviewer_id
-        )
-        if card.role is not AgentRole.REVIEWER:
-            raise RuntimeError("Configured Plan Hard Gate Agent is not a Reviewer")
-        workspace = self.collaboration.workspaces.create(card)
-        invocation = self.collaboration.workspaces.create_invocation(workspace)
+        workspace = self.workspaces.create(self.reviewer)
+        invocation = self.workspaces.create_invocation(workspace)
         try:
-            self.collaboration.transport.run(
+            self.transport.run(
                 CodexTurnRequest(
                     thread_id=None,
                     workspace=workspace.path,
-                    developer_instructions=self.collaboration.prompts.role_instructions(
+                    developer_instructions=self.prompts.role_instructions(
                         role,
-                        profile_instructions=card.profile_instructions,
+                        profile_instructions=self.reviewer.profile_instructions,
                     ),
                     message="\n\n".join(
                         (
-                            self.collaboration.prompts.render_invocation(
+                            self.prompts.render_invocation(
                                 InvocationContract(
                                     role=role,
                                     operation=role.value,
-                                    project_root=(
-                                        self.collaboration.workspaces.project_path
-                                    ),
-                                    observation_skill=(
-                                        self.collaboration.observation_skill
-                                    ),
+                                    project_root=self.workspaces.project_path,
+                                    observation_skill=self.observation_skill,
                                     triage_id=triage_id,
                                     fixed_work_object=fixed_work_object,
                                     workspace={
@@ -218,7 +222,7 @@ class CodexPlanHardGate:
                                     },
                                 )
                             ),
-                            self.collaboration.prompts.task_instructions(role),
+                            self.prompts.task_instructions(role),
                         )
                     ),
                     mentions=mentions(workspace.path),
@@ -226,7 +230,7 @@ class CodexPlanHardGate:
                 )
             )
             manifest = _HardGateManifest.model_validate(
-                self.collaboration.workspaces.read_result_json(invocation)
+                self.workspaces.read_result_json(invocation)
             )
             summary = " ".join(manifest.summary.split())
             required_changes = tuple(
@@ -249,7 +253,7 @@ class CodexPlanHardGate:
                     "Reviewer revise result must contain required changes"
                 )
             artifact = manifest.artifacts[0]
-            audit = self.collaboration.workspaces.output_artifact(
+            audit = self.workspaces.output_artifact(
                 workspace,
                 artifact.path,
                 expected_name="review.md",

@@ -25,7 +25,7 @@ from agentplanex.services.delivery._stage_executor import (
     StageExecutor,
 )
 from agentplanex.services.event_bus import EventBus
-from agentplanex.services.plan_hard_gate import CodexPlanHardGate
+from agentplanex.services.hard_gate import CodexHardGate
 from agentplanex.services.planning._service import PlanningService
 from agentplanex.services.project_runtime import ProjectRuntimeService
 from agentplanex.services.project_runtime_context._assembly import (
@@ -116,13 +116,19 @@ def _compose_command_graph(
         prompts=collaboration.prompts,
     )
     context = assembly.context
-    hard_gate = CodexPlanHardGate(collaboration)
+    hard_gate = CodexHardGate(
+        reviewer=collaboration.catalog.get(collaboration.catalog.plan_reviewer_id),
+        workspaces=collaboration.workspaces,
+        transport=collaboration.transport,
+        observation_skill=collaboration.observation_skill,
+        prompts=collaboration.prompts,
+    )
     planning = PlanningService(
         project_path=project_path,
         context=context,
         git=git,
         event_bus=event_bus,
-        review_plan=hard_gate.review,
+        review_plan=hard_gate.review_plan,
     )
     delivery = DeliveryService(
         project_path=project_path,

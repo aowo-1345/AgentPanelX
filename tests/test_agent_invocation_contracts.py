@@ -38,7 +38,7 @@ from agentplanex.services.delivery.models import (
     StageRun,
     StageRunStatus,
 )
-from agentplanex.services.plan_hard_gate import CodexPlanHardGate
+from agentplanex.services.hard_gate import CodexHardGate
 from agentplanex.services.planning.contracts import PlanReviewRequest
 from agentplanex.services.planning.models import PlanDocument, PlanSubject
 from agentplanex.services.project_runtime_context import _owner as project_owner_service
@@ -423,7 +423,13 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
     collaboration = AgentCollaborationService.from_settings(
         project_path, _settings().runtime
     )
-    gate = CodexPlanHardGate(collaboration)
+    gate = CodexHardGate(
+        reviewer=collaboration.catalog.get(collaboration.catalog.plan_reviewer_id),
+        workspaces=collaboration.workspaces,
+        transport=collaboration.transport,
+        observation_skill=collaboration.observation_skill,
+        prompts=collaboration.prompts,
+    )
     specs = tuple(
         project_path / name
         for name in ("architecture.md", "requirements.md", "roadmap.md")
@@ -437,7 +443,7 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
             for spec in specs
         )
     )
-    gate.review(
+    gate.review_plan(
         PlanReviewRequest(triage_id="triage-gate", subject=plan_subject)
     )
     gate.review_milestones(
