@@ -20,9 +20,8 @@ class EventBus:
             try:
                 handler(event)
             except Exception:
-                logger.bind(
-                    triage_id=event.triage_id,
-                    event_type=event.event_type.value,
-                ).exception(
-                    "Execution event handler failed"
+                logger.exception(
+                    "Execution event handler failed triage_id={} event_type={}",
+                    event.triage_id,
+                    event.event_type.value,
                 )

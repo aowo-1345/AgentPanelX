@@ -10,7 +10,7 @@ from typing import ClassVar, cast
 import httpx
 import pytest
 import yaml
-from openai import APIConnectionError, omit
+from openai import APIConnectionError
 
 import agentplanex.infrastructure.local_shell as local_shell_module
 import agentplanex.infrastructure.model_gateway.adapters as gateway_adapters_module
@@ -292,7 +292,7 @@ def test_responses_transport_applies_selected_gateway_configuration(
     assert isinstance(request, dict)
     assert request["model"] == "gpt-5.6-sol"
     assert request["reasoning"] == {"effort": "high"}
-    assert request["service_tier"] is omit
+    assert "service_tier" not in request
     assert "prompt_cache_key" not in request
 
 
@@ -589,7 +589,7 @@ def test_talk_tool_renders_configured_agent_cards_with_stable_schema(
         "conversation_id"
     ]
     assert {option.get("type") for option in conversation_schema["anyOf"]} == {
-        None,
+        "string",
         "null",
     }
 

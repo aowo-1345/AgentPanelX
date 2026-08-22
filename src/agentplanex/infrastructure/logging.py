@@ -29,7 +29,7 @@ def configure_logging(log_directory: Path = Path(".logs")) -> None:
                 rotation="00:00",
                 retention="3 days",
                 encoding="utf-8",
-                delay=True,
+                delay=False,
                 catch=True,
             )
         except Exception as error:
@@ -40,6 +40,6 @@ def configure_logging(log_directory: Path = Path(".logs")) -> None:
 def _fallback_diagnostic(error: Exception) -> None:
     with suppress(Exception):
         sys.stderr.write(
-            "AgentPlaneX file logging is unavailable; continuing with console logs "
+            "AgentPanelX file logging is unavailable; continuing with console logs "
             f"({type(error).__name__}).\n"
         )

@@ -278,7 +278,10 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
     """One user journey proves the complete Issue 01/02 happy path."""
 
     project_path = initialize_git_project()
-    settings = _settings()
+    # The provider-compatible inlined Tool schema is larger than Pydantic's
+    # reference-based form. Keep this journey's threshold above the initial
+    # request but below the large Bash observation it is intended to exercise.
+    settings = _settings(capacity_tokens=3_400)
     first_transport = _OwnerTransport(settings, first_owner_tool=True)
     runtime = create_project_runtime_control(
         project_path=project_path,

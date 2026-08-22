@@ -10,6 +10,7 @@ import agentplanex.infrastructure.model_gateway.adapters as adapters_module
 from agentplanex import bootstrap
 from agentplanex.infrastructure.logging import configure_logging
 from agentplanex.infrastructure.model_gateway import ModelGateway, OpenAIResponsesAdapter
+from agentplanex.project_owner_agent.exception import ModelGatewayError
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 
@@ -29,6 +30,16 @@ class _RecordingAdapter:
 
     def close(self) -> None:
         self.closed += 1
+
+
+class _FailingAdapter(_RecordingAdapter):
+    def __init__(self, error: ModelGatewayError) -> None:
+        super().__init__(object())
+        self.error = error
+
+    def create(self, request: ResponsesRequest) -> object:
+        self.requests.append(request)
+        raise self.error
 
 
 def _request() -> ResponsesRequest:
@@ -85,6 +96,25 @@ def test_gateway_close_is_idempotent() -> None:
     gateway.close()
 
     assert adapter.closed == 1
+
+
+def test_unavailable_file_logging_cannot_replace_gateway_results_or_errors(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    unavailable = tmp_path / "not-a-directory"
+    unavailable.write_text("blocks creation of a file sink below this path", encoding="utf-8")
+    configure_logging(unavailable)
+
+    response = object()
+    assert ModelGateway(adapter=_RecordingAdapter(response)).create(_request()) is response
+
+    expected = ModelGatewayError("normalized gateway failure")
+    with pytest.raises(ModelGatewayError) as caught:
+        ModelGateway(adapter=_FailingAdapter(expected)).create(_request())
+
+    assert caught.value is expected
+    assert "AgentPanelX file logging is unavailable" in capsys.readouterr().err
 
 
 def test_openai_adapter_is_lazy_and_maps_cache_affinity_and_usage(

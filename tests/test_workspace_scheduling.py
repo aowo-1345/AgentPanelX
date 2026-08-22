@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
+from loguru import logger
 
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.domains.workspace import (
@@ -255,8 +256,9 @@ def test_capacity_is_rejected_before_other_feature_message_is_persisted(
 
 def test_execution_slot_is_released_and_failure_is_logged(
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    messages: list[str] = []
+    sink_id = logger.add(messages.append, format="{message}")
     workspace, runtimes = _workspace(tmp_path, max_parallel_features=1)
     first_runtime = runtimes[tmp_path / "feature-a"]
     second_runtime = runtimes[tmp_path / "feature-b"]
@@ -290,7 +292,8 @@ def test_execution_slot_is_released_and_failure_is_logged(
     finally:
         second_runtime.release_drive.set()
         workspace.close()
-    assert "Feature Runtime drive failed for feature-a" in caplog.text
+        logger.remove(sink_id)
+    assert any("Feature Runtime drive failed for feature-a" in message for message in messages)
 
 
 def test_http_rejects_busy_and_capacity_before_persistence(

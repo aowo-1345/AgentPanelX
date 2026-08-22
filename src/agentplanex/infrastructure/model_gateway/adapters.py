@@ -5,8 +5,11 @@ from collections.abc import Mapping
 from threading import Lock
 from typing import Literal, cast
 
-from openai import Omit, OpenAI, OpenAIError, omit
+from openai import OpenAI, OpenAIError
 from openai.types.responses import FunctionToolParam, ResponseInputParam
+from openai.types.responses.response_create_params import (
+    ResponseCreateParamsNonStreaming,
+)
 from openai.types.shared_params import Reasoning
 
 from agentplanex.project_owner_agent.exception import ModelGatewayError
@@ -46,61 +49,26 @@ class _OpenAICompatibleResponsesAdapter:
 
     def create(self, request: ResponsesRequest) -> object:
         client = self._client()
-        reasoning: Reasoning | Omit = (
-            {"effort": self.reasoning_effort}
-            if self.reasoning_effort is not None
-            else omit
-        )
-        service_tier = self.service_tier if self.service_tier is not None else omit
+        params: ResponseCreateParamsNonStreaming = {
+            "model": request.model,
+            "instructions": request.instructions,
+            "input": cast(ResponseInputParam, list(request.input)),
+            "store": False,
+            "stream": False,
+        }
+        if self.reasoning_effort is not None:
+            params["reasoning"] = cast(Reasoning, {"effort": self.reasoning_effort})
+        if self.service_tier is not None:
+            params["service_tier"] = self.service_tier
+        if request.tools:
+            params["tools"] = cast(list[FunctionToolParam], list(request.tools))
+            params["tool_choice"] = request.tool_choice
+            params["parallel_tool_calls"] = True
         cache_key = request.cache_affinity_key if self.accepts_cache_affinity else None
+        if cache_key is not None:
+            params["prompt_cache_key"] = cache_key
         try:
-            if request.tools:
-                if cache_key is not None:
-                    return client.responses.create(
-                        model=request.model,
-                        instructions=request.instructions,
-                        input=cast(ResponseInputParam, list(request.input)),
-                        tools=cast(list[FunctionToolParam], list(request.tools)),
-                        store=False,
-                        stream=False,
-                        reasoning=reasoning,
-                        service_tier=service_tier,
-                        tool_choice=request.tool_choice,
-                        parallel_tool_calls=True,
-                        prompt_cache_key=cache_key,
-                    )
-                return client.responses.create(
-                    model=request.model,
-                    instructions=request.instructions,
-                    input=cast(ResponseInputParam, list(request.input)),
-                    tools=cast(list[FunctionToolParam], list(request.tools)),
-                    store=False,
-                    stream=False,
-                    reasoning=reasoning,
-                    service_tier=service_tier,
-                    tool_choice=request.tool_choice,
-                    parallel_tool_calls=True,
-                )
-            if cache_key is not None:
-                return client.responses.create(
-                    model=request.model,
-                    instructions=request.instructions,
-                    input=cast(ResponseInputParam, list(request.input)),
-                    store=False,
-                    stream=False,
-                    reasoning=reasoning,
-                    service_tier=service_tier,
-                    prompt_cache_key=cache_key,
-                )
-            return client.responses.create(
-                model=request.model,
-                instructions=request.instructions,
-                input=cast(ResponseInputParam, list(request.input)),
-                store=False,
-                stream=False,
-                reasoning=reasoning,
-                service_tier=service_tier,
-            )
+            return client.responses.create(**params)
         except OpenAIError as error:
             raise ModelGatewayError(f"Responses gateway request failed: {error}") from error
 

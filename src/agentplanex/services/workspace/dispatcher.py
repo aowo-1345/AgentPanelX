@@ -85,7 +85,7 @@ class WorkspaceDispatcher:
         try:
             drive()
         except BaseException:
-            logger.bind(triage_id=triage_id).exception("Feature Runtime drive failed")
+            logger.exception("Feature Runtime drive failed for {}", triage_id)
             raise
         finally:
             self._release(triage_id)

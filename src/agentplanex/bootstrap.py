@@ -122,25 +122,19 @@ def create_workspace(settings: Settings) -> WorkspaceService:
 def create_responses_transport(settings: Settings) -> ModelGateway:
     """Bind the selected model Adapter to one application Gateway."""
     model = settings.project_owner_agent.selected_model
-    adapter: QwenResponsesAdapter | OpenAIResponsesAdapter
+    adapter_type: type[QwenResponsesAdapter] | type[OpenAIResponsesAdapter]
     if model.adapter == "qwen":
-        adapter = QwenResponsesAdapter(
-            base_url=model.base_url,
-            timeout_seconds=model.timeout_seconds,
-            api_key_env=model.api_key_env,
-            http_headers=model.http_headers,
-            reasoning_effort=model.reasoning_effort,
-            service_tier=model.service_tier,
-        )
+        adapter_type = QwenResponsesAdapter
     elif model.adapter == "openai":
-        adapter = OpenAIResponsesAdapter(
-            base_url=model.base_url,
-            timeout_seconds=model.timeout_seconds,
-            api_key_env=model.api_key_env,
-            http_headers=model.http_headers,
-            reasoning_effort=model.reasoning_effort,
-            service_tier=model.service_tier,
-        )
+        adapter_type = OpenAIResponsesAdapter
     else:
         raise AssertionError(f"Validated model adapter is not implemented: {model.adapter}")
+    adapter = adapter_type(
+        base_url=model.base_url,
+        timeout_seconds=model.timeout_seconds,
+        api_key_env=model.api_key_env,
+        http_headers=model.http_headers,
+        reasoning_effort=model.reasoning_effort,
+        service_tier=model.service_tier,
+    )
     return ModelGateway(adapter=adapter)

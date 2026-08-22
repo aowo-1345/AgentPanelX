@@ -2,9 +2,11 @@
 
 import os
 import re
+import shutil
 from pathlib import Path
 
 import pytest
+from loguru import logger
 
 from agentplanex.bootstrap import (
     create_project_runtime_control,
@@ -111,3 +113,6 @@ def test_codex_subscription_completes_a_cached_owner_tool_journey(
         assert any(tokens > 0 for tokens in cached_tokens)
     finally:
         gateway.close()
+        logger.remove()
+        shutil.rmtree(project_path, ignore_errors=True)
+        shutil.rmtree(log_directory, ignore_errors=True)
