@@ -183,6 +183,7 @@ npm run build
 
 - [系统架构](docs/architecture.md)
 - [Agent-native 操作说明](docs/skills.md)
+- [通过本地代理接入 ChatGPT 订阅](docs/chatgpt-local-auth.zh-CN.md)
 - [Console 使用说明](docs/showcase.md)
 - [贡献指南](CONTRIBUTING.md)
 - [安全说明](SECURITY.md)

@@ -183,6 +183,7 @@ The default test suite does not call a model gateway. See [Contributing](CONTRIB
 
 - [Architecture](docs/architecture.md)
 - [Agent-native operations](docs/skills.md)
+- [ChatGPT subscription through a local proxy](docs/chatgpt-local-auth.md)
 - [Console walkthrough](docs/showcase.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
