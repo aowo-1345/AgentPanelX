@@ -49,7 +49,7 @@ That Runtime provides four connected capabilities:
 
 | Capability | What it provides |
 | --- | --- |
-| **Project Owner rolling delivery** | Maintains user intent and coordinates Planner, Reviewer, and coding agents across Plan, Milestone, and Stage boundaries. |
+| **Project Owner rolling delivery** | Maintains user intent and coordinates Planner, Task Distributor, Reviewer, and coding agents across Plan, Milestone, and Stage boundaries. |
 | **Isolated execution** | Runs each Feature in its own Git branch and worktree so multiple coding agents do not share a working directory. |
 | **Observable runtime** | Projects conversations, reasoning, tool input/output, approvals, Git state, Plan, and Timeline into one Web Console. |
 | **Recovery and Harness Evolution** | Preserves BLOCKED evidence, reconstructs the failure context, and turns recurring delivery gaps into structured proposals. |
@@ -69,7 +69,7 @@ flowchart TB
         Dispatcher[Bounded Feature Dispatcher]
         Runtime[Project Runtime]
         Owner[Project Owner Agent]
-        Collaboration[Planner / Reviewer Collaboration]
+        Collaboration[Planner / Task Distributor / Reviewer]
         Delivery[Stage Delivery]
         Projection[Board / Workspace Projection]
         Bus[Event Bus]

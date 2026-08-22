@@ -7,7 +7,7 @@ AgentPanelX 是一个面向长周期 Coding Tasks 的本地优先交付运行时
 系统围绕四个约束设计：
 
 1. **长期目标不依赖单次对话。** 用户意图、Rolling Summary、Plan、Milestone 与执行历史均可恢复。
-2. **规划与执行有明确 Contract。** Project Owner 负责推进，Planner、Reviewer 和 Coding Agent 在固定输入、输出与权限边界内协作。
+2. **规划与执行有明确 Contract。** Project Owner 负责推进，Planner、Task Distributor、Reviewer 和 Coding Agent 在固定输入、输出与权限边界内协作。
 3. **所有执行都能回到同一现场。** 对话、Tool activity、Stage、Git、Runtime 状态与 Timeline 共同构成 Workspace projection。
 4. **失败进入下一轮系统优化。** Observe 恢复事实，Control 推进恢复，Attribution 复盘历史 Project Owner 上下文并形成 Harness Evolution Proposal。
 
@@ -26,7 +26,7 @@ flowchart TB
         Dispatcher[Bounded Feature Dispatcher]
         Runtime[Project Runtime]
         Owner[Project Owner Agent]
-        Collaboration[Planner / Reviewer Collaboration]
+        Collaboration[Planner / Task Distributor / Reviewer]
         Delivery[Stage Delivery]
         Projection[Board / Workspace Projection]
         Bus[Event Bus]
@@ -296,6 +296,14 @@ sequenceDiagram
 Planning 先把文档字节冻结为不可变 subject，再复制到 Reviewer 的隔离 workspace；批准时还会从 Git commit 重新读取同一 subject。Subject digest 因而将“人批准的内容”“Reviewer 审查的内容”和“最终提交的内容”绑定为同一个对象。文档在等待批准期间发生变化、Reviewer 输出不完整、subject 不匹配或审查执行失败时，Hard Gate 拒绝继续推进。Plan State 转换与 `PLAN_DECISION` Owner Input 在同一个 Context transaction 中提交。
 
 Milestone View 使用相同设计：完整 Milestone 集合与当前 Plan commit 形成固定审查对象，Reviewer 在隔离 workspace 中返回结构化 manifest 和审计 artifact。
+
+Plan 获批、首次发布 Milestone View 前，以及每个 Candidate 被接受、准备启动下一个不同
+Milestone 前，Project Owner 会咨询 Task Distributor。Task Distributor 是复用 Planner
+Contract 的独立 Agent Card，在自己的 workspace 生成 `documents/plan.md` 作为建议；它不
+发布 Milestone，也不替 Owner 决策。建议保留完整 View 与 completed history，只细化第一
+个未完成 Milestone，远期 Milestone 保持粗粒度。Stage 数量不固定，普通任务写入自然语言
+objective；纯只读验证不单独成为 Stage，质量 Stage 仅在预计会形成有意义的项目或测试变更
+时成立。
 
 ## 7. 核心链路三：隔离执行与 Candidate 决策
 

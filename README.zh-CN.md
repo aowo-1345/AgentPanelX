@@ -49,7 +49,7 @@ Project Owner、Project Runtime、Git worktree，以及 Observe / Control / Attr
 
 | 核心能力 | 作用 |
 | --- | --- |
-| **Project Owner 滚动交付** | 维护用户意图，跨越 Plan、Milestone 与 Stage 协调 Planner、Reviewer 和 Coding Agent。 |
+| **Project Owner 滚动交付** | 维护用户意图，跨越 Plan、Milestone 与 Stage 协调 Planner、Task Distributor、Reviewer 和 Coding Agent。 |
 | **隔离执行** | 每个 Feature 使用独立 Git branch 与 worktree，多个 Coding Agent 不共享工作目录。 |
 | **可观测 Runtime** | 在同一 Web Console 展示对话、推理、Tool 输入输出、审批、Git、Plan 与 Timeline。 |
 | **恢复与 Harness Evolution** | 保留 BLOCKED 证据，恢复失败上下文，并将反复出现的交付缺口沉淀为结构化 Proposal。 |
@@ -69,7 +69,7 @@ flowchart TB
         Dispatcher[有界 Feature Dispatcher]
         Runtime[Project Runtime]
         Owner[Project Owner Agent]
-        Collaboration[Planner / Reviewer Collaboration]
+        Collaboration[Planner / Task Distributor / Reviewer]
         Delivery[Stage Delivery]
         Projection[Board / Workspace Projection]
         Bus[Event Bus]

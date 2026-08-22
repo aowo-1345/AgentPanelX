@@ -115,6 +115,10 @@ def _invocation_envelope(message: str) -> dict[str, object]:
     return parsed
 
 
+def _normalized(value: str) -> str:
+    return " ".join(value.split())
+
+
 def test_owner_invocation_identifies_role_activation_and_observation_entry(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -137,8 +141,21 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
     skill_path = resolve_observation_skill()
     assert "Project Owner" in instructions
     assert "three canonical project-root Specs" in instructions
-    assert "one or more appropriate Tool Actions" in instructions
-    assert "MULTIPLE tool calls in a single response" in instructions
+    assert "task_distributor" in instructions
+    assert "Once the Plan is approved" in _normalized(instructions)
+    assert "before publishing the initial Milestone View" in _normalized(instructions)
+    assert "After each accepted Candidate" in _normalized(instructions)
+    assert "Do not repeat this consultation between Stages" in _normalized(
+        instructions
+    )
+    assert "failure evidence invalidates the current decomposition" in _normalized(
+        instructions
+    )
+    assert "CRAP" in instructions
+    assert "Mutation testing" in _normalized(instructions)
+    assert "Behavior-preserving refactoring" in instructions
+    assert "one or more appropriate Tool Actions" in _normalized(instructions)
+    assert "MULTIPLE tool calls in a single response" in _normalized(instructions)
     assert "tool calls are independent" in instructions
     assert "agentplanex-project-observe" in instructions
     assert skill_path.is_file()
@@ -222,7 +239,7 @@ def test_runtime_uses_packaged_observation_skill_independent_of_target_project(
     )
 
 
-def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
+def test_talk_to_agent_reanchors_configured_agents_to_runtime_context(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -289,6 +306,7 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
     results = []
     for agent_id, kind, artifacts in (
         ("planner", "task", [{"uri": "project:///requirements.md"}]),
+        ("task_distributor", "task", []),
         ("reviewer", "message", []),
     ):
         result = executions.execute(
@@ -330,21 +348,58 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
     )
     assert resumed.output["ok"] is True
 
-    planner, reviewer, resumed_planner = recorded
+    planner, task_distributor, reviewer, resumed_planner = recorded
     prompts = _settings().runtime.prompts
     assert planner.developer_instructions.startswith(prompts.planner.role.strip())
+    assert task_distributor.developer_instructions.startswith(
+        prompts.planner.role.strip()
+    )
+    assert task_distributor.workspace != planner.workspace
+    assert task_distributor.thread_id is None
+    assert "first unfinished Milestone" in task_distributor.developer_instructions
+    assert "execution work" in task_distributor.developer_instructions
+    assert "cleanup and hardening work" in _normalized(
+        task_distributor.developer_instructions
+    )
+    assert "Stage count is unrestricted" in _normalized(
+        task_distributor.developer_instructions
+    )
+    assert "Those are the only reasons for another Stage" in _normalized(
+        task_distributor.developer_instructions
+    )
+    assert "Do not split work mechanically" in _normalized(
+        task_distributor.developer_instructions
+    )
+    assert "nested Task schema" in _normalized(
+        task_distributor.developer_instructions
+    )
+    assert "do not propose an evidence-only verification Stage" in _normalized(
+        task_distributor.developer_instructions
+    )
+    assert "meaningful project or test changes" in _normalized(
+        task_distributor.developer_instructions
+    )
     assert reviewer.developer_instructions.startswith(prompts.reviewer.role.strip())
     assert '"operation": "project_planning:task"' in planner.message
+    assert '"operation": "project_planning:task"' in task_distributor.message
+    assert '"role": "planner"' in task_distributor.message
+    assert "CRAP" in task_distributor.message
+    assert "Mutation testing" in _normalized(task_distributor.message)
+    assert "Behavior-preserving refactoring" in _normalized(
+        task_distributor.message
+    )
     assert '"operation": "delegated_review:message"' in reviewer.message
     request_sha = hashlib.sha256(
         b"Inspect the supplied question."
     ).hexdigest()
     for request, role in zip(
-        recorded[:2],
-        ("planner", "reviewer"),
+        (planner, task_distributor, reviewer),
+        ("planner", "planner", "reviewer"),
         strict=True,
     ):
         assert "agentplanex-project-observe" in request.message
+        assert "CRAP" in request.message
+        assert "Mutation testing" in _normalized(request.message)
         assert f'"observation_skill": "{skill_path}"' in request.message
         assert f'"project_root": "{project_path.resolve()}"' in request.message
         assert f'"triage_id": "{context.triage_id}"' in request.message
@@ -359,6 +414,10 @@ def test_talk_to_agent_reanchors_planner_and_reviewer_to_runtime_context(
         )
     assert '"interaction": "task"' in planner.message
     assert len(results[0].output["artifacts"]) == 1
+    assert len(results[1].output["artifacts"]) == 1
+    assert results[1].output["artifacts"][0]["project_relative_path"].endswith(
+        "documents/plan.md"
+    )
     assert '"uri": "project:///requirements.md"' in planner.message
     assert f'"sha256": "{requirement_sha}"' in planner.message
     assert planner.mentions == (("artifact-1-requirements.md", requirement),)
@@ -496,6 +555,8 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
     )
     for request in recorded:
         assert "agentplanex-project-observe" in request.message
+        assert "CRAP" in request.message
+        assert "Mutation testing" in _normalized(request.message)
         assert f'"observation_skill": "{skill_path}"' in request.message
         assert len(request.mentions) == (3 if request is plan_gate else 1)
         assert request.output_schema is not None
@@ -571,12 +632,23 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
     assert request.thread_id is None
     prompts = _settings().runtime.prompts
     assert request.developer_instructions == prompts.stage_executor.role.strip()
+    assert "Execute exactly the fixed Stage" in request.developer_instructions
+    instructions = _normalized(request.developer_instructions)
+    assert (
+        "behavior-preserving cleanup, testing, hardening, or verification expected to leave"
+        in instructions
+    )
+    assert "meaningful project or test changes" in instructions
     assert "agentplanex-project-observe" in request.message
+    assert "CRAP" in request.message
+    assert "Mutation testing" in _normalized(request.message)
     assert f'"observation_skill": "{skill_path}"' in request.message
     assert f'"project_root": "{project_path.resolve()}"' in request.message
     assert '"role": "stage_executor"' in request.message
     assert '"stage_run_id": "stage-run-1"' in request.message
     assert '"input_commit_sha": "input-commit"' in request.message
+    assert "Establish contracts." in request.message
+    assert "Implement the fixed contract." in request.message
     assert request.workspace == worktree
     assert request.mentions == ()
     assert request.output_schema is not None

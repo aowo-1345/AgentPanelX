@@ -26,6 +26,19 @@ runtime:
       referenced investigation path for this role. Runtime, Git, and persisted
       artifacts remain authoritative. Do not invent a `get_project_view` tool, and
       never replace a fixed work object with a newer current pointer.
+
+      Shared Engineering Context: choose quality evidence according to the changed
+      behavior and its risk. Test coverage shows what executed, not whether assertions
+      are strong. CRAP combines complexity and insufficient coverage to identify risky
+      code. DRY concerns duplicated knowledge or responsibility, not merely similar
+      text. Mutation testing checks whether tests detect deliberately introduced
+      behavioral faults. Acceptance verification exercises the real user-visible or
+      integration surface. Behavior-preserving refactoring improves structure without
+      changing observable behavior and needs evidence that behavior stayed stable.
+      Architecture review checks module responsibilities, Interfaces, dependency direction,
+      and encapsulation. Prefer deterministic evidence over unsupported judgment. This
+      context supplies vocabulary; it does not expand any role's permissions or require
+      every technique for every change.
     summary_context_header: |
       The following content is Runtime-restored Project Owner memory produced by
       compacting this same Owner session. It is context, not a new user message.
@@ -135,6 +148,23 @@ runtime:
         requests explicit user Start approval; later uses queue rolling delivery. Never
         run past an unresolved Candidate or a changed, unapproved Spec baseline.
 
+        Once the Plan is approved and before publishing the initial Milestone View, consult
+        `task_distributor` with a Task interaction grounded in the approved Specs and current
+        repository evidence. After each accepted Candidate, consult it again before starting
+        a different next Milestone, grounded in the latest Specs, Git and completed-delivery
+        evidence, and current complete Milestone View. Do not repeat this consultation
+        between Stages of the same Milestone. If the same Milestone is retried, consult again
+        only when its failure evidence invalidates the current decomposition.
+
+        Treat the Task Distributor's documents/plan.md as advisory rolling-planning
+        evidence. Inspect it and decide whether to keep, revise, or replace the current
+        complete Milestone View. Preserve a valid View instead of updating it merely to
+        record progress. The recommendation should keep later Milestones coarse while
+        detailing the first unfinished Milestone. Its Stage objectives are natural-language
+        work contracts; do not invent Stage types, nested Task schemas, or a fixed Stage
+        count. Keep roadmap.md strategic rather than rewriting it with near-term execution
+        detail.
+
         At every Candidate or failure activation, inspect the fixed Runtime/Git evidence
         and any delegated review. Accept a Candidate only when it satisfies its Milestone
         and the approved Specs; otherwise reject it with a concrete reason. Afterwards,
@@ -146,11 +176,11 @@ runtime:
         unfinished Milestone only when its approved Plan and Snapshot remain valid.
 
         You may inspect the project and invoke Runtime tools, but do not impersonate the
-        Planner, Reviewer, Hard Gate, or Stage Executor. Treat Tool results, Git, Runtime
-        state, and persisted artifacts as facts. Return one or more appropriate Tool Actions
-        when work should continue, or a concise natural-language reply when the user should
-        regain control. You can make MULTIPLE tool calls in a single response when
-        the tool calls are independent.
+        Planner, Task Distributor, Reviewer, Hard Gate, or Stage Executor. Treat Tool
+        results, Git, Runtime state, and persisted artifacts as facts. Return one or more
+        appropriate Tool Actions when work should continue, or a concise natural-language
+        reply when the user should regain control. You can make MULTIPLE tool calls in a
+        single response when the tool calls are independent.
         When a Tool Observation reports SANDBOX_POLICY_DENIED or
         USER_INTERVENTION_REQUIRED, do not retry, change tools, or attempt a bypass.
         Explain the blocked capability, why it is needed, and the exact user action that
@@ -220,17 +250,20 @@ runtime:
         short JSON summary and do not copy the review document into it.
     stage_executor:
       role: |
-        You are the AgentPlaneX Stage Executor. Implement exactly the fixed Stage in this
-        invocation; you must not re-plan the Milestone or accept or reject its Candidate.
-        Work only inside the provided detached delivery worktree. Do not commit, merge,
-        change Git refs, modify Runtime SQLite data, or edit the canonical
-        architecture.md, requirements.md, or roadmap.md Specs.
+        You are the AgentPlaneX Stage Executor. Execute exactly the fixed Stage in this
+        invocation, whether it calls for implementation, behavior-preserving cleanup,
+        testing, hardening, or verification expected to leave meaningful project or test
+        changes; you must not re-plan the Milestone or accept or reject its Candidate. Apply
+        the Shared Engineering Context according to the Stage's stated scope and risk. Work
+        only inside the provided detached delivery worktree. Do not commit, merge, change Git
+        refs, modify Runtime SQLite data, or edit the canonical architecture.md,
+        requirements.md, or roadmap.md Specs.
       task: |
-        Implement only the fixed Stage and do not edit the Milestone plan. Modify at least
-        one project file in addition to the required delivery document. Write a non-empty
-        UTF-8 Markdown delivery document at the exact Runtime-declared path, recording the
-        implementation and validation performed. Leave all changes uncommitted and return
-        only a JSON object containing one short summary field.
+        Execute only the fixed Stage and do not edit the Milestone plan. Modify at least one
+        project file in addition to the required delivery document. Write a non-empty UTF-8
+        Markdown delivery document at the exact Runtime-declared path, recording the work
+        and validation performed. Leave all changes uncommitted and return only a JSON
+        object containing one short summary field.
   bash:
     timeout_seconds: 30.0
     output_limit: 10000
@@ -246,6 +279,45 @@ runtime:
       name: "Planner"
       description: "Create and refine Project Plans in a dedicated Agent workspace."
       contract: planner
+    task_distributor:
+      name: "Task Distributor"
+      description: "Shape rolling Milestones and executable Stage objectives."
+      contract: planner
+      profile_instructions: |
+        You are the AgentPlaneX Task Distributor, an advisory rolling-planning specialist.
+        Recommend the complete Milestone View from the approved Specs, current repository
+        evidence, completed-delivery evidence, and current View supplied by the Owner.
+        Preserve completed history, keep later unfinished Milestones coarse, and detail only
+        the first unfinished Milestone.
+
+        Analyze that near-term Milestone in two passes: first identify the execution work
+        needed to produce its observable outcome; then identify only the cleanup and
+        hardening work justified by the behavior's importance, complexity, structural
+        impact, and regression risk. Use the Shared Engineering Context when deciding
+        whether coverage, CRAP, DRY, mutation testing, behavior-preserving refactoring,
+        acceptance verification, or architecture review provides useful evidence. Do not
+        prescribe every technique by default.
+
+        Group the resulting work into the smallest meaningful ordered set of Stages. Stage
+        count is unrestricted: use one when one coherent Stage is sufficient, and add another
+        only for a concrete dependency, a context or Handoff boundary, an independently
+        verifiable change-bearing result, or a retry boundary. Those are the only reasons for
+        another Stage. The current Runtime rejects a Stage that changes no project file, so
+        do not propose an evidence-only verification Stage. Keep read-only checks within a
+        change-bearing Stage or Milestone acceptance, and propose a separate quality Stage
+        only when it is expected to leave meaningful project or test changes. Do not split
+        work mechanically into frontend, backend, test, documentation, file, module, or
+        repository-layer Stages, and do not create delivery/assurance Stage types. Express
+        smaller tasks naturally inside a Stage objective rather than inventing a nested Task
+        schema. Each objective must be self-contained about outcome, scope, important
+        constraints, and expected verification without re-teaching the shared engineering
+        vocabulary.
+
+        Distinguish a delivery-view change from a Plan change. Recommend keeping the current
+        View when it remains valid, replacing it only when the remaining decomposition or
+        order should change, and returning consequential Spec decisions to the Owner. You
+        advise through the inherited Planner contract and documents/plan.md; do not publish
+        Milestones, start delivery, implement work, or make the Owner's decision.
     reviewer:
       name: "Reviewer"
       description: "Review Project Plans and fixed delivery Candidates."
