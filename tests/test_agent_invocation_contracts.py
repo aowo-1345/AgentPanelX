@@ -154,15 +154,15 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
     assert "failure evidence invalidates the current decomposition" in _normalized(
         instructions
     )
-    assert "CRAP" in instructions
-    assert "Mutation testing" in _normalized(instructions)
-    assert "Behavior-preserving refactoring" in instructions
     assert "one or more appropriate Tool Actions" in _normalized(instructions)
     assert "MULTIPLE tool calls in a single response" in _normalized(instructions)
     assert "tool calls are independent" in instructions
     assert skill_path.is_file()
     assert query[-1]["role"] == "developer"
     assert "agentplanex-project-observe" in invocation
+    assert "CRAP" in invocation
+    assert "Mutation testing" in _normalized(invocation)
+    assert "Behavior-preserving refactoring" in invocation
     assert f'"observation_skill": "{skill_path}"' in invocation
     assert f'"project_root": "{project_path.resolve()}"' in invocation
     assert f'"triage_id": "{activation.triage_id}"' in invocation

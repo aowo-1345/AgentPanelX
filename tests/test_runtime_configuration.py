@@ -56,6 +56,14 @@ from agentplanex.settings import (
 from tests.runtime_support import compose_test_executions
 
 
+def _latest_non_developer_message(messages: list[Message]) -> Message:
+    return next(
+        message
+        for message in reversed(messages)
+        if message.get("role") != "developer"
+    )
+
+
 class _ReplyingModel:
     constructions = 0
     queries: ClassVar[list[list[Message]]] = []
@@ -65,7 +73,8 @@ class _ReplyingModel:
 
     def query(self, messages: list[Message]) -> Message:
         type(self).queries.append([dict(message) for message in messages])
-        task = str(messages[-1].get("content", ""))
+        latest = _latest_non_developer_message(messages)
+        task = str(latest.get("content", ""))
         raise ReplyToHuman(
             content=task,
             response={"role": "assistant", "content": task},
@@ -92,7 +101,7 @@ class _BashCallingModel:
         pass
 
     def query(self, messages: list[Message]) -> Message:
-        latest = messages[-1]
+        latest = _latest_non_developer_message(messages)
         if latest.get("role") == "user":
             return {
                 "role": "assistant",
@@ -133,7 +142,7 @@ class _PolicyAwareBashModel:
 
     def query(self, messages: list[Message]) -> Message:
         type(self).calls += 1
-        latest = messages[-1]
+        latest = _latest_non_developer_message(messages)
         if latest.get("role") == "user":
             return {
                 "role": "assistant",
@@ -715,7 +724,7 @@ def test_runtime_restores_owner_history_across_activations(
     assert third.content == "third"
     assert _ReplyingModel.constructions == 3
     restored_contents = [
-        message.get("content") for message in _ReplyingModel.queries[-1]
+        message.get("content") for message in _ReplyingModel.queries[-1][:-1]
     ]
     assert restored_contents[-5:] == [
         "first",
@@ -799,17 +808,17 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
     assert result.activation.summary_id == frozen_summary.summary_id
     assert result.exit is not None
     assert result.exit.content == "third"
-    restored_contents = [
-        message.get("content") for message in _ReplyingModel.queries[-1]
-    ]
-    assert len(restored_contents) == 4
+    query = _ReplyingModel.queries[-1]
+    restored_contents = [message.get("content") for message in query]
+    assert len(restored_contents) == 5
     system = str(restored_contents[0])
+    invocation = str(restored_contents[-1])
     configured = _settings().runtime.prompts
     assert system.startswith(configured.project_owner.role.strip())
-    assert "agentplanex-project-observe" in system
-    assert f'"project_root": "{project_path.resolve()}"' in system
-    assert f'"activation_id": "{activation.activation_id}"' in system
-    assert restored_contents[1:] == [
+    assert "agentplanex-project-observe" in invocation
+    assert f'"project_root": "{project_path.resolve()}"' in invocation
+    assert f'"activation_id": "{activation.activation_id}"' in invocation
+    assert restored_contents[1:-1] == [
         configured.summary_context_header.strip(),
         [
             {
