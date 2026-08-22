@@ -90,13 +90,18 @@ project_owner_agent:
       service_tier: null
 ```
 
-Set `active_model` to `codex` in your local config and export the same local access key used
-in the proxy config:
+Set `active_model` to `codex` in your local config. AgentPanelX first reads
+`CLIPROXY_API_KEY` from its process environment; when it is unset, the local `codex`
+profile automatically uses the first non-blank key from
+`.agentplanex/secrets/cliproxy/config.yaml`:
 
 ```bash
 export CLIPROXY_API_KEY='your-local-access-key'
 uv run agentplanex-web
 ```
+
+The explicit environment variable remains useful for service managers, containers, remote
+proxies, and temporary overrides. It always takes precedence over the local file.
 
 The committed default remains `qwen`. AgentPanelX binds exactly one Adapter at startup; it
 does not probe or fall back to another provider.

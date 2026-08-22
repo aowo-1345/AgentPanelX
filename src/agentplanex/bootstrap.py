@@ -1,6 +1,9 @@
 """Application composition for a project-scoped Runtime."""
 
+import os
 from pathlib import Path
+
+import yaml
 
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.logging import configure_logging
@@ -26,6 +29,8 @@ from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.queries import WorkspaceQueries
 from agentplanex.services.workspace.service import WorkspaceService
 from agentplanex.settings import Settings, load_settings
+
+_CLIPROXY_API_KEY_ENV = "CLIPROXY_API_KEY"
 
 
 def create_project_runtime(
@@ -133,8 +138,29 @@ def create_responses_transport(settings: Settings) -> ModelGateway:
         base_url=model.base_url,
         timeout_seconds=model.timeout_seconds,
         api_key_env=model.api_key_env,
+        fallback_api_key=_local_cliproxy_api_key(settings, model.api_key_env),
         http_headers=model.http_headers,
         reasoning_effort=model.reasoning_effort,
         service_tier=model.service_tier,
     )
     return ModelGateway(adapter=adapter)
+
+
+def _local_cliproxy_api_key(settings: Settings, api_key_env: str) -> str | None:
+    if api_key_env != _CLIPROXY_API_KEY_ENV or os.getenv(api_key_env, "").strip():
+        return None
+    path = settings.workspace.data_home / "secrets" / "cliproxy" / "config.yaml"
+    try:
+        config = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(config, dict) or not isinstance(config.get("api-keys"), list):
+        return None
+    return next(
+        (
+            key.strip()
+            for key in config["api-keys"]
+            if isinstance(key, str) and key.strip()
+        ),
+        None,
+    )

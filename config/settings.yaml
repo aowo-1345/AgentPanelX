@@ -1,5 +1,5 @@
 project_owner_agent:
-  active_model: "qwen"
+  active_model: "codex"
   models:
     qwen:
       adapter: "qwen"

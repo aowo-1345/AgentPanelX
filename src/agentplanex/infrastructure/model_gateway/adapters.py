@@ -34,6 +34,7 @@ class _OpenAICompatibleResponsesAdapter:
         base_url: str,
         timeout_seconds: float,
         api_key_env: str,
+        fallback_api_key: str | None = None,
         http_headers: Mapping[str, str] | None = None,
         reasoning_effort: ReasoningEffort | None = None,
         service_tier: ServiceTier | None = "priority",
@@ -41,6 +42,7 @@ class _OpenAICompatibleResponsesAdapter:
         self.base_url = base_url
         self.timeout_seconds = timeout_seconds
         self.api_key_env = api_key_env
+        self._fallback_api_key = fallback_api_key
         self.http_headers = dict(http_headers or {})
         self.reasoning_effort = reasoning_effort
         self.service_tier = service_tier
@@ -86,6 +88,8 @@ class _OpenAICompatibleResponsesAdapter:
             with self._lock:
                 if self.client is None:
                     api_key = os.getenv(self.api_key_env)
+                    if api_key is None or not api_key.strip():
+                        api_key = self._fallback_api_key
                     if api_key is None or not api_key.strip():
                         raise ModelGatewayError(
                             "Missing credentials: environment variable "

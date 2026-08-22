@@ -196,3 +196,58 @@ def test_bootstrap_binds_the_explicit_openai_adapter_without_connecting() -> Non
 
     assert isinstance(gateway.adapter, OpenAIResponsesAdapter)
     assert gateway.adapter.client is None
+
+
+def test_bootstrap_uses_environment_before_the_local_cliproxy_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clients: list[dict[str, object]] = []
+
+    class _Responses:
+        @staticmethod
+        def create(**_kwargs: object) -> object:
+            return {"output": []}
+
+    class _Client:
+        responses = _Responses()
+
+        def close(self) -> None:
+            pass
+
+    def create_client(**kwargs: object) -> _Client:
+        clients.append(kwargs)
+        return _Client()
+
+    data_home = tmp_path / ".agentplanex"
+    proxy_config = data_home / "secrets" / "cliproxy" / "config.yaml"
+    proxy_config.parent.mkdir(parents=True)
+    proxy_config.write_text(
+        yaml.safe_dump({"api-keys": ["local-file-key"]}),
+        encoding="utf-8",
+    )
+    configured = load_settings(DEFAULT_SETTINGS_PATH)
+    settings = configured.model_copy(
+        update={
+            "project_owner_agent": configured.project_owner_agent.model_copy(
+                update={"active_model": "codex"}
+            ),
+            "workspace": configured.workspace.model_copy(
+                update={"data_home": data_home}
+            ),
+        }
+    )
+    monkeypatch.setattr(adapters_module, "OpenAI", create_client)
+
+    monkeypatch.delenv("CLIPROXY_API_KEY", raising=False)
+    file_gateway = bootstrap.create_responses_transport(settings)
+    file_gateway.create(_request())
+
+    monkeypatch.setenv("CLIPROXY_API_KEY", "environment-key")
+    environment_gateway = bootstrap.create_responses_transport(settings)
+    environment_gateway.create(_request())
+
+    assert [client["api_key"] for client in clients] == [
+        "local-file-key",
+        "environment-key",
+    ]

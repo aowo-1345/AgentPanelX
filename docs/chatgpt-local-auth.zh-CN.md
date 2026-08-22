@@ -85,12 +85,16 @@ project_owner_agent:
       service_tier: null
 ```
 
-在本地配置中把 `active_model` 改为 `codex`，并导出与代理配置相同的本地访问 Key：
+在本地配置中把 `active_model` 改为 `codex`。AgentPanelX 优先读取进程环境中的
+`CLIPROXY_API_KEY`；若未设置，本地 `codex` Profile 会自动使用
+`.agentplanex/secrets/cliproxy/config.yaml` 中第一个非空 Key：
 
 ```bash
 export CLIPROXY_API_KEY='your-local-access-key'
 uv run agentplanex-web
 ```
+
+显式环境变量仍适用于进程管理器、容器、远程代理和临时覆盖，并始终优先于本地文件。
 
 仓库提交的默认值仍是 `qwen`。AgentPanelX 只在启动时绑定一个 Adapter，不会主动探测或跨
 Provider 回退。
