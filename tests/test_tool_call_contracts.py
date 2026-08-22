@@ -86,6 +86,17 @@ def test_tool_catalog_rejects_invalid_complete_milestone_views(
     provider_schema = next(
         item for item in tools.provider_schemas() if item["name"] == "update_milestones"
     )["parameters"]
+    milestone_ref = provider_schema["properties"]["milestones"]["items"]["$ref"]
+    milestone_schema = provider_schema
+    for part in milestone_ref.removeprefix("#/").split("/"):
+        milestone_schema = milestone_schema[part]
+    stage_list_schema = milestone_schema["properties"]["stages"]
+    assert "maxItems" not in stage_list_schema
+    stage_ref = stage_list_schema["items"]["$ref"]
+    stage_schema = provider_schema
+    for part in stage_ref.removeprefix("#/").split("/"):
+        stage_schema = stage_schema[part]
+    assert set(stage_schema["properties"]) == {"key", "objective"}
     milestone = {
         "key": "m1",
         "objective": "Ship the first playable slice.",

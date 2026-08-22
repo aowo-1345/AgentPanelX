@@ -121,7 +121,8 @@ def _tool_response(
     }
 
 
-def _settings(capacity_tokens: int = 3_000) -> Settings:
+# Leave room for the static Owner contract so seeded history triggers compaction.
+def _settings(capacity_tokens: int = 4_000) -> Settings:
     configured = load_settings(DEFAULT_SETTINGS_PATH)
     return configured.model_copy(
         update={

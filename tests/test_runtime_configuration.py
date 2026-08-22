@@ -590,6 +590,25 @@ def test_talk_tool_renders_configured_agent_cards_with_stable_schema(
     }
 
 
+def test_default_talk_tool_exposes_task_distributor_as_a_planner_contract(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    executions = compose_test_executions(
+        project_path,
+        load_settings(DEFAULT_SETTINGS_PATH).runtime,
+    ).executions
+
+    talk_tool = next(
+        tool for tool in executions.tools.tools if tool.name == "talk_to_agent"
+    )
+    description = talk_tool.provider_schema()["description"]
+
+    assert isinstance(description, str)
+    assert "task_distributor (planner): Task Distributor" in description
+    assert "Shape rolling Milestones and executable Stage objectives." in description
+
+
 def test_cli_only_passes_explicit_runtime_inputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
