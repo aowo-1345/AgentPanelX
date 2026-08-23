@@ -96,8 +96,8 @@ uv run agentplanex-web
 
 显式环境变量仍适用于进程管理器、容器、远程代理和临时覆盖，并始终优先于本地文件。
 
-仓库提交的默认值仍是 `qwen`。AgentPanelX 只在启动时绑定一个 Adapter，不会主动探测或跨
-Provider 回退。
+仓库当前提交的配置选择 `codex`。AgentPanelX 只在启动时绑定一个 Adapter，不会主动探测或
+跨 Provider 回退。
 
 ## 4. 验证一次真实 Activation
 

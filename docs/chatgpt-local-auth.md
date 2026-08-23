@@ -103,8 +103,8 @@ uv run agentplanex-web
 The explicit environment variable remains useful for service managers, containers, remote
 proxies, and temporary overrides. It always takes precedence over the local file.
 
-The committed default remains `qwen`. AgentPanelX binds exactly one Adapter at startup; it
-does not probe or fall back to another provider.
+The committed configuration currently selects `codex`. AgentPanelX binds exactly one
+Adapter at startup; it does not probe or fall back to another provider.
 
 ## 4. Verify one real activation
 
