@@ -195,7 +195,6 @@ def _compose_command_graph(
             model=model_settings.name,
             transport=responses_transport,
         ),
-        observation_skill=observation_skill,
         prompts=prompts,
         mutation_fence_guard=takeover_runs.require_mutation_fence,
     )

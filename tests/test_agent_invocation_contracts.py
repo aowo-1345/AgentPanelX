@@ -125,7 +125,7 @@ def _normalized(value: str) -> str:
     return " ".join(value.split())
 
 
-def test_owner_invocation_identifies_role_activation_and_observation_entry(
+def test_owner_requests_extend_the_persisted_session_without_an_invocation_envelope(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -145,8 +145,6 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
 
     query = _RecordingOwnerModel.queries[-1]
     instructions = str(query[0]["content"])
-    invocation = str(query[-1]["content"])
-    skill_path = resolve_observation_skill()
     assert "Project Owner" in instructions
     assert "three canonical project-root Specs" in instructions
     assert "task_distributor" in instructions
@@ -158,28 +156,39 @@ def test_owner_invocation_identifies_role_activation_and_observation_entry(
     assert "one or more appropriate Tool Actions" in _normalized(instructions)
     assert "MULTIPLE tool calls in a single response" in _normalized(instructions)
     assert "tool calls are independent" in instructions
-    assert skill_path.is_file()
-    assert query[-1]["role"] == "developer"
-    assert "agentplanex-project-observe" in invocation
-    assert "CRAP" in invocation
-    assert "Mutation testing" in _normalized(invocation)
-    assert "Behavior-preserving refactoring" in invocation
-    assert f'"observation_skill": "{skill_path}"' in invocation
-    assert f'"project_root": "{project_path.resolve()}"' in invocation
-    assert f'"triage_id": "{activation.triage_id}"' in invocation
-    assert f'"activation_id": "{activation.activation_id}"' in invocation
-    assert '"operation": "owner_activation:USER_INPUT"' in invocation
+    assert query[-1] == {"role": "user", "content": "Clarify the current project work."}
+    serialized_query = json.dumps(query, ensure_ascii=False)
+    assert "AgentPlaneX invocation envelope" not in serialized_query
+    assert "fixed_work_object" not in serialized_query
+    assert all(
+        identifier not in serialized_query
+        for identifier in (
+            activation.activation_id,
+            activation.message_id,
+            activation.triage_id,
+        )
+    )
 
     next_activation = runtime.submit_message("Continue with the same Owner contract.")
     runtime.drive_owner_model()
     next_query = _RecordingOwnerModel.queries[-1]
-    next_invocation = str(next_query[-1]["content"])
 
-    assert next_query[0]["content"] == query[0]["content"]
-    assert next_query[-1]["role"] == "developer"
-    assert next_invocation != invocation
-    assert f'"activation_id": "{next_activation.activation_id}"' in next_invocation
-    assert f'"activation_id": "{activation.activation_id}"' not in next_invocation
+    assert next_query[: len(query)] == query
+    assert next_query[-2:] == [
+        {"role": "assistant", "content": "Recorded Owner invocation."},
+        {"role": "user", "content": "Continue with the same Owner contract."},
+    ]
+    serialized_next_query = json.dumps(next_query, ensure_ascii=False)
+    assert "AgentPlaneX invocation envelope" not in serialized_next_query
+    assert "fixed_work_object" not in serialized_next_query
+    assert all(
+        identifier not in serialized_next_query
+        for identifier in (
+            next_activation.activation_id,
+            next_activation.message_id,
+            next_activation.triage_id,
+        )
+    )
 
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()

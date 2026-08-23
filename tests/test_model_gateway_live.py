@@ -19,6 +19,8 @@ from tests.fixtures import initialize_git_project
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _CACHE_USAGE = re.compile(r"(?:^| )cached_tokens=(\d+)(?: |$)")
+_FIRST_CACHE_CONTEXT = "first-cache-history-padding " * 800
+_SECOND_CACHE_CONTEXT = "second-cache-history-padding " * 800
 
 
 @pytest.mark.live_model
@@ -59,7 +61,8 @@ def test_codex_subscription_completes_a_cached_owner_tool_journey(
         first_activation = runtime.submit_message(
             "Use Bash to run `printf 'gateway-live-e2e-ok\\n'` exactly once. "
             "After observing the result, reply with `gateway-live-e2e-complete`. "
-            "Do not modify files and do not use another tool."
+            "Do not modify files and do not use another tool.\n\n"
+            + _FIRST_CACHE_CONTEXT
         )
         first = runtime.drive_owner_model()
 
@@ -80,7 +83,7 @@ def test_codex_subscription_completes_a_cached_owner_tool_journey(
 
         second_activation = runtime.submit_message(
             "Reply with the marker printed by Bash in the previous activation. "
-            "Do not call a tool."
+            "Do not call a tool.\n\n" + _SECOND_CACHE_CONTEXT
         )
         second = runtime.drive_owner_model()
 
@@ -157,7 +160,8 @@ def test_codex_subscription_completes_a_cached_owner_tool_journey(
             for line in gateway_lines
             if (match := _CACHE_USAGE.search(line)) is not None
         ]
-        assert any(tokens > 0 for tokens in cached_tokens)
+        positive_cache_levels = {tokens for tokens in cached_tokens if tokens > 0}
+        assert len(positive_cache_levels) >= 2
     finally:
         gateway.close()
         logger.remove()

@@ -152,8 +152,8 @@ def _policy(*, capacity_tokens: int) -> OwnerContextPolicy:
     )
 
 
-def test_manager_restores_one_model_view_and_keeps_appended_messages() -> None:
-    """The Agent owns rendering while the Runtime only supplies raw facts."""
+def test_manager_restores_one_append_only_model_view() -> None:
+    """The Agent renders durable facts and only appends later messages."""
 
     summary = SummaryHistory(
         project_owner_session_id="owner-session",
@@ -199,11 +199,6 @@ def test_manager_restores_one_model_view_and_keeps_appended_messages() -> None:
         runtime=runtime,
         runtime_context=context,
         activation=activation,
-        invocation_text=(
-            "AgentPlaneX invocation envelope.\n"
-            '"activation_id": "activation-1"\n'
-            "Use the observation skill for current facts."
-        ),
         policy=_policy(capacity_tokens=128_000),
         tools=_tools(),
         summary_model=_SummaryModel(),
@@ -215,27 +210,15 @@ def test_manager_restores_one_model_view_and_keeps_appended_messages() -> None:
         "developer",
         "user",
         "user",
-        "developer",
     ]
     assert restored[0]["content"] == "You are the persisted Project Owner."
     assert restored[1] == {
         "role": "developer",
         "content": "Recovered rolling context.",
     }
-    assert restored[-2] == {"role": "user", "content": "Continue the refactor."}
-    assert restored[-1] == {
-        "role": "developer",
-        "content": (
-            "AgentPlaneX invocation envelope.\n"
-            '"activation_id": "activation-1"\n'
-            "Use the observation skill for current facts."
-        ),
-    }
+    assert restored[-1] == {"role": "user", "content": "Continue the refactor."}
     assert "must not be repeated" not in str(restored)
-    assert sum(
-        "AgentPlaneX invocation envelope" in str(message.get("content", ""))
-        for message in restored
-    ) == 1
+    assert "AgentPlaneX invocation envelope" not in str(restored)
 
     tool_turn = (
         {
@@ -253,8 +236,8 @@ def test_manager_restores_one_model_view_and_keeps_appended_messages() -> None:
     manager.append(tool_turn)
 
     continued = manager.prepare_query(query_index=1)
-    assert continued[-3:-1] == tool_turn
-    assert continued[-1] == restored[-1]
+    assert continued[: len(restored)] == restored
+    assert continued[-2:] == tool_turn
     assert runtime.appended == [tool_turn]
 
 
@@ -295,7 +278,6 @@ def test_manager_switches_only_after_runtime_commits_the_summary() -> None:
         runtime=runtime,
         runtime_context=context,
         activation=activation,
-        invocation_text="AgentPlaneX owner invocation.",
         policy=_policy(capacity_tokens=1),
         tools=_tools(),
         summary_model=_SummaryModel(),
@@ -317,7 +299,6 @@ def test_manager_switches_only_after_runtime_commits_the_summary() -> None:
         "system",
         "developer",
         "user",
-        "developer",
     ]
     assert "large context" not in str(compacted)
     assert "Build the clean context seam" in str(compacted)

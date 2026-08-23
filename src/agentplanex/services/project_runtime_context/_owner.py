@@ -5,7 +5,6 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from hashlib import sha256
-from pathlib import Path
 from uuid import uuid4
 
 from agentplanex.domains.execution_event import (
@@ -53,7 +52,6 @@ from agentplanex.project_owner_agent.models.responses import (
 from agentplanex.project_owner_agent.tools import ToolCatalog
 from agentplanex.services.agent_invocation import (
     AgentPromptCatalog,
-    InvocationContract,
     InvocationRole,
 )
 from agentplanex.services.event_bus import EventBus
@@ -86,7 +84,6 @@ class _OwnerRuntime:
     tool_executor: RuntimeToolExecutor
     event_bus: EventBus
     responses: ResponsesClient
-    observation_skill: Path
     prompts: AgentPromptCatalog
     load_state: Callable[[], ProjectRuntimeState]
     set_activation_initial_summary: Callable[
@@ -287,47 +284,6 @@ class _OwnerRuntime:
             )
         return owner
 
-    def _invocation_contract(
-        self,
-        context: ProjectRuntimeState,
-        activation: OwnerActivation,
-    ) -> InvocationContract:
-        fixed_work_object = {
-            "activation_id": activation.activation_id,
-            "message_id": activation.message_id,
-            "runtime_status": context.status,
-            "pending_action": context.pending_action,
-            "git_branch": context.git_branch,
-            "git_main_version": context.git_main_version,
-            "rolling_started_at": (
-                context.rolling_started_at.isoformat()
-                if context.rolling_started_at is not None
-                else None
-            ),
-            "current_plan_commit_sha": context.current_plan_commit_sha,
-            "pending_plan_subject_digest": context.pending_plan_subject_digest,
-            "current_snapshot_id": context.current_snapshot_id,
-            "current_run_id": context.current_run_id,
-            "current_milestone_key": context.current_milestone_key,
-            "current_stage_key": context.current_stage_key,
-            "current_candidate_commit_sha": context.current_candidate_commit_sha,
-        }
-        return InvocationContract(
-            role=InvocationRole.PROJECT_OWNER,
-            operation=f"owner_activation:{activation.task_type.value}",
-            project_root=self.database.path.parent.parent,
-            observation_skill=self.observation_skill,
-            triage_id=context.triage_id,
-            fixed_work_object=fixed_work_object,
-            workspace={
-                "project_repository": "read_only",
-                "runtime_mutation": "exposed_tools_only",
-            },
-            output_contract={
-                "one_of": ["tool_action", "concise_user_reply"],
-            },
-        )
-
     def _build_agent(
         self,
         context: ProjectRuntimeState,
@@ -350,14 +306,10 @@ class _OwnerRuntime:
             step_limit=owner_settings.step_limit,
             max_consecutive_format_errors=owner_settings.max_consecutive_format_errors,
         )
-        invocation = self._invocation_contract(context, activation)
-        if invocation.triage_id != context.triage_id:
-            raise RuntimeError("Owner invocation does not match Runtime context")
         owner_context = OwnerContextManager.restore(
             runtime=self,
             runtime_context=context,
             activation=activation,
-            invocation_text=self.prompts.render_invocation(invocation),
             policy=OwnerContextPolicy(
                 model_name=owner_settings.selected_model.name,
                 capacity_tokens=owner_settings.context_memory.capacity_tokens,
