@@ -7,8 +7,8 @@
 <h3 align="center">Autonomous Harness Orchestrator</h3>
 
 <p align="center">
-  AgentPanelX is a local-first control plane for long-running coding projects.<br />
-  A Project Owner agent maintains intent, rolls plans forward, recovers interrupted delivery, and turns execution history into evidence for Harness Evolution.
+  AgentPanelX gives a Project Owner agent the Runtime to maintain intent, roll plans forward,<br />
+  recover interrupted delivery, and turn execution history into evidence for Harness Evolution.
 </p>
 
 <p align="center">
@@ -36,6 +36,28 @@ AgentPanelX v0.2 advances the project from coordinated execution toward a contro
 - Optimized local model gateway: connect through a local OpenAI-compatible proxy backed by an [**OpenAI subscription**](docs/chatgpt-local-auth.md), preserve Project Owner context and cache affinity across activations, and surface gateway timeouts and failures as explicit Runtime evidence.
 - **Task Distributor and rolling Milestones:** plan the next executable horizon instead of freezing an exhaustive roadmap up front, then add a hardening pass that evaluates code quality, applies behavior-preserving refactoring when justified, and records QA evidence.
 - **Ultra Mode:** when delivery moves from `IN_PROGRESS` to `BLOCKED`, AutoCodex uses the bound Observe, Control, and Attribution Skills to decide whether established intent is sufficient to continue. Clear decisions return the Project Owner to rolling delivery; genuinely unresolved cases remain blocked with an attribution report and a Historical Owner reflection.
+
+## Humans set strategy; agents optimize tactics
+
+Humans own low-frequency, high-impact strategic design and reauthorization: Architecture defines system boundaries and core interfaces; Roadmap defines Milestone outcomes and priorities.
+
+Agents own high-frequency tactical planning and delivery based on real feedback. Because no initial Plan can predict every decision exposed by real delivery, AgentPanelX applies agile rolling planning: the Project Owner uses implementation, test, QA, and Candidate evidence to continuously revise local architectural choices, task decomposition and assignment, execution order, and hardening strategy.
+
+```text
+Human: Architecture + Roadmap
+              ↓ approved strategy
+Project Owner: intent + agile rolling planning
+              ↓
+Planner / Task Distributor / Reviewer / Executor
+              ↓
+Stage → QA → Candidate → next Milestone
+              │
+              └─ BLOCKED → Observe / Control / Attribution
+                              ├─ resume delivery
+                              └─ Proposal → Human
+```
+
+A project-local Runtime preserves approvals, artifacts, delivery state, and the Timeline. Within the approved strategy, the Project Owner and Ultra Mode can optimize or recover delivery; strategic changes return to the human as an evidence-backed Proposal. AgentPanelX does not replace the human architect—it removes the need to supervise every implementation detail.
 
 ## Agent-native onboarding
 

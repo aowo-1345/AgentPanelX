@@ -7,8 +7,8 @@
 <h3 align="center">Autonomous Harness Orchestrator</h3>
 
 <p align="center">
-  AgentPanelX 是面向长周期 Coding Projects 的本地优先控制平面。<br />
-  Project Owner 维护目标、滚动规划、恢复中断交付，并将执行历史沉淀为 Harness Evolution 证据。
+  AgentPanelX 为 Project Owner 提供 Runtime，使其能够维护用户意图、推进滚动规划、<br />
+  恢复中断交付，并将执行历史转化为 Harness Evolution 证据。
 </p>
 
 <p align="center">
@@ -36,6 +36,28 @@ AgentPanelX v0.2 从“能够协调执行”继续走向可承载真实长周期
 - 优化的本地模型网关：支持通过 OpenAI-compatible 本地代理使用 [**OpenAI 订阅账号**](docs/chatgpt-local-auth.zh-CN.md)，在多次 Activation 之间保持 Project Owner 上下文与 Cache Affinity，并将网关超时和异常沉淀为明确的 Runtime 证据。
 - **Task Distributor 与滚动 Milestone：** 不在开始时冻结一份穷尽所有细节的路线图，而是持续规划近期可执行范围；交付后再进入质量加固阶段，评估代码质量，视证据进行行为保持式重构并记录 QA 结果。
 - **Ultra Mode：** 当交付从 `IN_PROGRESS` 进入 `BLOCKED`，AutoCodex 使用绑定的 Observe、Control 与 Attribution Skills 判断既有意图是否足以继续。明确的问题会让 Project Owner 回到滚动交付；确实无法定夺的问题继续保持阻塞，并产出归因报告与 Historical Owner 反思。
+
+## 人类确定战略，Agent 负责战术优化
+
+人类负责低频、高影响的战略设计和重新授权：Architecture 确定系统边界和核心接口，Roadmap 确定 Milestone 目标和优先级。
+
+Agent 负责高频、基于真实反馈的战术规划与交付。因为无论前期 Plan 多详细，真正实施时仍会出现无法提前预见的关键决策，所以 AgentPanelX 采用敏捷滚动规划：Project Owner 根据实现结果、测试、QA 和 Candidate 证据，持续调整局部架构方案、任务拆分与 Agent 分配、执行顺序和质量加固策略。
+
+```text
+人类：Architecture + Roadmap
+              ↓ 批准战略
+Project Owner：维护意图 + 敏捷滚动规划
+              ↓
+Planner / Task Distributor / Reviewer / Executor
+              ↓
+Stage → QA → Candidate → 下一 Milestone
+              │
+              └─ BLOCKED → Observe / Control / Attribution
+                              ├─ 恢复交付
+                              └─ Proposal → 人类
+```
+
+项目本地 Runtime 持久化审批、Artifact、交付状态与 Timeline。在已批准的战略范围内，Project Owner 和 Ultra Mode 可以持续优化或恢复交付；战略变化则形成带有证据的 Proposal，重新交给人类决策。AgentPanelX 不取代人类架构师，而是让人类不再监督每一个实施细节。
 
 ## Agent-native 上手方式
 
