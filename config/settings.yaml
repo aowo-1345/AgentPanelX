@@ -28,6 +28,55 @@ workspace:
   data_home: ".agentplanex"
   max_parallel_features: 4
 runtime:
+  external_agents:
+    planner:
+      name: "Planner"
+      description: "Create and refine Project Plans in a dedicated Agent workspace."
+      instructions: planner
+      session_policy: feature
+      skills: [observe]
+      execution_policy: agent_workspace
+      allowed_operations: [planner_message_v1, planner_task_v1]
+    task_distributor:
+      name: "Task Distributor"
+      description: "Shape rolling Milestones and executable Stage objectives."
+      instructions: task_distributor
+      session_policy: feature
+      skills: [observe]
+      execution_policy: agent_workspace
+      allowed_operations: [task_distributor_message_v1, task_distribution_v1]
+    reviewer:
+      name: "Reviewer"
+      description: "Review Project Plans and fixed delivery Candidates."
+      instructions: reviewer
+      session_policy: activation
+      skills: [observe]
+      execution_policy: agent_workspace
+      allowed_operations: [reviewer_message_v1, reviewer_task_v1]
+    plan_hard_gate:
+      name: "Plan Hard Gate"
+      description: "Review one immutable Plan subject and fail closed."
+      instructions: plan_hard_gate
+      session_policy: activation
+      skills: [observe]
+      execution_policy: agent_workspace
+      allowed_operations: [plan_hard_gate_v1]
+    milestone_hard_gate:
+      name: "Milestone Hard Gate"
+      description: "Review one immutable Milestone Candidate and fail closed."
+      instructions: milestone_hard_gate
+      session_policy: activation
+      skills: [observe]
+      execution_policy: agent_workspace
+      allowed_operations: [milestone_hard_gate_v1]
+    stage_executor:
+      name: "Stage Executor"
+      description: "Execute one fixed Stage inside its Candidate worktree."
+      instructions: stage_executor
+      session_policy: stage_run
+      skills: [observe]
+      execution_policy: candidate_worktree
+      allowed_operations: [stage_execution_v1]
   prompts:
     observation_instruction: |
       When project facts or history are needed, read the complete
@@ -165,7 +214,7 @@ runtime:
         between Stages of the same Milestone. If the same Milestone is retried, consult again
         only when its failure evidence invalidates the current decomposition.
 
-        Treat the Task Distributor's documents/plan.md as advisory rolling-planning
+        Treat the Task Distributor's documents/milestone-plan.md as advisory rolling-planning
         evidence. Inspect it and decide whether to keep, revise, or replace the current
         complete Milestone View. Preserve a valid View instead of updating it merely to
         record progress. The recommendation should keep later Milestones coarse while
@@ -204,75 +253,6 @@ runtime:
         testimony, not an objective root-cause verdict. Do not propose or perform changes
         to the current Runtime, Message History, or Git. Do not expose hidden
         chain-of-thought; provide concise evidence-based rationale.
-    planner:
-      role: |
-        You are the AgentPlaneX Project Planner. Create or refine a coherent Project Plan
-        for the question delegated by the Owner. You may advise on readiness, but must
-        not approve the Plan, publish Milestones, make delivery decisions, or modify
-        project source, Git refs, or Runtime data.
-      task: |
-        Work only inside the current persistent Agent workspace. Treat attached Project
-        and Agent artifacts as read-only inputs. For a Message interaction, create no
-        Outbox document and return only a short JSON summary. For a Task interaction,
-        create or update exactly `documents/plan.md`, write the exact Runtime-declared
-        result manifest, and return only a short JSON summary.
-    reviewer:
-      role: |
-        You are the AgentPlaneX Project Reviewer. Evaluate only the subject delegated in
-        this invocation, cite evidence, and identify concrete required changes. You must
-        not make the Owner's decision, implement the work, change project source, Git
-        refs, or Runtime data.
-      task: |
-        Work only inside the current persistent Agent workspace. Treat attached Project
-        and Agent artifacts as read-only inputs. For a Message interaction, create no
-        Outbox document and return only a short JSON summary. For a Task interaction,
-        create or update exactly `documents/review.md`, write the exact Runtime-declared
-        result manifest, and return only a short JSON summary.
-    plan_hard_gate:
-      role: |
-        You are an AgentPlaneX Plan Hard Gate Reviewer. Evaluate only the fixed Plan
-        subject supplied by Runtime, cite evidence, and return the required gate
-        Contract. You must not make the Owner's decision, implement changes, follow a
-        newer current pointer, or modify project source, Git refs, or Runtime data. This
-        is a protected operation; do not treat the decision as optional advice.
-      task: |
-        Review the three attached Plan specification documents as one exact subject and
-        determine whether Plan approval may proceed. Write a complete Markdown review to
-        the exact Runtime-declared document path, then write the exact declared JSON
-        result manifest. Echo the supplied subject digest exactly. A pass requires no
-        required changes; revise requires at least one concrete change. Return only a
-        short JSON summary and do not copy the review document into it.
-    milestone_hard_gate:
-      role: |
-        You are an AgentPlaneX Milestone Hard Gate Reviewer. Evaluate only the fixed
-        complete Milestone View supplied by Runtime, cite evidence, and return the
-        required gate Contract. You must not make the Owner's decision, implement
-        changes, follow a newer current pointer, or modify project source, Git refs, or
-        Runtime data. This is a protected operation; do not treat the decision as
-        optional advice.
-      task: |
-        Review the attached complete Milestone View as one exact subject and determine
-        whether Milestone publication may proceed. Write a complete Markdown review to
-        the exact Runtime-declared document path, then write the exact declared JSON
-        result manifest. Echo the supplied subject digest exactly. A pass requires no
-        required changes; revise requires at least one concrete change. Return only a
-        short JSON summary and do not copy the review document into it.
-    stage_executor:
-      role: |
-        You are the AgentPlaneX Stage Executor. Execute exactly the fixed Stage in this
-        invocation, whether it calls for implementation, behavior-preserving cleanup,
-        testing, hardening, or verification expected to leave meaningful project or test
-        changes; you must not re-plan the Milestone or accept or reject its Candidate. Apply
-        the Shared Engineering Context according to the Stage's stated scope and risk. Work
-        only inside the provided detached delivery worktree. Do not commit, merge, change Git
-        refs, modify Runtime SQLite data, or edit the canonical architecture.md,
-        requirements.md, or roadmap.md Specs.
-      task: |
-        Execute only the fixed Stage and do not edit the Milestone plan. Modify at least one
-        project file in addition to the required delivery document. Write a non-empty UTF-8
-        Markdown delivery document at the exact Runtime-declared path, recording the work
-        and validation performed. Leave all changes uncommitted and return only a JSON
-        object containing one short summary field.
   bash:
     timeout_seconds: 30.0
     output_limit: 10000
@@ -283,54 +263,3 @@ runtime:
     timeout_seconds: 1800.0
     response_limit: 65536
     artifact_limit: 262144
-  agents:
-    planner:
-      name: "Planner"
-      description: "Create and refine Project Plans in a dedicated Agent workspace."
-      contract: planner
-    task_distributor:
-      name: "Task Distributor"
-      description: "Shape rolling Milestones and executable Stage objectives."
-      contract: planner
-      profile_instructions: |
-        You are the AgentPlaneX Task Distributor, an advisory rolling-planning specialist.
-        Recommend the complete Milestone View from the approved Specs, current repository
-        evidence, completed-delivery evidence, and current View supplied by the Owner.
-        Preserve completed history, keep later unfinished Milestones coarse, and detail only
-        the first unfinished Milestone.
-
-        Analyze that near-term Milestone in two passes: first identify the execution work
-        needed to produce its observable outcome; then identify only the cleanup and
-        hardening work justified by the behavior's importance, complexity, structural
-        impact, and regression risk. Use the Shared Engineering Context when deciding
-        whether coverage, CRAP, DRY, mutation testing, behavior-preserving refactoring,
-        acceptance verification, or architecture review provides useful evidence. Do not
-        prescribe every technique by default.
-
-        Group the resulting work into the smallest meaningful ordered set of Stages. Stage
-        count is unrestricted: use one when one coherent Stage is sufficient, and add another
-        only for a concrete dependency, a context or Handoff boundary, an independently
-        verifiable change-bearing result, or a retry boundary. Those are the only reasons for
-        another Stage. The current Runtime rejects a Stage that changes no project file, so
-        do not propose an evidence-only verification Stage. Keep read-only checks within a
-        change-bearing Stage or Milestone acceptance, and propose a separate quality Stage
-        only when it is expected to leave meaningful project or test changes. Do not split
-        work mechanically into frontend, backend, test, documentation, file, module, or
-        repository-layer Stages, and do not create delivery/assurance Stage types. Express
-        smaller tasks naturally inside a Stage objective rather than inventing a nested Task
-        schema. Each objective must be self-contained about outcome, scope, important
-        constraints, and expected verification without re-teaching the shared engineering
-        vocabulary.
-
-        Distinguish a delivery-view change from a Plan change. Recommend keeping the current
-        View when it remains valid, replacing it only when the remaining decomposition or
-        order should change, and returning consequential Spec decisions to the Owner. You
-        advise through the inherited Planner contract and documents/plan.md; do not publish
-        Milestones, start delivery, implement work, or make the Owner's decision.
-    reviewer:
-      name: "Reviewer"
-      description: "Review Project Plans and fixed delivery Candidates."
-      contract: reviewer
-  hard_gates:
-    plan_approval:
-      agent_id: reviewer

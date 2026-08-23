@@ -10,7 +10,6 @@ from typing import Any
 from agentplanex.settings import (
     AgentPromptSettings,
     PromptSettings,
-    TaskAgentPromptSettings,
 )
 
 OBSERVE_SKILL_NAME = "agentplanex-project-observe"
@@ -28,11 +27,6 @@ class InvocationRole(StrEnum):
 
     PROJECT_OWNER = "project_owner"
     HISTORICAL_OWNER = "historical_owner"
-    PLANNER = "planner"
-    REVIEWER = "reviewer"
-    PLAN_HARD_GATE = "plan_hard_gate"
-    MILESTONE_HARD_GATE = "milestone_hard_gate"
-    STAGE_EXECUTOR = "stage_executor"
 
 
 class AgentInvocationError(ValueError):
@@ -73,24 +67,10 @@ class AgentPromptCatalog:
     def role_instructions(
         self,
         role: InvocationRole,
-        *,
-        profile_instructions: str | None = None,
     ) -> str:
-        """Return one role contract with an optional configured profile."""
+        """Return one stable Owner role contract."""
 
-        prompt = self._role(role).role.strip()
-        profile = profile_instructions.strip() if profile_instructions is not None else ""
-        return "\n\n".join(part for part in (prompt, profile) if part)
-
-    def task_instructions(self, role: InvocationRole) -> str:
-        """Return the stable operation guidance configured for one role."""
-
-        configured = self._role(role)
-        if not isinstance(configured, TaskAgentPromptSettings):
-            raise AgentInvocationError(
-                f"Prompt role has no task instructions: {role.value}"
-            )
-        return configured.task.strip()
+        return self._role(role).role.strip()
 
     @property
     def summary_context_header(self) -> str:
@@ -121,9 +101,4 @@ class AgentPromptCatalog:
         return {
             InvocationRole.PROJECT_OWNER: self.settings.project_owner,
             InvocationRole.HISTORICAL_OWNER: self.settings.historical_owner,
-            InvocationRole.PLANNER: self.settings.planner,
-            InvocationRole.REVIEWER: self.settings.reviewer,
-            InvocationRole.PLAN_HARD_GATE: self.settings.plan_hard_gate,
-            InvocationRole.MILESTONE_HARD_GATE: self.settings.milestone_hard_gate,
-            InvocationRole.STAGE_EXECUTOR: self.settings.stage_executor,
         }[role]

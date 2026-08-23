@@ -1,7 +1,5 @@
-"""Configured Planner and Reviewer identities owned by Agent Collaboration."""
+"""Configured A2A Agent identities and stable Definitions."""
 
-import hashlib
-import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -15,75 +13,48 @@ _AGENT_ID = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
 class DelegatedAgentRole(StrEnum):
-    """Config-visible role of an Agent available for delegation."""
+    """A2A role and its role-owned output semantics."""
 
     PLANNER = "planner"
     REVIEWER = "reviewer"
+    TASK_DISTRIBUTOR = "task_distributor"
 
 
 @dataclass(frozen=True, slots=True)
 class AgentCard:
-    """A configured Planner or Reviewer profile."""
+    """One Owner-visible Agent Card bound to a stable Definition."""
 
     agent_id: str
     name: str
     description: str
-    profile_instructions: str | None
     role: DelegatedAgentRole
-    profile_digest: str
 
 
 class AgentCatalog:
-    """Validate configured delegated Agents and the Hard Gate Reviewer binding."""
+    """Validate and expose the three Owner-addressable external Agents."""
 
-    __slots__ = ("cards", "hard_gate_reviewer_id")
+    __slots__ = ("cards",)
 
     cards: Mapping[str, AgentCard]
-    hard_gate_reviewer_id: str
 
     def __init__(self, settings: RuntimeSettings) -> None:
         cards: dict[str, AgentCard] = {}
-        for agent_id, configured in settings.agents.items():
-            normalized_id = agent_id.strip()
-            if normalized_id != agent_id or not _AGENT_ID.fullmatch(agent_id):
-                raise AgentInvocationError(f"Invalid Agent ID: {agent_id!r}")
-            if any(
-                not value.strip()
-                for value in (configured.name, configured.description)
-            ):
+        for role in DelegatedAgentRole:
+            agent_id = role.value
+            configured = settings.external_agents.get(agent_id)
+            if configured is None:
                 raise AgentInvocationError(
-                    f"Agent Card fields must not be blank: {agent_id!r}"
+                    f"Missing External Agent definition: {agent_id!r}"
                 )
-            role = DelegatedAgentRole(configured.contract)
-            digest_source = json.dumps(
-                {"agent_id": agent_id, **configured.model_dump(mode="json")},
-                ensure_ascii=True,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("utf-8")
+            if not _AGENT_ID.fullmatch(agent_id):
+                raise AgentInvocationError(f"Invalid Agent ID: {agent_id!r}")
             cards[agent_id] = AgentCard(
                 agent_id=agent_id,
                 name=configured.name,
                 description=configured.description,
-                profile_instructions=configured.profile_instructions,
                 role=role,
-                profile_digest=hashlib.sha256(digest_source).hexdigest(),
-            )
-        if not cards:
-            raise AgentInvocationError("At least one Config Agent Card is required")
-
-        reviewer_id = settings.hard_gates.plan_approval.agent_id
-        reviewer = cards.get(reviewer_id)
-        if reviewer is None:
-            raise AgentInvocationError(
-                f"Plan Hard Gate references unknown Reviewer Agent: {reviewer_id!r}"
-            )
-        if reviewer.role is not DelegatedAgentRole.REVIEWER:
-            raise AgentInvocationError(
-                f"Plan Hard Gate Agent must use the reviewer Contract: {reviewer_id!r}"
             )
         self.cards = MappingProxyType(cards)
-        self.hard_gate_reviewer_id = reviewer_id
 
     def get(self, agent_id: str) -> AgentCard:
         try:
@@ -93,8 +64,7 @@ class AgentCatalog:
 
     def describe(self) -> str:
         """Render configured Agent Cards for the model-visible Tool description."""
-
         return "\n".join(
-            f"- {card.agent_id} ({card.role.value}): {card.name}. {card.description}"
+            f"- {card.agent_id}: {card.name}. {card.description}"
             for card in self.cards.values()
         )

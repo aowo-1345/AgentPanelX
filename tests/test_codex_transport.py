@@ -39,7 +39,8 @@ def test_transport_keeps_workspace_write_and_sets_codex_network_policy(
     class _Thread:
         id = "thread-1"
 
-        def turn(self, _input: object, **kwargs: object) -> _Turn:
+        def turn(self, input_items: object, **kwargs: object) -> _Turn:
+            captured["input_items"] = input_items
             captured["turn"] = kwargs
             return _Turn()
 
@@ -70,6 +71,7 @@ def test_transport_keeps_workspace_write_and_sets_codex_network_policy(
             developer_instructions="Implement the task.",
             message="Run the required command.",
             mentions=(),
+            skills=(("observe", tmp_path / "SKILL.md"),),
         )
     )
 
@@ -84,5 +86,9 @@ def test_transport_keeps_workspace_write_and_sets_codex_network_policy(
     assert isinstance(turn, dict)
     assert "sandbox" not in turn
     assert turn["approval_mode"] is ApprovalMode.deny_all
+    input_items = captured["input_items"]
+    assert isinstance(input_items, list)
+    assert isinstance(input_items[0], codex_module.TextInput)
+    assert isinstance(input_items[1], codex_module.SkillInput)
     assert captured["closed"] is True
     assert result.thread_id == "thread-1"

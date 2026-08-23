@@ -114,19 +114,34 @@ class CodexSettings(_SettingsModel):
     artifact_limit: int = Field(default=262_144, gt=0)
 
 
-class AgentCardSettings(_SettingsModel):
-    """One Config-declared local Planner or Reviewer profile."""
+class ExternalAgentDefinitionSettings(_SettingsModel):
+    """Stable configuration for one Owner-external Agent."""
 
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
-    profile_instructions: str | None = Field(default=None, min_length=1)
-    contract: Literal["planner", "reviewer"]
+    instructions: str = Field(min_length=1)
+    session_policy: Literal["feature", "activation", "stage_run"]
+    skills: tuple[str, ...] = ()
+    execution_policy: Literal[
+        "agent_workspace",
+        "candidate_worktree",
+    ]
+    allowed_operations: tuple[str, ...] = Field(min_length=1)
 
-    @field_validator("profile_instructions")
+    @field_validator("name", "description", "instructions", "execution_policy")
     @classmethod
-    def _profile_not_blank(cls, value: str | None) -> str | None:
-        if value is not None and not value.strip():
-            raise ValueError("Agent profile instructions must not be blank")
+    def _external_text_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("External Agent configuration text must not be blank")
+        return value
+
+    @field_validator("skills", "allowed_operations")
+    @classmethod
+    def _external_items_not_blank(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not item.strip() for item in value):
+            raise ValueError("External Agent configuration items must not be blank")
+        if len(set(value)) != len(value):
+            raise ValueError("External Agent configuration items must be unique")
         return value
 
 
@@ -143,19 +158,6 @@ class AgentPromptSettings(_SettingsModel):
         return value
 
 
-class TaskAgentPromptSettings(AgentPromptSettings):
-    """Role instructions plus stable guidance for one operation family."""
-
-    task: str = Field(min_length=1)
-
-    @field_validator("task")
-    @classmethod
-    def _task_not_blank(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("Prompt text must not be blank")
-        return value
-
-
 class PromptSettings(_SettingsModel):
     """The complete configurable Prompt catalog for Runtime Agent invocations."""
 
@@ -166,11 +168,6 @@ class PromptSettings(_SettingsModel):
     update_intent_summary: str = Field(min_length=1)
     project_owner: AgentPromptSettings
     historical_owner: AgentPromptSettings
-    planner: TaskAgentPromptSettings
-    reviewer: TaskAgentPromptSettings
-    plan_hard_gate: TaskAgentPromptSettings
-    milestone_hard_gate: TaskAgentPromptSettings
-    stage_executor: TaskAgentPromptSettings
 
     @field_validator(
         "observation_instruction",
@@ -184,20 +181,6 @@ class PromptSettings(_SettingsModel):
         if not value.strip():
             raise ValueError("Prompt text must not be blank")
         return value
-
-
-class PlanApprovalHardGateSettings(_SettingsModel):
-    """Configured Reviewer used for the protected Plan approval action."""
-
-    agent_id: str = Field(min_length=1)
-
-
-class HardGateSettings(_SettingsModel):
-    """Bindings for protected actions that require a configured Reviewer."""
-
-    plan_approval: PlanApprovalHardGateSettings = PlanApprovalHardGateSettings(
-        agent_id="reviewer"
-    )
 
 
 class WorkspaceSettings(_SettingsModel):
@@ -217,9 +200,25 @@ class RuntimeSettings(_SettingsModel):
 
     bash: BashSettings = BashSettings()
     codex: CodexSettings = CodexSettings()
-    agents: dict[str, AgentCardSettings] = Field(min_length=1)
+    external_agents: dict[str, ExternalAgentDefinitionSettings] = Field(min_length=1)
     prompts: PromptSettings
-    hard_gates: HardGateSettings = HardGateSettings()
+
+    @model_validator(mode="after")
+    def _required_external_agents_exist(self) -> "RuntimeSettings":
+        required = {
+            "planner",
+            "reviewer",
+            "task_distributor",
+            "plan_hard_gate",
+            "milestone_hard_gate",
+            "stage_executor",
+        }
+        missing = sorted(required - self.external_agents.keys())
+        if missing:
+            raise ValueError(
+                "Missing required External Agent definitions: " + ", ".join(missing)
+            )
+        return self
 
 
 class Settings(_SettingsModel):

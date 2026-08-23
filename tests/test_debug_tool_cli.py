@@ -1,6 +1,7 @@
 """Observable tests for the direct Tool Action debug entry point."""
 
 import json
+import re
 import shlex
 import subprocess
 import sys
@@ -60,22 +61,27 @@ def _invocation_envelope(message: str) -> dict[str, object]:
 def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep Runtime/Outbox tests deterministic while exercising the real boundary."""
 
-    def run(_self: CodexTurnTransport, request: CodexTurnRequest) -> CodexTurnResult:
+    def run(
+        _self: CodexTurnTransport,
+        request: CodexTurnRequest,
+        *,
+        on_thread_opened: object | None = None,
+    ) -> CodexTurnResult:
+        if on_thread_opened is not None:
+            assert callable(on_thread_opened)
+            on_thread_opened(request.thread_id or "deterministic-thread")
         pending = tuple(
             directory / "result.json"
             for directory in request.workspace.glob("outbox/*")
             if not (directory / "result.json").exists()
         )
-        envelope = _invocation_envelope(request.message)
-        role = envelope["role"]
-        output_contract = envelope["output_contract"]
-        assert isinstance(role, str)
-        assert isinstance(output_contract, dict)
-        is_gate = role in {"plan_hard_gate", "milestone_hard_gate"}
-        is_task = output_contract.get("interaction") == "task"
-        is_stage = role == "stage_executor"
+        is_gate = "Hard Gate" in request.developer_instructions
+        is_task = "stable Task manifest" in request.message
+        is_stage = "Stage Executor" in request.developer_instructions
         if is_stage:
-            contract = json.loads(request.message.split("\n\n", 1)[0])
+            marker = "Fixed StageRun contract:\n"
+            start = request.message.index(marker) + len(marker)
+            contract, _ = json.JSONDecoder().raw_decode(request.message[start:])
             assert isinstance(contract, dict)
             delivery_document = contract["delivery_document"]
             stage = contract["stage"]
@@ -102,17 +108,21 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
                         encoding="utf-8",
                     )
         if is_gate or is_task:
-            declared = output_contract if is_gate else output_contract["outbox"]
-            assert isinstance(declared, dict)
-            schema = declared["manifest_schema"]
-            artifact = declared["artifact_contract"]
-            assert isinstance(schema, dict)
-            assert isinstance(artifact, dict)
-            required = set(schema["required"])
-            assert {"version", "summary", "artifacts"} <= required
             assert len(pending) == 1
-            result_path = Path(str(declared["result_path"]))
-            assert result_path == pending[0]
+            result_path = pending[0]
+            document_name = (
+                "review.md"
+                if is_gate or "Reviewer" in request.developer_instructions
+                else (
+                    "milestone-plan.md"
+                    if "Task Distributor" in request.developer_instructions
+                    else "plan.md"
+                )
+            )
+            artifact = {
+                "path": f"documents/{document_name}",
+                "media_type": "text/markdown",
+            }
             document_path = request.workspace / str(artifact["path"])
             instruction = request.message.split("\n\n", 1)[0]
             document_path.write_text(
@@ -120,9 +130,12 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
                 encoding="utf-8",
             )
             if is_gate:
-                subject = declared["subject_contract"]
-                assert isinstance(subject, dict)
-                digest = str(subject["subject_digest"])
+                matched = re.search(
+                    r'"subject_digest":\s*"([^"]+)"',
+                    request.message,
+                )
+                assert matched is not None
+                digest = matched.group(1)
                 requires_changes = any(
                     "NEEDS_REVIEW_CHANGES" in path.read_text(encoding="utf-8")
                     for _, path in request.mentions
@@ -172,7 +185,12 @@ class _ReplyingModel:
 
     def query(self, messages: list[Message]) -> Message:
         type(self).queries.append([dict(message) for message in messages])
-        content = str(messages[-1].get("content", ""))
+        user_message = next(
+            message
+            for message in reversed(messages)
+            if message.get("role") == "user"
+        )
+        content = str(user_message.get("content", ""))
         raise ReplyToHuman(
             content=content,
             response={"role": "assistant", "content": content},
@@ -191,7 +209,7 @@ class _PlanRequestingModel:
         pass
 
     def query(self, messages: list[Message]) -> Message:
-        assert messages[-1].get("role") == "user"
+        assert any(message.get("role") == "user" for message in messages)
         return {
             "role": "assistant",
             "content": "",
@@ -497,7 +515,7 @@ def test_real_react_loop_records_timeline_with_exact_message_checkpoints(
     histories = _loaded_message_histories(project_path)
     events = _loaded_events(project_path)
     reviewed_digest = _load_context(project_path).pending_plan_subject_digest
-    assert reviewed_digest is not None
+    assert reviewed_digest is not None, json.dumps(drive_response, indent=2)
     assert drive_result == 0
     assert drive_response["result"]["status"] == "PlanApprovalRequested"
     assert drive_response["activation"]["status"] == "COMPLETED"
@@ -954,11 +972,10 @@ def test_talk_task_keeps_workspace_and_publishes_document_uri(
                 {
                     "tool": "talk_to_agent",
                     "arguments": {
-                            "agent_id": "planner",
-                            "kind": "task",
-                            "message": "Create the initial Plan document.",
-                            "conversation_id": None,
-                            "artifacts": [{"uri": "project:///requirements.md"}],
+                        "agent_id": "planner",
+                        "kind": "task",
+                        "message": "Create the initial Plan document.",
+                        "artifacts": [{"uri": "project:///requirements.md"}],
                     },
                 }
             ),
@@ -999,7 +1016,6 @@ def test_talk_task_keeps_workspace_and_publishes_document_uri(
                         "agent_id": "planner",
                         "kind": "task",
                         "message": "Refine the existing Plan document.",
-                        "conversation_id": first_result["conversation_id"],
                         "artifacts": [],
                     },
                 }
@@ -1010,14 +1026,17 @@ def test_talk_task_keeps_workspace_and_publishes_document_uri(
     second_result = second_response["result"]
 
     assert second_code == 0
-    assert second_result["conversation_id"] == first_result["conversation_id"]
-    assert second_result["artifacts"][0]["uri"] == first_artifact["uri"]
+    assert second_result["artifacts"][0]["uri"] != first_artifact["uri"]
     assert second_result["artifacts"][0]["sha256"] != first_artifact["sha256"]
-    assert "Refine the existing Plan document." in first_document.path.read_text(
+    assert "Create the initial Plan document." in first_document.path.read_text(
         encoding="utf-8"
     )
-    workspace = first_document.path.parents[1]
-    assert len(tuple(workspace.glob("outbox/*/result.json"))) == 2
+    second_document = store.resolve_artifact(second_result["artifacts"][0]["uri"])
+    assert "Refine the existing Plan document." in second_document.path.read_text(
+        encoding="utf-8"
+    )
+    workspace = first_document.path.parents[2]
+    assert len(tuple(workspace.glob("workspace/outbox/*/result.json"))) == 2
 
     cross_agent_code = debug_tool_cli.main(
         [
@@ -1030,8 +1049,7 @@ def test_talk_task_keeps_workspace_and_publishes_document_uri(
                     "arguments": {
                         "agent_id": "reviewer",
                         "kind": "message",
-                        "message": "Continue the Planner conversation.",
-                        "conversation_id": first_result["conversation_id"],
+                        "message": "Review independently.",
                         "artifacts": [],
                     },
                 }
@@ -1039,8 +1057,8 @@ def test_talk_task_keeps_workspace_and_publishes_document_uri(
         ]
     )
     cross_agent_response = json.loads(capfd.readouterr().out)
-    assert cross_agent_code == 1
-    assert "different Agent" in cross_agent_response["result"]["error"]
+    assert cross_agent_code == 0
+    assert cross_agent_response["result"]["ok"] is True
     events = _loaded_events(project_path)
     assert [event.event_type.value for event in events] == [
         "AGENT_INVOCATION_STARTED",
@@ -1048,27 +1066,25 @@ def test_talk_task_keeps_workspace_and_publishes_document_uri(
         "AGENT_INVOCATION_STARTED",
         "AGENT_INVOCATION_COMPLETED",
         "AGENT_INVOCATION_STARTED",
-        "AGENT_INVOCATION_FAILED",
+        "AGENT_INVOCATION_COMPLETED",
     ]
     first_invocation = events[0].payload["invocation_id"]
     second_invocation = events[2].payload["invocation_id"]
-    failed_invocation = events[4].payload["invocation_id"]
-    assert len({first_invocation, second_invocation, failed_invocation}) == 3
+    review_invocation = events[4].payload["invocation_id"]
+    assert len({first_invocation, second_invocation, review_invocation}) == 3
     assert events[1].payload["invocation_id"] == first_invocation
     assert events[3].payload["invocation_id"] == second_invocation
-    assert events[5].payload["invocation_id"] == failed_invocation
+    assert events[5].payload["invocation_id"] == review_invocation
     assert events[0].payload == {
         "invocation_id": first_invocation,
         "operation": "talk_to_agent",
         "agent_id": "planner",
         "kind": "task",
-        "resumed": False,
         "input_artifact_count": 1,
     }
     assert events[1].payload["output_artifacts"] == [first_artifact]
-    assert events[2].payload["resumed"] is True
     assert events[3].payload["output_artifacts"] == [second_result["artifacts"][0]]
-    assert events[5].payload["failure_type"] == "AgentCollaborationError"
+    assert events[5].payload["agent_id"] == "reviewer"
     assert _load_context(project_path) == context_before
     assert _git(project_path, "rev-parse", "HEAD") == initial_head
     assert _git(project_path, "status", "--short") == ""
@@ -1137,7 +1153,10 @@ def test_plan_hard_gate_timeout_records_failed_invocation_only(
     def timeout(
         _self: CodexTurnTransport,
         _request: CodexTurnRequest,
+        *,
+        on_thread_opened: object | None = None,
     ) -> CodexTurnResult:
+        del on_thread_opened
         raise CodexTransportTimeout("timed out")
 
     monkeypatch.setattr(CodexTurnTransport, "run", timeout)
@@ -1614,11 +1633,10 @@ def test_complete_rolling_delivery_is_observable_through_debug_commands(
                 {
                     "tool": "talk_to_agent",
                     "arguments": {
-                            "agent_id": "reviewer",
-                            "kind": "task",
-                            "message": "Review the exact current Milestone Candidate.",
-                            "conversation_id": None,
-                            "artifacts": [],
+                        "agent_id": "reviewer",
+                        "kind": "task",
+                        "message": "Review the exact current Milestone Candidate.",
+                        "artifacts": [],
                     },
                 }
             ),
@@ -1633,8 +1651,9 @@ def test_complete_rolling_delivery_is_observable_through_debug_commands(
     )
     review_artifact = review["result"]["artifacts"][0]
     assert review_artifact["project_relative_path"].endswith(
-        "/documents/review.md"
+        "/review.md"
     )
+    assert "/artifacts/" in review_artifact["uri"]
     assert (project_path / review_artifact["project_relative_path"]).is_file()
 
     decision_code = debug_tool_cli.main(
@@ -2207,7 +2226,9 @@ def test_plain_text_submits_then_drives_a_restart_safe_user_activation(
     capfd.readouterr()
     assert second_drive == 0
     restored_contents = [
-        message.get("content") for message in _ReplyingModel.queries[-1]
+        message.get("content")
+        for message in _ReplyingModel.queries[-1]
+        if message.get("role") != "developer"
     ]
     assert restored_contents[-3:] == [
         "please inspect the plan",

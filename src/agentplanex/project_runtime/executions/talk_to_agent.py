@@ -3,7 +3,7 @@
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from pydantic import Field, StringConstraints, field_validator
+from pydantic import Field, StringConstraints
 
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
@@ -32,10 +32,6 @@ type AgentId = Annotated[
     str,
     StringConstraints(min_length=1, pattern=r"^[a-z][a-z0-9_-]{0,63}$"),
 ]
-type ConversationId = Annotated[
-    str,
-    StringConstraints(min_length=1, pattern=r"^apx1\."),
-]
 type ArtifactUri = Annotated[
     str,
     StringConstraints(
@@ -57,24 +53,16 @@ class TalkToAgentArguments(ToolArgumentsModel):
         description="Use message for discussion or task for a role Contract document."
     )
     message: NonBlankText = Field(description="Instruction sent to the selected Agent.")
-    conversation_id: ConversationId | None = Field(
-        description="Use null for a new conversation; reuse an apx1.* ID for follow-up."
-    )
     artifacts: list[ArtifactInput] = Field(
         description="Read-only Runtime artifact inputs; use an empty array when absent."
     )
 
-    @field_validator("conversation_id", mode="before")
-    @classmethod
-    def empty_conversation_id_starts_new_conversation(cls, value: object) -> object:
-        return None if value == "" else value
-
-    def to_request(self) -> TalkToAgentRequest:
+    def to_request(self, request_key: str) -> TalkToAgentRequest:
         return TalkToAgentRequest(
+            request_key=request_key,
             agent_id=self.agent_id,
             kind=AgentInteractionKind(self.kind),
             message=self.message,
-            conversation_id=self.conversation_id,
             artifacts=tuple(ArtifactRef(uri=artifact.uri) for artifact in self.artifacts),
         )
 
@@ -84,10 +72,10 @@ def create_talk_to_agent_tool(agent_cards: str) -> ToolDefinition[TalkToAgentArg
         name=TALK_TO_AGENT_TOOL_NAME,
         description=(
             "Synchronously send a Message or file-producing Task to a configured "
-            "Planner or Reviewer. Message is a discussion turn with no document; Task "
-            "publishes the role Contract document (Planner plan.md or Reviewer review.md). "
-            "Reuse conversation_id for follow-up work and pass returned artifact URIs as "
-            "read-only inputs. Planner output is advisory until the Owner adopts it into "
+            "Planner, Reviewer, or Task Distributor. Message is a discussion turn with no "
+            "document; Task publishes the role Contract document. Runtime automatically "
+            "resumes role sessions according to policy. Pass returned artifact URIs as "
+            "read-only inputs. Agent output is advisory until the Owner adopts it into "
             "canonical Specs; Reviewer output is evidence and never makes the Owner's "
             "decision. Available Agent Cards:\n"
             f"{agent_cards}"
@@ -115,7 +103,33 @@ class TalkToAgentExecution(ProjectExecution[TalkToAgentArguments]):
         context: ProjectRuntimeState,
         arguments: TalkToAgentArguments,
     ) -> ToolExecutionResult:
-        request = arguments.to_request()
+        return self._execute(
+            context,
+            arguments,
+            request_identity=uuid4().hex,
+        )
+
+    def execute_with_identity(
+        self,
+        context: ProjectRuntimeState,
+        arguments: TalkToAgentArguments,
+        *,
+        request_identity: str | None,
+    ) -> ToolExecutionResult:
+        return self._execute(
+            context,
+            arguments,
+            request_identity=request_identity or uuid4().hex,
+        )
+
+    def _execute(
+        self,
+        context: ProjectRuntimeState,
+        arguments: TalkToAgentArguments,
+        *,
+        request_identity: str,
+    ) -> ToolExecutionResult:
+        request = arguments.to_request(request_identity)
         try:
             self.dependencies.collaboration.require_agent(request.agent_id)
         except AgentCollaborationError as error:
@@ -133,7 +147,6 @@ class TalkToAgentExecution(ProjectExecution[TalkToAgentArguments]):
                     "operation": "talk_to_agent",
                     "agent_id": request.agent_id,
                     "kind": request.kind.value,
-                    "resumed": request.conversation_id is not None,
                     "input_artifact_count": len(request.artifacts),
                 },
             )
@@ -158,7 +171,6 @@ class TalkToAgentExecution(ProjectExecution[TalkToAgentArguments]):
                     "operation": "talk_to_agent",
                     "agent_id": result.agent_id,
                     "kind": request.kind.value,
-                    "resumed": request.conversation_id is not None,
                     "input_artifact_count": len(request.artifacts),
                     "output_artifacts": [
                         {
@@ -177,7 +189,6 @@ class TalkToAgentExecution(ProjectExecution[TalkToAgentArguments]):
             output={
                 "ok": True,
                 "agent_id": result.agent_id,
-                "conversation_id": result.conversation_id,
                 "summary": result.summary,
                 "artifacts": [
                     {
@@ -221,7 +232,6 @@ class TalkToAgentExecution(ProjectExecution[TalkToAgentArguments]):
                     "operation": "talk_to_agent",
                     "agent_id": request.agent_id,
                     "kind": request.kind.value,
-                    "resumed": request.conversation_id is not None,
                     "failure_type": type(error).__name__,
                 },
             )

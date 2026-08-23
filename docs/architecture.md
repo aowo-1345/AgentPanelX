@@ -26,7 +26,7 @@ flowchart TB
         Dispatcher[Bounded Feature Dispatcher]
         Runtime[Project Runtime]
         Owner[Project Owner Agent]
-        Collaboration[Planner / Task Distributor / Reviewer]
+        Collaboration[External Agent Runtime]
         Delivery[Stage Delivery]
         Projection[Board / Workspace Projection]
         Bus[Event Bus]
@@ -277,6 +277,42 @@ Tool 执行与 ReAct Timeline。
 
 ## 6. 核心链路二：滚动规划与 Hard Gate
 
+### External Agent Runtime
+
+Project Owner 之外的 Planner、Reviewer、Task Distributor、两个 Hard Gate 与 Stage
+Executor 共享唯一调用入口 `ExternalAgentRuntime.invoke()`。业务模块只提交 Runtime 生成的
+request identity、受管 scope 和角色强类型 payload；不能提交 Prompt、Skill 路径、thread、
+workspace 或任意输出 schema。
+
+```mermaid
+sequenceDiagram
+    participant Business as Role Business Module
+    participant Runtime as ExternalAgentRuntime
+    participant Files as AgentWorkspaceStore
+    participant Codex as Codex Transport
+
+    Business->>Runtime: invoke agent/operation identity and typed incremental request
+    Runtime->>Files: select and lock managed session
+    Runtime->>Files: replay validated result when present
+    Runtime->>Codex: stable instructions and native Skills
+    Runtime->>Codex: task context and explicit attachments
+    Codex-->>Runtime: final response and Outbox files
+    Runtime->>Files: validate and freeze artifacts
+    Runtime-->>Business: typed static-contract result
+```
+
+稳定 Definition 来自 `resources/external_agents/*.md` 和 `runtime.external_agents` 配置；每次
+Activation 只包含本轮任务、小型 Runtime Context、明确附件和本轮输出位置。Planner 与 Task
+Distributor 分别按 Feature 自动恢复 Session，Reviewer 与两个 Gate 每次独立，Stage Executor
+按 StageRun 恢复。调用方不接触 `conversation_id`。Codex thread、request、已验证结果和冻结
+Artifact 存在 `.agentplanex/agent-workspaces/`，不增加 External Agent SQLite 生命周期表；只有
+匹配 request digest 的合法结果可重放。Definition 与所有已注册 Operation 的实现和 schema
+共同构成 Session protocol digest；业务调用方不能在 Activation 时替换它们。Codex 只获得
+`workspace/` 子目录的写权限，Runtime 管理的 Session 元数据、固定输入与冻结 Artifact 位于该
+写根之外。发布 URI 指向 `artifacts/<activation-id>/...` 的不可变字节，读取时复核路径、大小和
+digest。无法确认已超时进程终止时，旧 Session 被 quarantine；等待锁的调用方取得锁后再次检查
+fence，并改用新 workspace/thread，避免竞争 turn。
+
 Project Owner 在 Feature worktree 中维护 `requirements.md`、`architecture.md` 与 `roadmap.md`。Plan Approval 不是一个松散按钮，而是围绕精确 subject identity 的受保护转换。
 
 ```mermaid
@@ -318,8 +354,8 @@ Planning 先把文档字节冻结为不可变 subject，再复制到 Reviewer �
 Milestone View 使用相同设计：完整 Milestone 集合与当前 Plan commit 形成固定审查对象，Reviewer 在隔离 workspace 中返回结构化 manifest 和审计 artifact。
 
 Plan 获批、首次发布 Milestone View 前，以及每个 Candidate 被接受、准备启动下一个不同
-Milestone 前，Project Owner 会咨询 Task Distributor。Task Distributor 是复用 Planner
-Contract 的独立 Agent Card，在自己的 workspace 生成 `documents/plan.md` 作为建议；它不
+Milestone 前，Project Owner 会咨询 Task Distributor。Task Distributor 是一等外部 Agent，
+使用自己的 Feature Session，在 workspace 生成并冻结 `documents/milestone-plan.md` 作为建议；它不
 发布 Milestone，也不替 Owner 决策。建议保留完整 View 与 completed history，只细化第一
 个未完成 Milestone，远期 Milestone 保持粗粒度。Stage 数量不固定，普通任务写入自然语言
 objective；纯只读验证不单独成为 Stage，质量 Stage 仅在预计会形成有意义的项目或测试变更
@@ -516,7 +552,9 @@ flowchart LR
 - **定向执行：** 只有新接受的用户命令会驱动其目标 Feature；启动时不扫描并自动执行旧任务。
 - **Durable Activation：** Message 与 Activation 原子创建；启动时遗留的 `PENDING` 或 `RUNNING` Activation 会终结为 `FAILED`，不会自动重新执行。
 - **Durable Stage：** Stage claim、输出 commit、Candidate ref 与完成状态分别持久化；启动时遗留的 `QUEUED` 或 `RUNNING` StageRun 会终结为 `FAILED + BLOCKED`，后续只能由显式新动作重新排队。
-- **隔离工作区：** Feature、Reviewer 和 Stage 使用独立 worktree 或 workspace，降低并行 Agent 相互覆盖的风险。
+- **隔离工作区：** Feature、per-activation Reviewer / Gate 和 StageRun 使用独立 worktree 或 workspace，降低并行 Agent 相互覆盖的风险。
+- **Runtime 管理 Session：** 外部 Agent 调用方不管理 thread；同一 Session 的文件锁覆盖完整 Codex turn，危险超时会隔离旧 Session。
+- **不可变 Agent Artifact：** `documents/` 可继续编辑；只有按 Activation 冻结并通过 digest 校验的 Artifact 才能跨 Agent 使用。
 - **Fail-closed Hard Gate：** digest、manifest、artifact 或 Reviewer Contract 任一不满足即停止推进。
 - **本地优先：** Web host 限制为 `127.0.0.1` 或 `localhost`；模型凭据只从环境变量读取。
 - **受限 Shell：** Project Owner Bash 通过 Bubblewrap 限制持久写入范围并创建无网络 namespace；它是本地执行边界，不等同于多租户保密沙箱。
@@ -537,8 +575,10 @@ flowchart LR
 | Owner Tool Contract 与执行 | `src/agentplanex/project_owner_agent/tools/base.py`, `project_runtime/executions/` |
 | Owner model context / Rolling Summary | `src/agentplanex/project_owner_agent/context/`, `services/project_runtime_context/_owner.py` |
 | Planning 与 Plan identity | `src/agentplanex/services/planning/` |
-| Agent Invocation Contract 与 Prompt | `src/agentplanex/services/agent_invocation.py` |
-| Delegated Agent Collaboration、Catalog 与 Plan / Milestone Hard Gate | `src/agentplanex/services/agent_collaboration/` |
+| Project Owner / Historical Owner Invocation | `src/agentplanex/services/agent_invocation.py` |
+| 外部 Agent 统一调用、Session 与静态 Contract | `src/agentplanex/services/external_agent_runtime/`, `infrastructure/agent_workspace.py`, `infrastructure/codex.py` |
+| Owner A2A Planner / Reviewer / Task Distributor | `src/agentplanex/services/agent_collaboration/` |
+| Plan / Milestone Hard Gate | `src/agentplanex/services/planning/_plan_hard_gate.py`, `services/delivery/_milestone_hard_gate.py` |
 | Delivery 状态机与私有 Stage 执行 | `src/agentplanex/services/delivery/` |
 | EventBus 与 Timeline | `src/agentplanex/services/event_bus.py`, `infrastructure/sqlite/timeline.py` |
 | Model Gateway、Provider Adapter 与应用日志 | `src/agentplanex/infrastructure/model_gateway/`, `infrastructure/logging.py` |

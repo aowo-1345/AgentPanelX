@@ -198,7 +198,7 @@ class _OwnerRuntime:
         )
         self.append_messages(state, (format_tool_call_message(action),))
         try:
-            result = self._execute_latest_context(action)
+            result = self._execute_for_activation(activation.activation_id, action)
         except Exception as error:
             self.append_messages(
                 state,
@@ -376,14 +376,20 @@ class _OwnerRuntime:
         return (
             DefaultAgent(
                 model,
-                self._execute_latest_context,
+                lambda action: self._execute_for_activation(
+                    activation.activation_id,
+                    action,
+                ),
                 owner_context=owner_context,
                 config=config,
             )
             if self.approval_mode == "yolo"
             else InteractiveAgent(
                 model,
-                self._execute_latest_context,
+                lambda action: self._execute_for_activation(
+                    activation.activation_id,
+                    action,
+                ),
                 owner_context=owner_context,
                 approval=TerminalApproval(
                     require_tty=os.getenv("AGENTPLANEX_REQUIRE_INTERACTIVE_TERMINAL", "1") != "0"
@@ -397,6 +403,14 @@ class _OwnerRuntime:
         action: Action,
     ) -> ToolExecutionResult:
         return self.tool_executor(self.load_state(), action)
+
+    def _execute_for_activation(
+        self,
+        activation_id: str,
+        action: Action,
+    ) -> ToolExecutionResult:
+        identified = {**action, "_owner_activation_id": activation_id}
+        return self._execute_latest_context(identified)
 
     def append_messages(
         self,

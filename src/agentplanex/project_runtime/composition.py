@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.codex import CodexTurnTransport
@@ -19,19 +20,27 @@ from agentplanex.project_runtime.executions import (
     create_project_executions,
 )
 from agentplanex.project_runtime.runtime import ProjectRuntime
+from agentplanex.services._hard_gate import HardGateOperation
 from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.agent_collaboration._catalog import AgentCatalog
-from agentplanex.services.agent_collaboration._hard_gate import CodexHardGate
+from agentplanex.services.agent_collaboration._operations import A2AOperation
 from agentplanex.services.agent_invocation import (
     AgentPromptCatalog,
     resolve_observation_skill,
 )
+from agentplanex.services.delivery._milestone_hard_gate import MilestoneHardGate
 from agentplanex.services.delivery._service import DeliveryService
 from agentplanex.services.delivery._stage_executor import (
     CodexStageExecutor,
     StageExecutor,
+    _StageOperation,
 )
 from agentplanex.services.event_bus import EventBus
+from agentplanex.services.external_agent_runtime import ExternalAgentRuntime
+from agentplanex.services.external_agent_runtime._definitions import (
+    build_agent_definition,
+)
+from agentplanex.services.planning._plan_hard_gate import PlanHardGate
 from agentplanex.services.planning._service import PlanningService
 from agentplanex.services.project_runtime import ProjectRuntimeService
 from agentplanex.services.project_runtime_context._assembly import (
@@ -117,13 +126,49 @@ def _compose_command_graph(
         response_limit=codex_settings.response_limit,
         network_access=codex_settings.network_access,
     )
+    external_agents = ExternalAgentRuntime(
+        workspaces=workspaces,
+        transport=transport,
+        definitions=MappingProxyType(
+            {
+                key: build_agent_definition(key, configured)
+                for key, configured in runtime_settings.external_agents.items()
+            }
+        ),
+        operations=MappingProxyType(
+            {
+                ("planner", "planner_message_v1"): A2AOperation(
+                    "planner_message_v1", None, workspaces
+                ),
+                ("planner", "planner_task_v1"): A2AOperation(
+                    "planner_task_v1", "plan.md", workspaces
+                ),
+                ("reviewer", "reviewer_message_v1"): A2AOperation(
+                    "reviewer_message_v1", None, workspaces
+                ),
+                ("reviewer", "reviewer_task_v1"): A2AOperation(
+                    "reviewer_task_v1", "review.md", workspaces
+                ),
+                (
+                    "task_distributor",
+                    "task_distributor_message_v1",
+                ): A2AOperation("task_distributor_message_v1", None, workspaces),
+                ("task_distributor", "task_distribution_v1"): A2AOperation(
+                    "task_distribution_v1", "milestone-plan.md", workspaces
+                ),
+                ("plan_hard_gate", "plan_hard_gate_v1"): HardGateOperation("plan_hard_gate_v1"),
+                (
+                    "milestone_hard_gate",
+                    "milestone_hard_gate_v1",
+                ): HardGateOperation("milestone_hard_gate_v1"),
+                ("stage_executor", "stage_execution_v1"): _StageOperation(),
+            }
+        ),
+    )
     prompts = AgentPromptCatalog(runtime_settings.prompts)
     collaboration = AgentCollaborationService(
         catalog=catalog,
-        workspaces=workspaces,
-        transport=transport,
-        observation_skill=observation_skill,
-        prompts=prompts,
+        runtime=external_agents,
     )
     model_settings = settings.project_owner_agent.selected_model
     assembly = prepare_project_runtime_context(
@@ -140,19 +185,18 @@ def _compose_command_graph(
         prompts=prompts,
     )
     context = assembly.context
-    hard_gate = CodexHardGate(
-        reviewer=catalog.get(catalog.hard_gate_reviewer_id),
-        workspaces=workspaces,
-        transport=transport,
-        observation_skill=observation_skill,
-        prompts=prompts,
+    plan_gate = PlanHardGate(
+        runtime=external_agents,
+    )
+    milestone_gate = MilestoneHardGate(
+        runtime=external_agents,
     )
     planning = PlanningService(
         project_path=project_path,
         context=context,
         git=git,
         event_bus=event_bus,
-        review_plan=hard_gate.review_plan,
+        review_plan=plan_gate.review,
     )
     delivery = DeliveryService(
         project_path=project_path,
@@ -162,14 +206,11 @@ def _compose_command_graph(
             stage_executor
             if stage_executor is not None
             else CodexStageExecutor(
-                project_path,
-                transport,
-                observation_skill,
-                prompts,
+                runtime=external_agents,
             )
         ),
         event_bus=event_bus,
-        review_milestones=hard_gate.review_milestones,
+        review_milestones=milestone_gate.review,
     )
     executions = create_project_executions(
         project_path,

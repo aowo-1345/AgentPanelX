@@ -16,6 +16,7 @@ from openai_codex import (
     InputItem,
     MentionInput,
     Sandbox,
+    SkillInput,
     TextInput,
 )
 
@@ -28,6 +29,10 @@ class CodexTransportTimeout(CodexTransportError):
     """A Codex turn exceeded its configured blocking timeout."""
 
 
+class CodexTransportUnsafeTimeout(CodexTransportTimeout):
+    """A timed-out Codex turn could not be confirmed terminated."""
+
+
 @dataclass(frozen=True, slots=True)
 class CodexTurnRequest:
     """Infrastructure-only input for one bounded Codex turn."""
@@ -37,6 +42,7 @@ class CodexTurnRequest:
     developer_instructions: str
     message: str
     mentions: tuple[tuple[str, Path], ...]
+    skills: tuple[tuple[str, Path], ...] = ()
     output_schema: dict[str, Any] | None = None
 
 
@@ -60,7 +66,12 @@ class CodexTurnTransport:
     response_limit: int
     network_access: bool = True
 
-    def run(self, request: CodexTurnRequest) -> CodexTurnResult:
+    def run(
+        self,
+        request: CodexTurnRequest,
+        *,
+        on_thread_opened: Any | None = None,
+    ) -> CodexTurnResult:
         """Run one turn in a writable Agent workspace and always close the SDK client."""
         client: Codex | None = None
         try:
@@ -96,7 +107,14 @@ class CodexTurnTransport:
                 if thread.id != request.thread_id:
                     raise CodexTransportError("Codex resumed a different thread")
 
+            if on_thread_opened is not None:
+                on_thread_opened(thread.id)
+
             input_items: list[InputItem] = [TextInput(request.message)]
+            input_items.extend(
+                SkillInput(name=name, path=str(path))
+                for name, path in request.skills
+            )
             input_items.extend(
                 MentionInput(name=name, path=str(path))
                 for name, path in request.mentions
@@ -150,6 +168,10 @@ class CodexTurnTransport:
             with suppress(Exception):
                 handle.interrupt()
             worker.join(min(10.0, max(1.0, self.timeout_seconds)))
+            if worker.is_alive():
+                raise CodexTransportUnsafeTimeout(
+                    "Codex turn timed out and termination could not be confirmed"
+                )
             raise CodexTransportTimeout(
                 f"Codex turn timed out after {self.timeout_seconds:.2f}s"
             )

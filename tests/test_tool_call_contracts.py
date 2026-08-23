@@ -21,7 +21,7 @@ from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 from tests.runtime_support import compose_test_executions
 
 
-def test_tool_catalog_treats_empty_conversation_id_as_a_new_conversation(
+def test_tool_catalog_keeps_external_agent_session_identity_runtime_owned(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -33,7 +33,6 @@ def test_tool_catalog_treats_empty_conversation_id_as_a_new_conversation(
         "agent_id": "planner",
         "kind": "task",
         "message": "Create plan.md.",
-        "conversation_id": "",
         "artifacts": [],
     }
 
@@ -46,11 +45,11 @@ def test_tool_catalog_treats_empty_conversation_id_as_a_new_conversation(
     assert action == {
         "tool": "talk_to_agent",
         "call_id": "call-1",
-        "arguments": {**arguments, "conversation_id": None},
+        "arguments": arguments,
     }
 
 
-def test_provider_schema_and_runtime_share_the_conversation_id_contract(
+def test_provider_schema_omits_runtime_owned_session_identity(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -65,14 +64,16 @@ def test_provider_schema_and_runtime_share_the_conversation_id_contract(
         "agent_id": "planner",
         "kind": "task",
         "message": "Create plan.md.",
-        "conversation_id": "",
         "artifacts": [],
     }
 
-    assert list(Draft202012Validator(schema).iter_errors(arguments))
-
-    arguments["conversation_id"] = None
     assert not list(Draft202012Validator(schema).iter_errors(arguments))
+    assert "conversation_id" not in schema["properties"]
+    assert list(
+        Draft202012Validator(schema).iter_errors(
+            {**arguments, "conversation_id": None}
+        )
+    )
 
 
 def test_tool_catalog_rejects_invalid_complete_milestone_views(
@@ -177,7 +178,6 @@ def test_every_tool_uses_the_shared_argument_contract(
                 "agent_id": "",
                 "kind": "message",
                 "message": "Inspect this.",
-                "conversation_id": None,
                 "artifacts": [],
             },
         ),
@@ -310,7 +310,6 @@ def test_unknown_agent_is_rejected_before_an_invocation_event(
                 "agent_id": "not_configured",
                 "kind": "message",
                 "message": "Inspect this.",
-                "conversation_id": None,
                 "artifacts": [],
             },
         },
@@ -327,7 +326,7 @@ def test_unknown_agent_is_rejected_before_an_invocation_event(
     assert events == ()
 
 
-def test_model_tool_call_normalizes_empty_conversation_id_before_action(
+def test_model_tool_call_does_not_require_external_session_identity(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -350,7 +349,6 @@ def test_model_tool_call_normalizes_empty_conversation_id_before_action(
                                 "agent_id": "planner",
                                 "kind": "task",
                                 "message": "Create plan.md.",
-                                "conversation_id": "",
                                 "artifacts": [],
                             }
                         ),
@@ -376,7 +374,6 @@ def test_model_tool_call_normalizes_empty_conversation_id_before_action(
                 "agent_id": "planner",
                 "kind": "task",
                 "message": "Create plan.md.",
-                "conversation_id": None,
                 "artifacts": [],
             },
         }

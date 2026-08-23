@@ -449,7 +449,9 @@ def test_repository_settings_select_a_declared_model_without_embedded_credential
 
     assert owner.active_model in owner.models
     assert model.name.strip()
-    assert model.base_url.startswith("https://")
+    assert model.base_url.startswith("https://") or model.base_url.startswith(
+        "http://127.0.0.1:"
+    )
     assert model.api_key_env.endswith("_API_KEY")
     assert "api_key" not in model.model_dump()
 
@@ -509,17 +511,17 @@ def test_unknown_settings_are_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("invalid", ["missing", "blank"])
-def test_incomplete_prompt_catalog_is_rejected(
+def test_incomplete_external_agent_catalog_is_rejected(
     tmp_path: Path,
     invalid: str,
 ) -> None:
     settings_path = tmp_path / "settings.yaml"
     raw = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
-    prompts = raw["runtime"]["prompts"]
+    external_agents = raw["runtime"]["external_agents"]
     if invalid == "missing":
-        del prompts["stage_executor"]
+        del external_agents["stage_executor"]
     else:
-        prompts["planner"]["role"] = "   "
+        external_agents["planner"]["instructions"] = "   "
     settings_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
     with pytest.raises(ValueError, match="Failed to load AgentPlaneX settings"):
@@ -556,28 +558,16 @@ def test_talk_tool_renders_configured_agent_cards_with_stable_schema(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    settings = RuntimeSettings.model_validate(
-        {
-            "agents": {
-                "delivery_planner": {
-                    "name": "Delivery Planner",
-                    "description": "Produces and refines delivery plans.",
-                    "profile_instructions": "Write only in your Agent workspace.",
-                    "contract": "planner",
-                },
-                "quality_reviewer": {
-                    "name": "Quality Reviewer",
-                    "description": "Reviews plans and delivery candidates.",
-                    "profile_instructions": "Write only in your Agent workspace.",
-                    "contract": "reviewer",
-                },
-            },
-            "prompts": load_settings(DEFAULT_SETTINGS_PATH).runtime.prompts.model_dump(
-                mode="json"
-            ),
-            "hard_gates": {"plan_approval": {"agent_id": "quality_reviewer"}},
-        }
+    raw = load_settings(DEFAULT_SETTINGS_PATH).runtime.model_dump(mode="json")
+    raw["external_agents"]["planner"]["name"] = "Delivery Planner"
+    raw["external_agents"]["planner"]["description"] = (
+        "Produces and refines delivery plans."
     )
+    raw["external_agents"]["reviewer"]["name"] = "Quality Reviewer"
+    raw["external_agents"]["reviewer"]["description"] = (
+        "Reviews plans and delivery candidates."
+    )
+    settings = RuntimeSettings.model_validate(raw)
 
     executions = compose_test_executions(project_path, settings).executions
     talk_tool = next(
@@ -586,24 +576,18 @@ def test_talk_tool_renders_configured_agent_cards_with_stable_schema(
     talk_schema = talk_tool.provider_schema()
     description = talk_schema["description"]
     assert isinstance(description, str)
-    assert "delivery_planner (planner): Delivery Planner" in description
-    assert "quality_reviewer (reviewer): Quality Reviewer" in description
+    assert "planner: Delivery Planner" in description
+    assert "reviewer: Quality Reviewer" in description
     agent_id_schema = talk_schema["parameters"]["properties"]["agent_id"]
     assert isinstance(agent_id_schema, dict)
     assert "enum" not in agent_id_schema
     for tool in executions.tools.tools:
         parameters = tool.provider_schema()["parameters"]
         assert set(parameters["required"]) == set(parameters["properties"])
-    conversation_schema = talk_schema["parameters"]["properties"][
-        "conversation_id"
-    ]
-    assert {option.get("type") for option in conversation_schema["anyOf"]} == {
-        "string",
-        "null",
-    }
+    assert "conversation_id" not in talk_schema["parameters"]["properties"]
 
 
-def test_default_talk_tool_exposes_task_distributor_as_a_planner_contract(
+def test_default_talk_tool_exposes_task_distributor_as_a_first_class_agent(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -618,7 +602,7 @@ def test_default_talk_tool_exposes_task_distributor_as_a_planner_contract(
     description = talk_tool.provider_schema()["description"]
 
     assert isinstance(description, str)
-    assert "task_distributor (planner): Task Distributor" in description
+    assert "task_distributor: Task Distributor" in description
     assert "Shape rolling Milestones and executable Stage objectives." in description
 
 

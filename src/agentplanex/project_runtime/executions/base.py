@@ -51,12 +51,25 @@ class ProjectExecution[ArgumentsT: ToolArgumentsModel](ABC):
         self,
         context: ProjectRuntimeState,
         raw_arguments: object,
+        *,
+        request_identity: str | None = None,
     ) -> ToolExecutionResult:
         """Parse and execute one call through this Tool's sole argument contract."""
-        return self.execute(
+        return self.execute_with_identity(
             context,
             self.tool_definition().parse_arguments(raw_arguments),
+            request_identity=request_identity,
         )
+
+    def execute_with_identity(
+        self,
+        context: ProjectRuntimeState,
+        arguments: ArgumentsT,
+        *,
+        request_identity: str | None,
+    ) -> ToolExecutionResult:
+        """Execute with Runtime-owned call identity when a capability needs it."""
+        return self.execute(context, arguments)
 
     @abstractmethod
     def execute(
@@ -165,7 +178,21 @@ class ProjectExecutions:
         if execution is None:
             return _invalid_action(f"Unknown tool: {tool_name!r}")
         try:
-            return execution.execute_call(current, arguments)
+            call_id = action.get("call_id")
+            activation_id = action.get("_owner_activation_id")
+            request_identity = (
+                f"{activation_id}:{call_id}"
+                if isinstance(activation_id, str)
+                and activation_id.strip()
+                and isinstance(call_id, str)
+                and call_id.strip()
+                else None
+            )
+            return execution.execute_call(
+                current,
+                arguments,
+                request_identity=request_identity,
+            )
         except ToolArgumentError as error:
             return ToolExecutionResult(
                 output={
