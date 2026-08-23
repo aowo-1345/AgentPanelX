@@ -17,10 +17,7 @@ from agentplanex.project_owner_agent.tools import (
     ToolCatalog,
     ToolDefinition,
 )
-from agentplanex.services.agent_invocation import (
-    AgentPromptCatalog,
-    resolve_observation_skill,
-)
+from agentplanex.services.agent_invocation import AgentPromptCatalog
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.project_runtime_context._assembly import (
     _ProjectRuntimeContextAssembly,
@@ -48,7 +45,6 @@ def _assembly(project_path: Path) -> _ProjectRuntimeContextAssembly:
             model=settings.project_owner_agent.selected_model.name,
             transport=_UnusedResponsesTransport(),
         ),
-        observation_skill=resolve_observation_skill(),
         prompts=AgentPromptCatalog(settings.runtime.prompts),
     )
 

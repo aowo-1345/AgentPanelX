@@ -136,7 +136,6 @@ def _compose_command_graph(
             model=model_settings.name,
             transport=responses_transport,
         ),
-        observation_skill=observation_skill,
         prompts=prompts,
     )
     context = assembly.context

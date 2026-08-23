@@ -724,7 +724,7 @@ def test_runtime_restores_owner_history_across_activations(
     assert third.content == "third"
     assert _ReplyingModel.constructions == 3
     restored_contents = [
-        message.get("content") for message in _ReplyingModel.queries[-1][:-1]
+        message.get("content") for message in _ReplyingModel.queries[-1]
     ]
     assert restored_contents[-5:] == [
         "first",
@@ -810,15 +810,13 @@ def test_activation_restores_its_frozen_summary_checkpoint_after_restart(
     assert result.exit.content == "third"
     query = _ReplyingModel.queries[-1]
     restored_contents = [message.get("content") for message in query]
-    assert len(restored_contents) == 5
+    assert len(restored_contents) == 4
     system = str(restored_contents[0])
-    invocation = str(restored_contents[-1])
     configured = _settings().runtime.prompts
     assert system.startswith(configured.project_owner.role.strip())
-    assert "agentplanex-project-observe" in invocation
-    assert f'"project_root": "{project_path.resolve()}"' in invocation
-    assert f'"activation_id": "{activation.activation_id}"' in invocation
-    assert restored_contents[1:-1] == [
+    assert "AgentPlaneX invocation envelope" not in str(query)
+    assert activation.activation_id not in str(query)
+    assert restored_contents[1:] == [
         configured.summary_context_header.strip(),
         [
             {

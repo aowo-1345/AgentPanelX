@@ -282,7 +282,7 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
     # The provider-compatible inlined Tool schema is larger than Pydantic's
     # reference-based form. Keep this journey's threshold above the initial
     # request but below the large Bash observation it is intended to exercise.
-    settings = _settings(capacity_tokens=4_000)
+    settings = _settings(capacity_tokens=3_200)
     first_transport = _OwnerTransport(settings, first_owner_tool=True)
     runtime = create_project_runtime_control(
         project_path=project_path,
@@ -355,7 +355,7 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
             "project_owner_agent": settings.project_owner_agent.model_copy(
                 update={
                     "context_memory": ContextMemorySettings(
-                        capacity_tokens=2_500,
+                        capacity_tokens=1_800,
                         compaction_threshold=0.8,
                     )
                 }
@@ -415,6 +415,10 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
         "AgentPlaneX invocation envelope" not in request.instructions
         for request in [*first_transport.requests, *restarted_transport.requests]
     )
+    assert "AgentPlaneX invocation envelope" not in json.dumps(
+        [request.input for request in [*first_transport.requests, *restarted_transport.requests]],
+        ensure_ascii=False,
+    )
     restored_prefix = json.dumps(
         second_summary_requests[0].input[:-1],
         ensure_ascii=False,
@@ -424,7 +428,6 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
         "user",
         "assistant",
         "user",
-        "developer",
     ]
     assert "<intent-summary>" in restored_prefix
     assert "<trajectory-summary>" in restored_prefix
@@ -437,7 +440,6 @@ def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(
     assert [message.get("role") for message in second_owner_request.input] == [
         "developer",
         "user",
-        "developer",
     ]
 
     with database.read_only_connection() as connection:
@@ -470,7 +472,7 @@ def test_summary_failure_keeps_the_original_owner_context(
     """Transport, forbidden-tool and invalid-output failures share one fallback."""
 
     project_path = initialize_git_project()
-    settings = _settings()
+    settings = _settings(capacity_tokens=3_000)
     transport = _OwnerTransport(settings, summary_failure=summary_failure)
     runtime = create_project_runtime_control(
         project_path=project_path,
@@ -486,8 +488,11 @@ def test_summary_failure_keeps_the_original_owner_context(
     assert driven.exit is not None
     assert driven.exit.content == "owner-finished"
     owner_request = next(request for request in transport.requests if request.tool_choice == "auto")
-    assert str(owner_request.input[-2].get("content", "")).startswith("original-context")
-    assert owner_request.input[-1].get("role") == "developer"
+    assert str(owner_request.input[-1].get("content", "")).startswith("original-context")
+    assert "AgentPlaneX invocation envelope" not in json.dumps(
+        owner_request.input,
+        ensure_ascii=False,
+    )
     database = SQLiteDatabase.for_project(project_path)
     owners = SQLiteProjectOwnerAgentRepository()
     with database.read_only_connection() as connection:
@@ -692,7 +697,7 @@ def test_attribution_uses_the_summary_available_at_its_checkpoint(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
-    settings = _settings(capacity_tokens=3_000)
+    settings = _settings(capacity_tokens=2_500)
     runtime = create_project_runtime_control(
         project_path=project_path,
         settings=settings,

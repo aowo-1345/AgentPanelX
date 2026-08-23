@@ -133,7 +133,6 @@ class OwnerContextManager:
         runtime_context: ProjectRuntimeState,
         activation: OwnerActivation,
         messages: Sequence[Message],
-        invocation_text: str,
         revision: object,
         has_source_summary: bool,
         policy: OwnerContextPolicy,
@@ -144,13 +143,6 @@ class OwnerContextManager:
         self._runtime_context = runtime_context
         self._activation = activation
         self._messages = [dict(message) for message in messages]
-        invocation = invocation_text.strip()
-        if not invocation:
-            raise ValueError("Owner invocation text must not be empty")
-        self._invocation_message: Message = {
-            "role": "developer",
-            "content": invocation,
-        }
         self._revision = revision
         self._policy = policy
         self._tools = tools
@@ -164,7 +156,6 @@ class OwnerContextManager:
         runtime: OwnerContextRuntime,
         runtime_context: ProjectRuntimeState,
         activation: OwnerActivation,
-        invocation_text: str,
         policy: OwnerContextPolicy,
         tools: ToolCatalog,
         summary_model: SummaryModel,
@@ -192,7 +183,6 @@ class OwnerContextManager:
                 message_history=snapshot.message_history,
                 summary_context_header=policy.summary_context_header,
             ),
-            invocation_text=invocation_text,
             revision=loaded.revision,
             has_source_summary=snapshot.summary is not None,
             policy=policy,
@@ -208,17 +198,16 @@ class OwnerContextManager:
         persisted = tuple(dict(message) for message in self._messages)
         if not persisted or persisted[0].get("role") != "system":
             raise RuntimeError("Owner context must start with a System Prompt")
-        frozen = self._with_invocation(persisted)
         estimate = count_tokens(
             self._policy.model_name,
-            frozen,
+            persisted,
             self._tools,
         )
         if (
             estimate / self._policy.capacity_tokens
             < self._policy.compaction_threshold
         ):
-            return frozen
+            return persisted
 
         attempt = ContextCompactionAttempt(
             compaction_id=uuid4().hex,
@@ -234,7 +223,7 @@ class OwnerContextManager:
         )
         try:
             draft = generate_summary(
-                frozen,
+                persisted,
                 has_source_summary=self._has_source_summary,
                 policy=self._policy,
                 tools=self._tools,
@@ -255,7 +244,7 @@ class OwnerContextManager:
                 ),
                 revision=attempt_revision,
             )
-            return frozen
+            return persisted
 
         summary = committed.summary
         self._revision = committed.revision
@@ -271,7 +260,7 @@ class OwnerContextManager:
             ),
             revision=attempt_revision,
         )
-        return self._with_invocation(self._messages)
+        return tuple(dict(message) for message in self._messages)
 
     def append(self, messages: Sequence[Message]) -> tuple[Message, ...]:
         """Persist messages, then advance the in-memory view and revision."""
@@ -299,15 +288,4 @@ class OwnerContextManager:
             self._activation,
             notice,
             revision=revision,
-        )
-
-    def _with_invocation(
-        self,
-        messages: Sequence[Message],
-    ) -> tuple[Message, ...]:
-        """Append the current Activation envelope without persisting it."""
-
-        return (
-            *(dict(message) for message in messages),
-            dict(self._invocation_message),
         )

@@ -23,7 +23,6 @@ class _ProjectRuntimeContextAssembly:
     _settings: Settings
     _approval_mode: ApprovalMode
     _responses: ResponsesClient
-    _observation_skill: Path
     _prompts: AgentPromptCatalog
     _completed: bool = field(default=False, init=False)
 
@@ -45,7 +44,6 @@ class _ProjectRuntimeContextAssembly:
             tool_executor=tool_executor,
             event_bus=self.context.event_bus,
             responses=self._responses,
-            observation_skill=self._observation_skill,
             prompts=self._prompts,
             load_state=self.context._reload_state,
             set_activation_initial_summary=(
@@ -68,7 +66,6 @@ def prepare_project_runtime_context(
     settings: Settings,
     approval_mode: ApprovalMode,
     responses: ResponsesClient,
-    observation_skill: Path,
     prompts: AgentPromptCatalog,
 ) -> _ProjectRuntimeContextAssembly:
     """Prepare an incomplete Context for dependency graph construction."""
@@ -81,6 +78,5 @@ def prepare_project_runtime_context(
         _settings=settings,
         _approval_mode=approval_mode,
         _responses=responses,
-        _observation_skill=observation_skill,
         _prompts=prompts,
     )
