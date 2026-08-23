@@ -19,50 +19,79 @@ flowchart TB
     Browser[Web Console]
     External[External Codex / Claude Code]
     Skills[Observe · Control · Attribution]
+    Provider[Model endpoint / local proxy]
+    CodexCLI[Codex CLI workers]
 
     subgraph APX[AgentPanelX]
-        API[FastAPI Workspace API]
-        Workspace[Workspace Service]
-        Dispatcher[Bounded Feature Dispatcher]
-        Runtime[Project Runtime]
-        Owner[Project Owner Agent]
-        Collaboration[External Agent Runtime]
-        Delivery[Stage Delivery]
-        Projection[Board / Workspace Projection]
-        Bus[Event Bus]
-        Registry[(Workspace Registry)]
+        subgraph WorkspacePlane[Workspace control plane]
+            API[FastAPI Workspace API]
+            Workspace[Workspace Service]
+            Registry[(Workspace Registry)]
+            Dispatcher[Bounded Feature Dispatcher]
+            Queries[Queries / Projections]
+            Takeover[AutoTakeover Service]
+            Gateway[Shared Model Gateway]
+        end
+
+        subgraph FeaturePlane[Feature Runtime]
+            Runtime[Project Runtime]
+            Control[Project Runtime Control]
+            Owner[Project Owner Agent]
+            Delivery[Planning / Delivery]
+            AgentRuntime[External Agent Runtime]
+            Bus[Event Bus]
+        end
     end
 
-    subgraph Project[Target Git Project]
-        Worktrees[Feature & Stage Worktrees]
+    subgraph Project[Managed Git project]
+        FeatureWT[Feature Worktree]
+        StageWT[Stage Worktrees]
+        AgentWS[Agent Workspaces]
         Git[(Git commits / refs)]
-        SQLite[(Project-local SQLite)]
+        SQLite[(Feature SQLite)]
     end
 
     Human --> Browser
-    Browser <-->|commands + polling| API
+    Browser <-->|commands and polling| API
     External --> Skills
-    Skills <-->|read / bounded commands| Runtime
+    Skills --> Queries
+    Skills --> Control
+
     API --> Workspace
     Workspace --> Registry
+    Workspace --> Queries
     Workspace --> Dispatcher
-    Workspace --> Projection
+    Workspace --> Takeover
+    Workspace --> Gateway
     Dispatcher --> Runtime
+
+    Control --> Runtime
     Runtime --> Owner
-    Runtime --> Collaboration
     Runtime --> Delivery
-    Owner --> Worktrees
-    Collaboration --> Worktrees
-    Delivery --> Worktrees
-    Worktrees --> Git
+    Runtime --> AgentRuntime
+    Takeover --> AgentRuntime
+
+    Owner --> Gateway
+    Gateway --> Provider
+    AgentRuntime --> CodexCLI
+    CodexCLI -->|AutoCodex only| Control
+
+    Owner --> FeatureWT
+    Delivery --> StageWT
+    AgentRuntime --> AgentWS
+    CodexCLI -->|Stage Executor only| StageWT
+    FeatureWT --> Git
+    StageWT --> Git
+
     Runtime --> SQLite
     Runtime --> Bus
     Bus --> SQLite
-    Git --> Projection
-    SQLite --> Projection
+    Queries --> Registry
+    Queries --> Git
+    Queries --> SQLite
 ```
 
-Web Console 与外部 Coding Agent 是同一个 Runtime 的两个操作入口：浏览器适合持续观察和人工决策；Skills 让 Codex 或 Claude Code 在终端中读取证据、执行有边界的控制动作，或复盘一次历史失败。
+Web Console 与仓库 Skills 是同一组 Runtime 事实之上的两类适配器：浏览器通过 Workspace Service 执行用户命令和读取 Projection；Skills 分别经 Query 或 ProjectRuntimeControl 读取证据、受控介入或复盘历史失败。Workspace 控制面持有 Registry、Queries、Dispatcher、共享 Model Gateway 生命周期与可选 AutoTakeover。每个 Feature Runtime 组合 Project Owner、Planning、Delivery 和 External Agent Runtime；Owner 单独使用 Model Gateway，其他外部角色统一通过 External Agent Runtime 调用 Codex。Feature Worktree、Stage Worktree 与 Agent Workspace 具有不同写入责任，SQLite 与 Git 共同提供权威事实。
 
 ## 3. 运行时分层
 
