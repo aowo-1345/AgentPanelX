@@ -7,6 +7,8 @@ const ACTION_LABELS: Record<FeatureAction, string> = {
   'approve-plan': 'Approve plan',
   'reject-plan': 'Request changes',
   'start-delivery': 'Start delivery',
+  'approve-blocked-run': 'Retry delivery',
+  'reject-blocked-run': 'Keep blocked',
 };
 
 interface ActionCardProps {
@@ -17,7 +19,9 @@ interface ActionCardProps {
 
 export function ActionCard({ actions, pendingAction, onAction }: ActionCardProps) {
   const [feedback, setFeedback] = useState('');
-  const needsFeedback = actions.includes('reject-plan');
+  const needsFeedback = actions.some(
+    (action) => action === 'reject-plan' || action === 'reject-blocked-run',
+  );
 
   if (actions.length === 0) return null;
 
@@ -48,14 +52,15 @@ export function ActionCard({ actions, pendingAction, onAction }: ActionCardProps
       <div className="flex flex-wrap gap-2">
         {actions.map((action) => {
           const waiting = action === pendingAction;
-          const rejectDisabled = action === 'reject-plan' && !feedback.trim();
-          const variant = action === 'reject-plan' ? 'btn-danger' : 'btn-secondary';
+          const rejects = action === 'reject-plan' || action === 'reject-blocked-run';
+          const rejectDisabled = rejects && !feedback.trim();
+          const variant = rejects ? 'btn-danger' : 'btn-secondary';
           return (
             <button
               key={action}
               className={`btn h-8 ${variant}`}
               disabled={pendingAction !== null || rejectDisabled}
-              onClick={() => void onAction(action, action === 'reject-plan' ? feedback.trim() : undefined)}
+              onClick={() => void onAction(action, rejects ? feedback.trim() : undefined)}
             >
               {waiting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {ACTION_LABELS[action]}

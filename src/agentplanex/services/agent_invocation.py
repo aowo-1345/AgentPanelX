@@ -13,13 +13,8 @@ from agentplanex.settings import (
 )
 
 OBSERVE_SKILL_NAME = "agentplanex-project-observe"
-_PACKAGED_SKILL = (
-    Path(__file__).resolve().parents[1]
-    / "resources"
-    / "skills"
-    / OBSERVE_SKILL_NAME
-    / "SKILL.md"
-)
+_PACKAGED_SKILLS_ROOT = Path(__file__).resolve().parents[1] / "resources" / "skills"
+_PACKAGED_SKILL = _PACKAGED_SKILLS_ROOT / OBSERVE_SKILL_NAME / "SKILL.md"
 
 
 class InvocationRole(StrEnum):
@@ -53,9 +48,15 @@ def resolve_observation_skill() -> Path:
     detail = _PACKAGED_SKILL.parent / "references" / "detail.md"
     if _PACKAGED_SKILL.is_file() and detail.is_file():
         return _PACKAGED_SKILL
-    raise AgentInvocationError(
-        f"Packaged {OBSERVE_SKILL_NAME} Skill is incomplete"
-    )
+    raise AgentInvocationError(f"Packaged {OBSERVE_SKILL_NAME} Skill is incomplete")
+
+
+def resolve_packaged_skill(name: str) -> Path:
+    """Return one Runtime-shipped Skill by stable name."""
+    path = _PACKAGED_SKILLS_ROOT / name / "SKILL.md"
+    if path.is_file():
+        return path
+    raise AgentInvocationError(f"Packaged {name} Skill is unavailable")
 
 
 @dataclass(frozen=True, slots=True)

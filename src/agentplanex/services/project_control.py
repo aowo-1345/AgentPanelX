@@ -50,15 +50,11 @@ class ProjectControlQuery:
     snapshots: SQLiteMilestoneSnapshotRepository = field(
         default_factory=SQLiteMilestoneSnapshotRepository
     )
-    stage_runs: SQLiteStageRunRepository = field(
-        default_factory=SQLiteStageRunRepository
-    )
+    stage_runs: SQLiteStageRunRepository = field(default_factory=SQLiteStageRunRepository)
     activations: SQLiteOwnerActivationRepository = field(
         default_factory=SQLiteOwnerActivationRepository
     )
-    events: SQLiteExecutionEventRepository = field(
-        default_factory=SQLiteExecutionEventRepository
-    )
+    events: SQLiteExecutionEventRepository = field(default_factory=SQLiteExecutionEventRepository)
     history_limit: int = 50
 
     def __post_init__(self) -> None:
@@ -123,4 +119,6 @@ def _allowed_actions(
         actions.extend(("approve", "reject"))
     elif state.pending_action == "FIRST_RUN_APPROVAL":
         actions.append("start")
+    elif state.pending_action == "BLOCKED_RUN_APPROVAL":
+        actions.extend(("approve-blocked-run", "reject-blocked-run"))
     return tuple(actions)

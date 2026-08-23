@@ -10,7 +10,11 @@ from agentplanex.project_owner_agent.tools import ToolCatalog
 from agentplanex.services.agent_invocation import AgentPromptCatalog
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.project_runtime_context._owner import _OwnerRuntime
-from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext
+from agentplanex.services.project_runtime_context.context import (
+    MutationFenceGuard,
+    ProjectRuntimeContext,
+    _allow_mutation,
+)
 from agentplanex.services.project_runtime_context.contracts import RuntimeToolExecutor
 from agentplanex.settings import Settings
 
@@ -48,9 +52,7 @@ class _ProjectRuntimeContextAssembly:
             observation_skill=self._observation_skill,
             prompts=self._prompts,
             load_state=self.context._reload_state,
-            set_activation_initial_summary=(
-                self.context._set_owner_activation_initial_summary
-            ),
+            set_activation_initial_summary=(self.context._set_owner_activation_initial_summary),
         )
         self.context._complete(
             owner_runtime=owner,
@@ -70,6 +72,7 @@ def prepare_project_runtime_context(
     responses: ResponsesClient,
     observation_skill: Path,
     prompts: AgentPromptCatalog,
+    mutation_fence_guard: MutationFenceGuard = _allow_mutation,
 ) -> _ProjectRuntimeContextAssembly:
     """Prepare an incomplete Context for dependency graph construction."""
     return _ProjectRuntimeContextAssembly(
@@ -77,6 +80,7 @@ def prepare_project_runtime_context(
             project_path=project_path,
             database=database,
             event_bus=event_bus,
+            mutation_fence_guard=mutation_fence_guard,
         ),
         _settings=settings,
         _approval_mode=approval_mode,

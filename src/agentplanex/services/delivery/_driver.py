@@ -100,6 +100,7 @@ class _StageDriver:
         milestone: Milestone,
         *,
         first_run: bool,
+        blocked_approval: bool = False,
     ) -> MilestoneRunQueued:
         """Fix one Run identity and atomically queue its first Stage."""
         try:
@@ -112,11 +113,14 @@ class _StageDriver:
         if first_run and current.current_plan_commit_sha != input_commit_sha:
             raise DeliveryError("Project target Git state changed after Plan approval")
         if retry_from_blocked:
-            self.assert_retryable_blocked(current)
+            self.assert_retryable_blocked(
+                current,
+                allow_pending_approval=blocked_approval,
+            )
         if not first_run:
-            if (
-                current.status not in {"IN_PROGRESS", "BLOCKED"}
-                or current.pending_action is not None
+            if current.status not in {"IN_PROGRESS", "BLOCKED"} or (
+                current.pending_action is not None
+                and not (blocked_approval and current.pending_action == "BLOCKED_RUN_APPROVAL")
             ):
                 raise DeliveryError(
                     "A later Milestone Run requires IN_PROGRESS or a retryable BLOCKED "
@@ -168,6 +172,7 @@ class _StageDriver:
                 self.assert_retryable_blocked(
                     latest,
                     connection=transaction.connection,
+                    allow_pending_approval=blocked_approval,
                 )
             elif (
                 latest.status != "IN_PROGRESS"
@@ -426,17 +431,19 @@ class _StageDriver:
         context: ProjectRuntimeState,
         *,
         connection: sqlite3.Connection | None = None,
+        allow_pending_approval: bool = False,
     ) -> None:
         """Validate that BLOCKED identifies one terminal failed delivery cursor."""
         if (
             context.status != "BLOCKED"
-            or context.pending_action is not None
+            or context.pending_action
+            not in ({None, "BLOCKED_RUN_APPROVAL"} if allow_pending_approval else {None})
             or context.rolling_started_at is None
             or context.current_candidate_commit_sha is not None
         ):
             raise DeliveryError("Project is not a retryable failed delivery")
         if context.current_run_id is None:
-            return
+            raise DeliveryError("BLOCKED delivery has no failed Run cursor")
 
         def validate(opened: sqlite3.Connection) -> None:
             runs = self.stage_runs.list_by_run_id(opened, context.current_run_id or "")

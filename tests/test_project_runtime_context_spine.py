@@ -79,8 +79,10 @@ def test_normal_runtime_exposes_only_the_feature_command_facade(
         "submit_message",
         "approve_plan",
         "reject_plan",
-        "start_first_run",
-        "drive_until_waiting",
+            "start_first_run",
+            "approve_blocked_run",
+            "reject_blocked_run",
+            "drive_until_waiting",
         "fail_interrupted_work",
     }
     assert not any(

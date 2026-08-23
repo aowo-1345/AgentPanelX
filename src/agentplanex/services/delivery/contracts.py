@@ -88,6 +88,15 @@ class FirstRunApprovalRequested:
 
 
 @dataclass(frozen=True, slots=True)
+class BlockedRunApprovalRequested:
+    """A failed delivery retry selected by Owner but awaiting user approval."""
+
+    state: ProjectRuntimeState
+    snapshot: MilestoneSnapshot
+    milestone: Milestone
+
+
+@dataclass(frozen=True, slots=True)
 class MilestoneRunQueued:
     """Identity receipt for one durably queued first Stage."""
 

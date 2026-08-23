@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from agentplanex.bootstrap import create_workspace
 from agentplanex.domains.workspace import FeatureAction, ManagedProject
 from agentplanex.services.workspace.service import WorkspaceService
-from agentplanex.settings import Settings, load_settings
+from agentplanex.settings import Settings, load_settings, resolve_settings_path
 from agentplanex.web.errors import install_error_handlers
 from agentplanex.web.schemas import (
     ActionRequest,
@@ -33,8 +33,13 @@ from agentplanex.web.schemas import (
 )
 
 
-def create_app(settings: Settings, *, frontend_dist: Path | None = None) -> FastAPI:
-    workspace = create_workspace(settings)
+def create_app(
+    settings: Settings,
+    *,
+    frontend_dist: Path | None = None,
+    settings_path: Path | None = None,
+) -> FastAPI:
+    workspace = create_workspace(settings, settings_path=settings_path)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -203,8 +208,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         frontend_dist = default_frontend_dist
     if frontend_dist is not None and not (frontend_dist / "index.html").is_file():
         parser.error(f"frontend build is missing index.html: {frontend_dist}")
+    settings_path = resolve_settings_path(args.config)
     uvicorn.run(
-        create_app(load_settings(args.config), frontend_dist=frontend_dist),
+        create_app(
+            load_settings(settings_path),
+            frontend_dist=frontend_dist,
+            settings_path=settings_path,
+        ),
         host=args.host,
         port=args.port,
     )

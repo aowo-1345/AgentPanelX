@@ -31,12 +31,10 @@ class ModelSettings(_SettingsModel):
     base_url: str = Field(default=DEFAULT_OPENAI_BASE_URL, min_length=1)
     api_key_env: str = Field(default="OPENAI_API_KEY", min_length=1)
     http_headers: dict[str, str] = Field(default_factory=dict)
-    reasoning_effort: Literal[
-        "none", "minimal", "low", "medium", "high", "xhigh", "max"
-    ] | None = None
-    service_tier: Literal[
-        "auto", "default", "flex", "scale", "priority"
-    ] | None = "priority"
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"] | None = (
+        None
+    )
+    service_tier: Literal["auto", "default", "flex", "scale", "priority"] | None = "priority"
     timeout_seconds: float = Field(default=60.0, gt=0)
 
     @field_validator("name", "base_url", "api_key_env")
@@ -61,9 +59,7 @@ class ProjectOwnerAgentSettings(_SettingsModel):
     models: dict[str, ModelSettings] = Field(min_length=1)
     step_limit: int = Field(default=20, gt=0)
     max_consecutive_format_errors: int = Field(default=3, gt=0)
-    context_memory: ContextMemorySettings = Field(
-        default_factory=ContextMemorySettings
-    )
+    context_memory: ContextMemorySettings = Field(default_factory=ContextMemorySettings)
 
     @field_validator("active_model")
     @classmethod
@@ -74,9 +70,7 @@ class ProjectOwnerAgentSettings(_SettingsModel):
 
     @field_validator("models")
     @classmethod
-    def _model_aliases_not_blank(
-        cls, value: dict[str, ModelSettings]
-    ) -> dict[str, ModelSettings]:
+    def _model_aliases_not_blank(cls, value: dict[str, ModelSettings]) -> dict[str, ModelSettings]:
         if any(not alias.strip() for alias in value):
             raise ValueError("Model aliases must not be blank")
         return value
@@ -84,9 +78,7 @@ class ProjectOwnerAgentSettings(_SettingsModel):
     @model_validator(mode="after")
     def _active_model_exists(self) -> "ProjectOwnerAgentSettings":
         if self.active_model not in self.models:
-            raise ValueError(
-                f"Active model {self.active_model!r} is not declared in models"
-            )
+            raise ValueError(f"Active model {self.active_model!r} is not declared in models")
         return self
 
     @property
@@ -114,6 +106,13 @@ class CodexSettings(_SettingsModel):
     artifact_limit: int = Field(default=262_144, gt=0)
 
 
+class AutoTakeoverSettings(_SettingsModel):
+    """Ultra Mode policy for provisional BLOCKED transitions."""
+
+    enabled: bool = False
+    budget_seconds: float = Field(default=1800.0, gt=0, le=1800.0)
+
+
 class ExternalAgentDefinitionSettings(_SettingsModel):
     """Stable configuration for one Owner-external Agent."""
 
@@ -125,6 +124,7 @@ class ExternalAgentDefinitionSettings(_SettingsModel):
     execution_policy: Literal[
         "agent_workspace",
         "candidate_worktree",
+        "trusted_feature_user_proxy",
     ]
     allowed_operations: tuple[str, ...] = Field(min_length=1)
 
@@ -200,6 +200,7 @@ class RuntimeSettings(_SettingsModel):
 
     bash: BashSettings = BashSettings()
     codex: CodexSettings = CodexSettings()
+    auto_takeover: AutoTakeoverSettings = AutoTakeoverSettings()
     external_agents: dict[str, ExternalAgentDefinitionSettings] = Field(min_length=1)
     prompts: PromptSettings
 
@@ -213,11 +214,11 @@ class RuntimeSettings(_SettingsModel):
             "milestone_hard_gate",
             "stage_executor",
         }
+        if self.auto_takeover.enabled:
+            required.add("auto_takeover")
         missing = sorted(required - self.external_agents.keys())
         if missing:
-            raise ValueError(
-                "Missing required External Agent definitions: " + ", ".join(missing)
-            )
+            raise ValueError("Missing required External Agent definitions: " + ", ".join(missing))
         return self
 
 
@@ -231,15 +232,17 @@ class Settings(_SettingsModel):
 
 def load_settings(path: Path | None = None) -> Settings:
     """Load settings using the configured path or the application default."""
-    settings_path = path or Path(
-        os.getenv("AGENTPLANEX_CONFIG", str(DEFAULT_SETTINGS_PATH))
-    )
+    settings_path = resolve_settings_path(path)
     try:
         raw = yaml.safe_load(settings_path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             raise TypeError("settings root must be a mapping")
         return Settings.model_validate(raw)
     except (OSError, TypeError, ValidationError, yaml.YAMLError) as error:
-        raise ValueError(
-            f"Failed to load AgentPlaneX settings: {settings_path}"
-        ) from error
+        raise ValueError(f"Failed to load AgentPlaneX settings: {settings_path}") from error
+
+
+def resolve_settings_path(path: Path | None = None) -> Path:
+    """Resolve the settings file once before child processes change directories."""
+    configured = path or Path(os.getenv("AGENTPLANEX_CONFIG", str(DEFAULT_SETTINGS_PATH)))
+    return configured.expanduser().resolve()

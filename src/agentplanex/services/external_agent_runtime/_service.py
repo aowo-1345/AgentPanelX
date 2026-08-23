@@ -291,8 +291,8 @@ class ExternalAgentRuntime:
             }
         )
 
-    @staticmethod
     def _require_execution_workspace(
+        self,
         policy: ExecutionPolicy,
         requested: Path | None,
     ) -> None:
@@ -303,6 +303,12 @@ class ExternalAgentRuntime:
         if policy is ExecutionPolicy.CANDIDATE_WORKTREE and requested is None:
             raise ExternalAgentRuntimeError(
                 "Candidate worktree policy requires an execution workspace"
+            )
+        if policy is ExecutionPolicy.TRUSTED_FEATURE_USER_PROXY and (
+            requested is None or requested.resolve() != self.workspaces.project_path.resolve()
+        ):
+            raise ExternalAgentRuntimeError(
+                "Trusted Feature user proxy must execute in its exact Feature worktree"
             )
 
     @staticmethod

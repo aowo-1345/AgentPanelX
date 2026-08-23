@@ -5,6 +5,7 @@ from pathlib import Path
 
 import yaml
 
+from agentplanex.domains.workspace import FeatureBinding
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.logging import configure_logging
 from agentplanex.infrastructure.model_gateway import (
@@ -19,10 +20,12 @@ from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.models.responses import ResponsesTransport
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.project_runtime.composition import (
+    compose_external_agent_runtime,
     compose_project_runtime,
     compose_project_runtime_control,
 )
 from agentplanex.project_runtime.control import ProjectRuntimeControl
+from agentplanex.services.auto_takeover import AutoTakeoverService
 from agentplanex.services.project_control import ProjectControlQuery
 from agentplanex.services.web import ProjectWorkspaceQuery
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
@@ -61,6 +64,7 @@ def create_project_runtime_control(
     approval_mode: ApprovalMode,
     settings: Settings | None = None,
     responses_transport: ResponsesTransport | None = None,
+    mutation_fence_token: str | None = None,
 ) -> ProjectRuntimeControl:
     """Create the privileged intervention surface over the real command graph."""
     configure_logging()
@@ -74,6 +78,7 @@ def create_project_runtime_control(
             if responses_transport is not None
             else create_responses_transport(configured)
         ),
+        mutation_fence_token=mutation_fence_token,
     )
 
 
@@ -99,27 +104,64 @@ def create_project_workspace_query(*, project_path: Path) -> ProjectWorkspaceQue
     )
 
 
-def create_workspace(settings: Settings) -> WorkspaceService:
+def create_workspace(
+    settings: Settings,
+    *,
+    settings_path: Path | None = None,
+) -> WorkspaceService:
     """Compose the user-level Workspace over real Registry, Git, and Runtimes."""
     configure_logging()
     responses_transport = create_responses_transport(settings)
     registry = WorkspaceRegistry.at(settings.workspace.data_home / "registry.sqlite3")
     registry.initialize()
     git = WorkspaceGit()
+    dispatcher = WorkspaceDispatcher(max_parallel_features=settings.workspace.max_parallel_features)
+
+    def runtime_factory(project_path: Path) -> ProjectRuntime:
+        return create_project_runtime(
+            project_path=project_path,
+            approval_mode="yolo",
+            settings=settings,
+            responses_transport=responses_transport,
+        )
+
+    takeover: AutoTakeoverService | None = None
+    if settings.runtime.auto_takeover.enabled:
+        if settings_path is None:
+            raise ValueError("Ultra Mode requires the Runtime settings file path")
+
+        def schedule_drive(binding: FeatureBinding) -> None:
+            assert takeover is not None
+            watermark = takeover.event_watermark(binding)
+            runtime = runtime_factory(binding.worktree_path)
+            dispatcher.dispatch(
+                binding.triage_id,
+                persist=lambda: None,
+                drive=runtime.drive_until_waiting,
+                after_release=lambda: takeover.after_drive_released(
+                    binding,
+                    after_event_id=watermark,
+                ),
+            )
+
+        takeover = AutoTakeoverService(
+            external_runtime_factory=lambda project_path: compose_external_agent_runtime(
+                project_path=project_path,
+                settings=settings,
+            ),
+            schedule_drive=schedule_drive,
+            settings_path=settings_path,
+            budget_seconds=settings.runtime.auto_takeover.budget_seconds,
+            max_parallel_features=settings.workspace.max_parallel_features,
+        )
     return WorkspaceService(
         data_home=settings.workspace.data_home,
         registry=registry,
         git=git,
         queries=WorkspaceQueries(registry=registry, git=git),
-        dispatcher=WorkspaceDispatcher(
-            max_parallel_features=settings.workspace.max_parallel_features
-        ),
-        runtime_factory=lambda project_path: create_project_runtime(
-            project_path=project_path,
-            approval_mode="yolo",
-            settings=settings,
-            responses_transport=responses_transport,
-        ),
+        dispatcher=dispatcher,
+        runtime_factory=runtime_factory,
+        auto_takeover=takeover,
         close_resources=responses_transport.close,
     )
 

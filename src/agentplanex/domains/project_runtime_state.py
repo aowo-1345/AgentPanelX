@@ -41,6 +41,7 @@ class ProjectRuntimeState:
             None,
             "PLAN_APPROVAL",
             "FIRST_RUN_APPROVAL",
+            "BLOCKED_RUN_APPROVAL",
         }:
             raise ValueError(
                 f"Unsupported pending action: {self.pending_action!r}"

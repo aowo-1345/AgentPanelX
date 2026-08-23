@@ -12,6 +12,7 @@ from agentplanex.project_runtime.executions.base import (
     project_execution,
 )
 from agentplanex.services.delivery.contracts import (
+    BlockedRunApprovalRequested,
     DeliveryError,
     FirstRunApprovalRequested,
 )
@@ -63,6 +64,22 @@ class RunNextMilestoneExecution(ProjectExecution[NoToolArguments]):
                     ),
                 ),
             )
+        if isinstance(result, BlockedRunApprovalRequested):
+            return ToolExecutionResult(
+                output={
+                    "ok": True,
+                    "state": "BLOCKED_RUN_APPROVAL_REQUESTED",
+                    "triage_id": result.state.triage_id,
+                    "status": result.state.status,
+                    "pending_action": result.state.pending_action,
+                    "snapshot_id": result.snapshot.snapshot_id,
+                    "milestone_key": result.milestone.key,
+                },
+                exit=AgentExit(
+                    status=AgentExitStatus.BLOCKED_RUN_APPROVAL_REQUESTED,
+                    content=("The failed Milestone retry is waiting for explicit user approval."),
+                ),
+            )
         return ToolExecutionResult(
             output={
                 "ok": True,
@@ -78,8 +95,6 @@ class RunNextMilestoneExecution(ProjectExecution[NoToolArguments]):
             },
             exit=AgentExit(
                 status=AgentExitStatus.MILESTONE_RUN_QUEUED,
-                content=(
-                    "The next Milestone Run has been queued for the Delivery Driver."
-                ),
+                content=("The next Milestone Run has been queued for the Delivery Driver."),
             ),
         )

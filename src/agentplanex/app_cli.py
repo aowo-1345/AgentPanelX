@@ -18,15 +18,27 @@ from agentplanex.infrastructure.workspace_git import WorkspaceGitError
 from agentplanex.project_runtime.errors import FeatureBusyError
 from agentplanex.services.workspace.errors import WorkspaceSchedulingError
 from agentplanex.services.workspace.service import WorkspaceService
-from agentplanex.settings import load_settings
+from agentplanex.settings import load_settings, resolve_settings_path
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Execute one Project or Feature command against the configured Workspace."""
     args = _parser().parse_args(argv)
+    if args.resource == "auto-control":
+        from agentplanex.services.auto_takeover._cli import run_control
+
+        return run_control(args)
+    if args.resource == "auto-owner-fork":
+        from agentplanex.services.auto_takeover._cli import run_owner_fork
+
+        return run_owner_fork(args)
     workspace: WorkspaceService | None = None
     try:
-        workspace = create_workspace(load_settings(args.config))
+        settings_path = resolve_settings_path(args.config)
+        workspace = create_workspace(
+            load_settings(settings_path),
+            settings_path=settings_path,
+        )
         result = _dispatch(workspace, args)
     except (
         LookupError,
@@ -166,4 +178,26 @@ def _parser() -> argparse.ArgumentParser:
         help="show live Runtime status for one Project's Features",
     )
     board.add_argument("--project", required=True)
+
+    control = resources.add_parser(
+        "auto-control",
+        help="internal fenced Runtime control for AutoTakeover",
+    )
+    control.add_argument("--cwd", type=Path, required=True)
+    control.add_argument("--takeover-fence", required=True)
+    control.add_argument("--print", dest="print_mode", action="store_true")
+    control.add_argument("action", nargs=argparse.REMAINDER)
+
+    owner_fork = resources.add_parser(
+        "auto-owner-fork",
+        help="internal Historical Owner fork for AutoTakeover",
+    )
+    owner_fork.add_argument("--cwd", type=Path, required=True)
+    owner_fork.add_argument("--message-id", required=True)
+    owner_fork.add_argument("--summary-id")
+    owner_fork.add_argument("--print-context", action="store_true")
     return parser
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

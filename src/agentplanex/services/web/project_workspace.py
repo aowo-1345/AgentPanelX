@@ -222,6 +222,11 @@ def _human_actions(
         return (FeatureAction.APPROVE_PLAN, FeatureAction.REJECT_PLAN)
     if state.pending_action == "FIRST_RUN_APPROVAL":
         return (FeatureAction.START_DELIVERY,)
+    if state.pending_action == "BLOCKED_RUN_APPROVAL":
+        return (
+            FeatureAction.APPROVE_BLOCKED_RUN,
+            FeatureAction.REJECT_BLOCKED_RUN,
+        )
     return ()
 
 

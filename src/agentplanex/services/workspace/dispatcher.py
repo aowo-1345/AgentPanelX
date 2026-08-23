@@ -36,12 +36,18 @@ class WorkspaceDispatcher:
         *,
         persist: Callable[[], T],
         drive: Callable[[], object],
+        after_release: Callable[[], None] | None = None,
     ) -> T:
         """Reserve first, persist synchronously, then drive in the background."""
         self._admit_automatic(triage_id)
         try:
             result = persist()
-            self._executor.submit(self._drive_and_release, triage_id, drive)
+            self._executor.submit(
+                self._drive_and_release,
+                triage_id,
+                drive,
+                after_release,
+            )
         except BaseException:
             self._release(triage_id)
             raise
@@ -81,14 +87,23 @@ class WorkspaceDispatcher:
         self,
         triage_id: str,
         drive: Callable[[], object],
+        after_release: Callable[[], None] | None,
     ) -> None:
+        failure: BaseException | None = None
         try:
             drive()
-        except BaseException:
+        except BaseException as error:
+            failure = error
             logger.exception("Feature Runtime drive failed for {}", triage_id)
-            raise
         finally:
             self._release(triage_id)
+        if after_release is not None:
+            try:
+                after_release()
+            except BaseException:
+                logger.exception("Feature post-release hook failed for {}", triage_id)
+        if failure is not None:
+            raise failure
 
     def _release(self, triage_id: str) -> None:
         with self._guard:

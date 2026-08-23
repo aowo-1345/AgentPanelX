@@ -24,6 +24,7 @@ class ExecutionPolicy(StrEnum):
 
     AGENT_WORKSPACE = "agent_workspace"
     CANDIDATE_WORKTREE = "candidate_worktree"
+    TRUSTED_FEATURE_USER_PROXY = "trusted_feature_user_proxy"
 
 
 @dataclass(frozen=True, slots=True)

@@ -149,6 +149,20 @@ class ProjectRuntimeService:
             self._assert_delivery_idle()
             return self.delivery.start_first_run()
 
+    def approve_blocked_run(self) -> MilestoneRunQueued:
+        with self.context.operation():
+            if self.context.owner_work() is not OwnerWorkState.IDLE:
+                raise ValueError("Project Owner already has unfinished work")
+            self._assert_delivery_idle()
+            return self.delivery.approve_blocked_run()
+
+    def reject_blocked_run(self, feedback: str) -> ProjectRuntimeState:
+        with self.context.operation():
+            if self.context.owner_work() is not OwnerWorkState.IDLE:
+                raise ValueError("Project Owner already has unfinished work")
+            self._assert_delivery_idle()
+            return self.delivery.reject_blocked_run(feedback)
+
     def drive_delivery(self) -> DeliveryDriveOutcome:
         """Run at most one durable Stage outside the Project Owner ReAct loop."""
         with self.context.operation():

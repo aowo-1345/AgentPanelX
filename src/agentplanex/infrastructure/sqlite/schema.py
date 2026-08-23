@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 _INITIAL_SCHEMA = (
     """
@@ -14,7 +14,9 @@ _INITIAL_SCHEMA = (
                 'TRIAGE', 'TODO', 'READY', 'IN_PROGRESS', 'BLOCKED', 'DONE'
             )),
         pending_action TEXT
-            CHECK (pending_action IN ('PLAN_APPROVAL', 'FIRST_RUN_APPROVAL')),
+            CHECK (pending_action IN (
+                'PLAN_APPROVAL', 'FIRST_RUN_APPROVAL', 'BLOCKED_RUN_APPROVAL'
+            )),
         git_branch TEXT,
         git_main_version TEXT,
         rolling_started_at TEXT,
@@ -28,7 +30,7 @@ _INITIAL_SCHEMA = (
         blocked_reason TEXT,
         blocked_capability TEXT,
         blocked_previous_status TEXT
-            CHECK (blocked_previous_status IN ('TODO', 'IN_PROGRESS'))
+            CHECK (blocked_previous_status IN ('TODO', 'READY', 'IN_PROGRESS'))
     )
     """,
     """
@@ -177,6 +179,45 @@ _INITIAL_SCHEMA = (
     """
     CREATE INDEX execution_event_message_id_idx
     ON execution_event (message_id)
+    """,
+    """
+    CREATE TABLE auto_takeover_run (
+        run_id TEXT PRIMARY KEY,
+        triage_id TEXT NOT NULL,
+        trigger_event_id INTEGER NOT NULL UNIQUE,
+        status TEXT NOT NULL
+            CHECK (status IN ('RUNNING', 'YES', 'NO', 'FAILED')),
+        decision TEXT CHECK (decision IN ('YES', 'NO')),
+        attribution TEXT,
+        error TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX auto_takeover_one_active_feature_idx
+    ON auto_takeover_run (triage_id)
+    WHERE status = 'RUNNING'
+    """,
+    """
+    CREATE TABLE auto_takeover_attempt (
+        attempt_id TEXT PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2)),
+        status TEXT NOT NULL
+            CHECK (status IN ('RUNNING', 'INVALID', 'COMPLETED', 'FAILED')),
+        fence_token TEXT UNIQUE,
+        error TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        FOREIGN KEY (run_id) REFERENCES auto_takeover_run(run_id),
+        UNIQUE (run_id, ordinal)
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX auto_takeover_one_active_attempt_idx
+    ON auto_takeover_attempt (run_id)
+    WHERE status = 'RUNNING'
     """,
 )
 

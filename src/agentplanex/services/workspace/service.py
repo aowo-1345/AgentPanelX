@@ -17,6 +17,7 @@ from agentplanex.domains.workspace import (
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.project_runtime import ProjectRuntime
+from agentplanex.services.auto_takeover import AutoTakeoverPort
 from agentplanex.services.project_runtime_context.models import OwnerActivation
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.queries import (
@@ -41,6 +42,7 @@ class WorkspaceService:
     queries: WorkspaceQueries
     dispatcher: WorkspaceDispatcher
     runtime_factory: Callable[[Path], ProjectRuntime]
+    auto_takeover: AutoTakeoverPort | None = None
     close_resources: Callable[[], None] = _noop
 
     def start(self) -> int:
@@ -54,9 +56,15 @@ class WorkspaceService:
 
     def close(self) -> None:
         try:
-            self.dispatcher.close()
+            if self.auto_takeover is not None:
+                self.auto_takeover.stop_accepting()
+            if self.auto_takeover is not None:
+                self.auto_takeover.close()
         finally:
-            self.close_resources()
+            try:
+                self.dispatcher.close()
+            finally:
+                self.close_resources()
 
     def register_project(
         self,
@@ -72,8 +80,7 @@ class WorkspaceService:
         existing = self.registry.find_project_by_common_dir(identity.git_common_dir)
         if existing is not None:
             raise ValueError(
-                "Git repository is already registered as Project "
-                f"{existing.project_id}"
+                f"Git repository is already registered as Project {existing.project_id}"
             )
         project = ManagedProject(
             project_id=uuid4().hex,
@@ -111,10 +118,7 @@ class WorkspaceService:
         slug = _feature_slug(feature_name)
         branch = f"agentplanex/{slug}-{suffix}"
         worktree_path = (
-            self.data_home.resolve()
-            / "projects"
-            / project.project_id
-            / f"{slug}-{suffix}"
+            self.data_home.resolve() / "projects" / project.project_id / f"{slug}-{suffix}"
         )
         self.git.create_feature_worktree(
             project.repository_path,
@@ -162,12 +166,14 @@ class WorkspaceService:
         content: str,
     ) -> OwnerActivation:
         binding = self._require_feature_binding(project_id, triage_id)
+        watermark = self._takeover_watermark(binding)
         runtime = self.runtime_factory(binding.worktree_path)
         self._assert_runtime_identity(binding, runtime)
         return self.dispatcher.dispatch(
             binding.triage_id,
             persist=lambda: runtime.submit_message(content),
             drive=runtime.drive_until_waiting,
+            after_release=lambda: self._after_drive_released(binding, watermark),
         )
 
     def project_board(self, project_id: str) -> ProjectBoard:
@@ -196,6 +202,7 @@ class WorkspaceService:
         feedback: str = "",
     ) -> FeatureWorkspaceView:
         binding = self._require_feature_binding(project_id, triage_id)
+        watermark = self._takeover_watermark(binding)
         runtime = self.runtime_factory(binding.worktree_path)
         self._assert_runtime_identity(binding, runtime)
         if action is FeatureAction.BEGIN:
@@ -203,12 +210,21 @@ class WorkspaceService:
                 binding.triage_id,
                 lambda: self._begin_and_read(binding, runtime),
             )
-        if action is FeatureAction.REJECT_PLAN and not feedback.strip():
-            raise ValueError("Plan rejection feedback must not be empty")
+        if (
+            action
+            in {
+                FeatureAction.REJECT_PLAN,
+                FeatureAction.REJECT_BLOCKED_RUN,
+            }
+            and not feedback.strip()
+        ):
+            raise ValueError("Rejection feedback must not be empty")
         if action not in {
             FeatureAction.APPROVE_PLAN,
             FeatureAction.REJECT_PLAN,
             FeatureAction.START_DELIVERY,
+            FeatureAction.APPROVE_BLOCKED_RUN,
+            FeatureAction.REJECT_BLOCKED_RUN,
         }:
             raise ValueError(f"Unsupported Feature action: {action}")
         self.dispatcher.dispatch(
@@ -219,11 +235,26 @@ class WorkspaceService:
                 feedback,
             ),
             drive=runtime.drive_until_waiting,
+            after_release=lambda: self._after_drive_released(binding, watermark),
         )
         return self.queries.feature_workspace(
             project_id=binding.project_id,
             triage_id=binding.triage_id,
         )
+
+    def _takeover_watermark(self, binding: FeatureBinding) -> int:
+        return self.auto_takeover.event_watermark(binding) if self.auto_takeover is not None else 0
+
+    def _after_drive_released(
+        self,
+        binding: FeatureBinding,
+        watermark: int,
+    ) -> None:
+        if self.auto_takeover is not None:
+            self.auto_takeover.after_drive_released(
+                binding,
+                after_event_id=watermark,
+            )
 
     def delete_feature(self, *, project_id: str, triage_id: str) -> None:
         binding = self._require_feature_binding(project_id, triage_id)
@@ -255,6 +286,10 @@ class WorkspaceService:
             runtime.reject_plan(feedback)
         elif action is FeatureAction.START_DELIVERY:
             runtime.start_first_run()
+        elif action is FeatureAction.APPROVE_BLOCKED_RUN:
+            runtime.approve_blocked_run()
+        elif action is FeatureAction.REJECT_BLOCKED_RUN:
+            runtime.reject_blocked_run(feedback)
         else:
             raise AssertionError(f"Non-automatic Feature action: {action}")
 
@@ -265,9 +300,7 @@ class WorkspaceService:
     ) -> None:
         state = runtime.state()
         if state.triage_id != binding.triage_id:
-            raise RuntimeError(
-                "Workspace Feature binding does not match its Runtime identity"
-            )
+            raise RuntimeError("Workspace Feature binding does not match its Runtime identity")
 
     def _delete_feature(self, binding: FeatureBinding) -> None:
         project = self.registry.get_project(binding.project_id)
@@ -289,9 +322,7 @@ class WorkspaceService:
                     "is pending or running"
                 )
             if self.queries.active_stage_run(binding) is not None:
-                raise ValueError(
-                    "Feature cannot be deleted while Delivery is queued or running"
-                )
+                raise ValueError("Feature cannot be deleted while Delivery is queued or running")
         self.git.remove_feature_worktree(
             project.repository_path,
             worktree_path=worktree_path,
@@ -307,6 +338,7 @@ class WorkspaceService:
             _required_text("Project ID", project_id),
             _required_text("Feature Triage ID", triage_id),
         )
+
 
 def _required_text(label: str, value: str) -> str:
     normalized = value.strip()

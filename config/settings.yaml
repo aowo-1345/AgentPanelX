@@ -28,6 +28,9 @@ workspace:
   data_home: ".agentplanex"
   max_parallel_features: 4
 runtime:
+  auto_takeover:
+    enabled: true
+    budget_seconds: 1800.0
   external_agents:
     planner:
       name: "Planner"
@@ -77,6 +80,14 @@ runtime:
       skills: [observe]
       execution_policy: candidate_worktree
       allowed_operations: [stage_execution_v1]
+    auto_takeover:
+      name: "AutoCodex"
+      description: "Act as the bounded user proxy for provisional BLOCKED transitions."
+      instructions: auto_takeover
+      session_policy: feature
+      skills: [observe, control, attribution]
+      execution_policy: trusted_feature_user_proxy
+      allowed_operations: [auto_takeover_v1]
   prompts:
     observation_instruction: |
       When project facts or history are needed, read the complete

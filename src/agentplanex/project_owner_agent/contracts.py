@@ -18,6 +18,7 @@ class AgentExitStatus(StrEnum):
     REPLY_TO_HUMAN = "ReplyToHuman"
     PLAN_APPROVAL_REQUESTED = "PlanApprovalRequested"
     FIRST_RUN_APPROVAL_REQUESTED = "FirstRunApprovalRequested"
+    BLOCKED_RUN_APPROVAL_REQUESTED = "BlockedRunApprovalRequested"
     MILESTONE_RUN_QUEUED = "MilestoneRunQueued"
     TRIAGE_DEVELOPMENT_COMPLETED = "TriageDevelopmentCompleted"
     AGENT_TASK_QUEUED = "AgentTaskQueued"

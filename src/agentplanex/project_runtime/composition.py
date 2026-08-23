@@ -8,6 +8,7 @@ from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.codex import CodexTurnTransport
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
+from agentplanex.infrastructure.sqlite.repositories import SQLiteAutoTakeoverRepository
 from agentplanex.infrastructure.sqlite.timeline import SQLiteTimelineRecorder
 from agentplanex.project_owner_agent.approval import ApprovalMode
 from agentplanex.project_owner_agent.models.responses import (
@@ -28,6 +29,7 @@ from agentplanex.services.agent_invocation import (
     AgentPromptCatalog,
     resolve_observation_skill,
 )
+from agentplanex.services.auto_takeover import AutoTakeoverOperation
 from agentplanex.services.delivery._milestone_hard_gate import MilestoneHardGate
 from agentplanex.services.delivery._service import DeliveryService
 from agentplanex.services.delivery._stage_executor import (
@@ -57,6 +59,60 @@ class _ProjectCommandGraph:
     executions: ProjectExecutions
 
 
+def compose_external_agent_runtime(
+    *,
+    project_path: Path,
+    settings: Settings,
+) -> ExternalAgentRuntime:
+    """Build the shared Owner-external Agent boundary for one Feature."""
+    project_path = project_path.resolve()
+    if not project_path.is_dir():
+        raise ValueError(f"Project path is not a directory: {project_path}")
+    codex_settings = settings.runtime.codex
+    workspaces = AgentWorkspaceStore(
+        project_path=project_path,
+        response_limit=codex_settings.response_limit,
+        artifact_limit=codex_settings.artifact_limit,
+    )
+    transport = CodexTurnTransport(
+        executable=codex_settings.executable,
+        model=codex_settings.model,
+        timeout_seconds=codex_settings.timeout_seconds,
+        response_limit=codex_settings.response_limit,
+        network_access=codex_settings.network_access,
+    )
+    definitions = {
+        key: build_agent_definition(key, configured)
+        for key, configured in settings.runtime.external_agents.items()
+    }
+    operations: dict[tuple[str, str], object] = {
+        ("planner", "planner_message_v1"): A2AOperation("planner_message_v1", None, workspaces),
+        ("planner", "planner_task_v1"): A2AOperation("planner_task_v1", "plan.md", workspaces),
+        ("reviewer", "reviewer_message_v1"): A2AOperation("reviewer_message_v1", None, workspaces),
+        ("reviewer", "reviewer_task_v1"): A2AOperation("reviewer_task_v1", "review.md", workspaces),
+        ("task_distributor", "task_distributor_message_v1"): A2AOperation(
+            "task_distributor_message_v1", None, workspaces
+        ),
+        ("task_distributor", "task_distribution_v1"): A2AOperation(
+            "task_distribution_v1", "milestone-plan.md", workspaces
+        ),
+        ("plan_hard_gate", "plan_hard_gate_v1"): HardGateOperation("plan_hard_gate_v1"),
+        ("milestone_hard_gate", "milestone_hard_gate_v1"): HardGateOperation(
+            "milestone_hard_gate_v1"
+        ),
+        ("stage_executor", "stage_execution_v1"): _StageOperation(),
+        ("auto_takeover", "auto_takeover_v1"): AutoTakeoverOperation(),
+    }
+    return ExternalAgentRuntime(
+        workspaces=workspaces,
+        transport=transport,
+        definitions=MappingProxyType(definitions),
+        operations=MappingProxyType(
+            {key: operation for key, operation in operations.items() if key[0] in definitions}
+        ),
+    )
+
+
 def compose_project_runtime(
     *,
     project_path: Path,
@@ -81,6 +137,7 @@ def compose_project_runtime_control(
     settings: Settings,
     approval_mode: ApprovalMode,
     responses_transport: ResponsesTransport,
+    mutation_fence_token: str | None = None,
 ) -> ProjectRuntimeControl:
     """Return privileged Control over the same sealed command graph design."""
     graph = _compose_command_graph(
@@ -90,7 +147,11 @@ def compose_project_runtime_control(
         responses_transport=responses_transport,
         stage_executor=None,
     )
-    return ProjectRuntimeControl(_service=graph.service, _context=graph.context)
+    return ProjectRuntimeControl(
+        _service=graph.service,
+        _context=graph.context,
+        _mutation_fence_token=mutation_fence_token,
+    )
 
 
 def _compose_command_graph(
@@ -109,61 +170,14 @@ def _compose_command_graph(
     git.ensure_runtime_excluded()
     database = SQLiteDatabase.for_project(project_path)
     initialize_schema(database)
+    takeover_runs = SQLiteAutoTakeoverRepository()
     event_bus = EventBus((SQLiteTimelineRecorder(database),))
     observation_skill = resolve_observation_skill()
     runtime_settings = settings.runtime
-    codex_settings = runtime_settings.codex
     catalog = AgentCatalog(runtime_settings)
-    workspaces = AgentWorkspaceStore(
+    external_agents = compose_external_agent_runtime(
         project_path=project_path,
-        response_limit=codex_settings.response_limit,
-        artifact_limit=codex_settings.artifact_limit,
-    )
-    transport = CodexTurnTransport(
-        executable=codex_settings.executable,
-        model=codex_settings.model,
-        timeout_seconds=codex_settings.timeout_seconds,
-        response_limit=codex_settings.response_limit,
-        network_access=codex_settings.network_access,
-    )
-    external_agents = ExternalAgentRuntime(
-        workspaces=workspaces,
-        transport=transport,
-        definitions=MappingProxyType(
-            {
-                key: build_agent_definition(key, configured)
-                for key, configured in runtime_settings.external_agents.items()
-            }
-        ),
-        operations=MappingProxyType(
-            {
-                ("planner", "planner_message_v1"): A2AOperation(
-                    "planner_message_v1", None, workspaces
-                ),
-                ("planner", "planner_task_v1"): A2AOperation(
-                    "planner_task_v1", "plan.md", workspaces
-                ),
-                ("reviewer", "reviewer_message_v1"): A2AOperation(
-                    "reviewer_message_v1", None, workspaces
-                ),
-                ("reviewer", "reviewer_task_v1"): A2AOperation(
-                    "reviewer_task_v1", "review.md", workspaces
-                ),
-                (
-                    "task_distributor",
-                    "task_distributor_message_v1",
-                ): A2AOperation("task_distributor_message_v1", None, workspaces),
-                ("task_distributor", "task_distribution_v1"): A2AOperation(
-                    "task_distribution_v1", "milestone-plan.md", workspaces
-                ),
-                ("plan_hard_gate", "plan_hard_gate_v1"): HardGateOperation("plan_hard_gate_v1"),
-                (
-                    "milestone_hard_gate",
-                    "milestone_hard_gate_v1",
-                ): HardGateOperation("milestone_hard_gate_v1"),
-                ("stage_executor", "stage_execution_v1"): _StageOperation(),
-            }
-        ),
+        settings=settings,
     )
     prompts = AgentPromptCatalog(runtime_settings.prompts)
     collaboration = AgentCollaborationService(
@@ -183,6 +197,7 @@ def _compose_command_graph(
         ),
         observation_skill=observation_skill,
         prompts=prompts,
+        mutation_fence_guard=takeover_runs.require_mutation_fence,
     )
     context = assembly.context
     plan_gate = PlanHardGate(

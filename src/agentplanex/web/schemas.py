@@ -82,8 +82,15 @@ class ActionRequest(Schema):
 
     @model_validator(mode="after")
     def require_rejection_feedback(self) -> "ActionRequest":
-        if self.action is FeatureAction.REJECT_PLAN and not (self.feedback or "").strip():
-            raise ValueError("reject-plan requires non-empty feedback")
+        if (
+            self.action
+            in {
+                FeatureAction.REJECT_PLAN,
+                FeatureAction.REJECT_BLOCKED_RUN,
+            }
+            and not (self.feedback or "").strip()
+        ):
+            raise ValueError(f"{self.action} requires non-empty feedback")
         return self
 
 
@@ -339,8 +346,7 @@ def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
         git=Panel(
             data=(
                 GitData(branch=runtime_view.git_branch, head=runtime_view.git_head)
-                if runtime_view.git_branch is not None
-                and runtime_view.git_head is not None
+                if runtime_view.git_branch is not None and runtime_view.git_head is not None
                 else None
             ),
             error=runtime_view.git_error,

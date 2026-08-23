@@ -428,6 +428,63 @@ Owner message checkpoint 的后继 Snapshot。决策结果只返回业务收据�
 
 ## 8. Feature 生命周期
 
+### Ultra Mode AutoTakeover
+
+启用 `runtime.auto_takeover.enabled` 后，Runtime 将一次真实、已持久化的
+`IN_PROGRESS → BLOCKED` 先视为待判定检查点。Dispatcher 结束原来的 drive 并释放
+Feature occupancy 与 Runtime lock 后，`AutoTakeoverService` 才创建独立后台任务；Codex
+运行期间不持有上述锁或 SQLite transaction。底层 Feature State 在接管判断期间保持
+`BLOCKED`，直到真实 Control 操作改变它。
+
+```mermaid
+sequenceDiagram
+    participant D as Workspace Dispatcher
+    participant A as AutoTakeover Service
+    participant E as External Agent Runtime
+    participant C as AutoCodex
+    participant P as Project Control
+    participant O as Existing Project Owner
+
+    D->>D: persist IN_PROGRESS to BLOCKED
+    D->>D: release Feature occupancy and Runtime lock
+    D->>A: report new persisted BLOCKED event
+    A->>A: persist Run, Attempt, and active fence
+    A->>E: invoke Feature-session AutoCodex
+    E->>C: stable role, native Skills, incremental activation
+    loop one Codex turn may issue multiple Control calls
+        C->>P: observe, message, drive, approve, or reject with fence
+        P->>O: reuse the existing Owner workflow
+        O-->>P: reply, Tool request, or waiting decision
+        P-->>C: authoritative Runtime result
+    end
+    C-->>E: validated YES or NO contract
+    E-->>A: typed result
+    alt YES and Runtime proves one untouched QUEUED StageRun
+        A->>A: atomically revalidate facts, complete Run, and revoke fence
+        A->>D: schedule normal rolling-delivery drive
+    else NO and Attribution artifact is valid
+        A->>A: atomically expose confirmed BLOCKED and revoke fence
+    else output contradicts Runtime facts
+        A->>A: invalidate fence and create one correction Attempt
+    else gateway, process, or timeout failure
+        A->>A: persist FAILED evidence without fake Attribution
+    end
+```
+
+AutoCodex 是共享 External Agent Runtime 中的 Feature-session 角色，稳定绑定 Observe、
+Control 与 Attribution；每次 Activation 只给出本次 BLOCKED event、剩余预算和 Runtime
+签发的命令前缀。它通过和人类相同的 Planning/Delivery 入口作决定，不直接写 SQLite 或
+Git ref，也不能直接 `drive-delivery`；Stage claim 始终由后续 Dispatcher continuation
+负责。BLOCKED 下 `run_next_milestone` 只创建 `BLOCKED_RUN_APPROVAL`；批准时 Runtime
+在同一事务重新校验 Plan、Snapshot、失败游标、Git 基线与活动 fence，然后恢复
+`IN_PROGRESS` 并只入队一个 StageRun。
+
+Takeover 的业务 Run、最多两个 Attempt 和 fence 存在 Feature SQLite；Codex Session、
+请求、结果与不可变 Artifact 仍只存在 Agent Workspace。`YES` 必须匹配
+`IN_PROGRESS + exactly one untouched QUEUED StageRun`；`NO` 必须匹配 `BLOCKED` 且 Attribution
+Artifact 通过 size/digest 校验。第一次不一致只在同一 Feature Session correction 一次，
+第二次不一致、技术故障或 1800 秒预算耗尽均终结为 `FAILED`，不会生成伪归因。
+
 ```mermaid
 stateDiagram-v2
     [*] --> TRIAGE: create Feature
@@ -438,7 +495,8 @@ stateDiagram-v2
     IN_PROGRESS --> IN_PROGRESS: complete Stage / queue next
     IN_PROGRESS --> IN_PROGRESS: replan or reject candidate
     IN_PROGRESS --> BLOCKED: Stage or Runtime failure
-    BLOCKED --> IN_PROGRESS: explicit Owner recovery command
+    BLOCKED --> IN_PROGRESS: approved BLOCKED retry
+    BLOCKED --> BLOCKED: AutoCodex NO or FAILED
     IN_PROGRESS --> DONE: accept final candidate
 ```
 
@@ -552,6 +610,9 @@ flowchart LR
 - **定向执行：** 只有新接受的用户命令会驱动其目标 Feature；启动时不扫描并自动执行旧任务。
 - **Durable Activation：** Message 与 Activation 原子创建；启动时遗留的 `PENDING` 或 `RUNNING` Activation 会终结为 `FAILED`，不会自动重新执行。
 - **Durable Stage：** Stage claim、输出 commit、Candidate ref 与完成状态分别持久化；启动时遗留的 `QUEUED` 或 `RUNNING` StageRun 会终结为 `FAILED + BLOCKED`，后续只能由显式新动作重新排队。
+- **Fenced AutoTakeover：** 每个接管 Attempt 只有一个活动 fence；所有 Control mutation 在业务写入的同一 SQLite transaction 中复核 fence，Attempt 失效或终结时原子撤销。
+- **有界自动恢复：** 每个真实 BLOCKED event 只创建一个 Takeover Run；结果不一致最多 correction 一次，AutoCodex turn 最长运行 1800 秒。
+- **续跑交接：** `YES` 只在同一 SQLite transaction 中复核 Run、Attempt fence、State 和 queued StageRun 并终结结果；随后使用普通 Workspace Dispatcher 继续滚动交付，不增加第二套 Stage 执行入口。
 - **隔离工作区：** Feature、per-activation Reviewer / Gate 和 StageRun 使用独立 worktree 或 workspace，降低并行 Agent 相互覆盖的风险。
 - **Runtime 管理 Session：** 外部 Agent 调用方不管理 thread；同一 Session 的文件锁覆盖完整 Codex turn，危险超时会隔离旧 Session。
 - **不可变 Agent Artifact：** `documents/` 可继续编辑；只有按 Activation 冻结并通过 digest 校验的 Artifact 才能跨 Agent 使用。
@@ -580,6 +641,7 @@ flowchart LR
 | Owner A2A Planner / Reviewer / Task Distributor | `src/agentplanex/services/agent_collaboration/` |
 | Plan / Milestone Hard Gate | `src/agentplanex/services/planning/_plan_hard_gate.py`, `services/delivery/_milestone_hard_gate.py` |
 | Delivery 状态机与私有 Stage 执行 | `src/agentplanex/services/delivery/` |
+| Ultra Mode AutoTakeover 与静态结果协议 | `src/agentplanex/services/auto_takeover/`, `infrastructure/sqlite/repositories/auto_takeover.py` |
 | EventBus 与 Timeline | `src/agentplanex/services/event_bus.py`, `infrastructure/sqlite/timeline.py` |
 | Model Gateway、Provider Adapter 与应用日志 | `src/agentplanex/infrastructure/model_gateway/`, `infrastructure/logging.py` |
 | Git / worktree 基础设施 | `src/agentplanex/infrastructure/git_repository.py`, `workspace_git.py`, `agent_workspace.py` |

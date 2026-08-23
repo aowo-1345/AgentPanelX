@@ -409,7 +409,7 @@ def test_talk_to_agent_reanchors_configured_agents_to_runtime_context(
     assert "nested Task schema" in _normalized(task_distributor.developer_instructions)
     assert reviewer.developer_instructions.startswith("You are the AgentPlaneX Reviewer")
     for request in (planner, task_distributor, reviewer):
-        assert request.skills == (("observe", skill_path),)
+        assert request.skills == (("agentplanex-project-observe", skill_path),)
         assert str(skill_path) not in request.message
         assert '"snapshot_id": "snapshot-1"' in request.message
         assert '"stage_key": "stage-1"' in request.message
@@ -567,7 +567,7 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
         "You are the AgentPlaneX Milestone Hard Gate"
     )
     for request in recorded:
-        assert request.skills == (("observe", skill_path),)
+        assert request.skills == (("agentplanex-project-observe", skill_path),)
         assert str(skill_path) not in request.message
         assert len(request.mentions) == (3 if request is plan_gate else 1)
         assert request.output_schema is not None
@@ -657,7 +657,7 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
     request = recorded[0]
     assert request.thread_id is None
     assert request.developer_instructions.startswith("You are the AgentPlaneX Stage Executor")
-    assert request.skills == (("observe", skill_path),)
+    assert request.skills == (("agentplanex-project-observe", skill_path),)
     assert str(skill_path) not in request.message
     assert '"stage_run_id": "stage-run-1"' in request.message
     assert '"input_commit_sha": "input-commit"' in request.message

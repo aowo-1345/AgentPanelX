@@ -20,6 +20,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.services.delivery._driver import _StageDriver
 from agentplanex.services.delivery._stage_executor import StageExecutor
 from agentplanex.services.delivery.contracts import (
+    BlockedRunApprovalRequested,
     CandidateDecision,
     DeliveryDriveOutcome,
     DeliveryError,
@@ -156,7 +157,9 @@ class DeliveryService:
             review=review,
         )
 
-    def request_next_milestone(self) -> FirstRunApprovalRequested | MilestoneRunQueued:
+    def request_next_milestone(
+        self,
+    ) -> FirstRunApprovalRequested | BlockedRunApprovalRequested | MilestoneRunQueued:
         """Request the first Start or queue the next pending Milestone Run."""
         current = self.context.state()
         snapshot = self._snapshot_for_context(current)
@@ -190,7 +193,78 @@ class DeliveryService:
             )
         if current.status == "BLOCKED":
             self._driver.assert_retryable_blocked(current)
+            updated = self.context.transition(
+                reason=RuntimeContextChangeReason.BLOCKED_RUN_APPROVAL_REQUESTED,
+                mutate=lambda latest: replace(
+                    latest,
+                    pending_action="BLOCKED_RUN_APPROVAL",
+                ),
+            )
+            self.event_bus.publish(
+                ExecutionEvent(
+                    triage_id=updated.triage_id,
+                    event_type=ExecutionEventType.BLOCKED_RUN_APPROVAL_REQUESTED,
+                    payload={
+                        "snapshot_id": snapshot.snapshot_id,
+                        "milestone_key": milestone.key,
+                        "failed_run_id": current.current_run_id,
+                        "failed_stage_key": current.current_stage_key,
+                    },
+                )
+            )
+            return BlockedRunApprovalRequested(updated, snapshot, milestone)
         return self._driver.queue_run(current, snapshot, milestone, first_run=False)
+
+    def approve_blocked_run(self) -> MilestoneRunQueued:
+        """Approve the Owner-selected retry through the canonical queue path."""
+        current = self.context.state()
+        snapshot = self._snapshot_for_context(current)
+        milestone = self._first_pending(snapshot)
+        self._assert_approved_specs(current)
+        if current.pending_action != "BLOCKED_RUN_APPROVAL":
+            raise DeliveryError("Project is not waiting for blocked Run approval")
+        queued = self._driver.queue_run(
+            current,
+            snapshot,
+            milestone,
+            first_run=False,
+            blocked_approval=True,
+        )
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=queued.state.triage_id,
+                event_type=ExecutionEventType.BLOCKED_RUN_APPROVED,
+                payload={
+                    "run_id": queued.run_id,
+                    "stage_run_id": queued.stage_run_id,
+                    "snapshot_id": queued.snapshot_id,
+                    "milestone_key": queued.milestone_key,
+                    "stage_key": queued.stage_key,
+                },
+            )
+        )
+        return queued
+
+    def reject_blocked_run(self, feedback: str) -> ProjectRuntimeState:
+        """Reject the selected retry while preserving the failed cursor."""
+        normalized = " ".join(feedback.split())
+        if not normalized:
+            raise DeliveryError("Blocked Run rejection feedback must not be empty")
+        current = self.context.state()
+        if current.status != "BLOCKED" or current.pending_action != "BLOCKED_RUN_APPROVAL":
+            raise DeliveryError("Project is not waiting for blocked Run approval")
+        updated = self.context.transition(
+            reason=RuntimeContextChangeReason.BLOCKED_RUN_REJECTED,
+            mutate=lambda latest: replace(latest, pending_action=None),
+        )
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=updated.triage_id,
+                event_type=ExecutionEventType.BLOCKED_RUN_REJECTED,
+                payload={"feedback": normalized},
+            )
+        )
+        return updated
 
     def start_first_run(self) -> MilestoneRunQueued:
         """Apply the user's one-time explicit Start and queue the first Stage."""

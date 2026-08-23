@@ -42,6 +42,11 @@ Canonical Skill：[`agentplanex-project-control`](../.codex/skills/agentplanex-p
 - **输出**：结构化 Tool result，以及可核对的 Git、文件系统和 SQLite 副作用。
 - **边界**：不直接写 SQLite，不直接修改 Git ref，不操作未经授权的项目，不代替事后归因。
 
+Ultra Mode 中，Runtime 会把同一 Control 能力稳定绑定给 AutoCodex，并为每个 Attempt
+签发短期 fence。AutoCodex 仍使用这里记录的真实命令和业务入口；没有当前 fence 的并发
+写命令会被 Runtime 拒绝。该自动授权只覆盖当前受管 Feature 和当前接管 Attempt，不改变
+一般开发 Agent 使用 Control 时仍需明确用户授权的边界。
+
 示例：
 
 ```bash

@@ -36,6 +36,12 @@ class ProjectRuntime:
     def start_first_run(self) -> MilestoneRunQueued:
         return self._service.start_first_run()
 
+    def approve_blocked_run(self) -> MilestoneRunQueued:
+        return self._service.approve_blocked_run()
+
+    def reject_blocked_run(self, feedback: str) -> ProjectRuntimeState:
+        return self._service.reject_blocked_run(feedback)
+
     def drive_until_waiting(self) -> ProjectRuntimeState:
         return self._service.drive_until_waiting()
 

@@ -23,6 +23,8 @@ export const FEATURE_ACTIONS = [
   'approve-plan',
   'reject-plan',
   'start-delivery',
+  'approve-blocked-run',
+  'reject-blocked-run',
 ] as const;
 
 export type FeatureAction = (typeof FEATURE_ACTIONS)[number];

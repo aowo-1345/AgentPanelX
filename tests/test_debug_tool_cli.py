@@ -1913,10 +1913,10 @@ def test_invalid_stage_output_becomes_failed_fact_and_block_without_activation(
     )
     retry = json.loads(capfd.readouterr().out)
     assert retry_code == 0
-    assert retry["result"]["state"] == "MILESTONE_RUN_QUEUED"
-    assert retry["result"]["run_id"] != run_id
-    assert retry["result"]["status"] == "IN_PROGRESS"
-    assert _load_context(project_path).status == "IN_PROGRESS"
+    assert retry["result"]["state"] == "BLOCKED_RUN_APPROVAL_REQUESTED"
+    assert retry["result"]["status"] == "BLOCKED"
+    assert retry["result"]["pending_action"] == "BLOCKED_RUN_APPROVAL"
+    assert _load_context(project_path).status == "BLOCKED"
 
 
 def test_blocked_replanning_skips_plan_and_milestone_hard_gates(

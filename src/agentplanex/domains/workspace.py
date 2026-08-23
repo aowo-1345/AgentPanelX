@@ -12,6 +12,8 @@ class FeatureAction(StrEnum):
     APPROVE_PLAN = "approve-plan"
     REJECT_PLAN = "reject-plan"
     START_DELIVERY = "start-delivery"
+    APPROVE_BLOCKED_RUN = "approve-blocked-run"
+    REJECT_BLOCKED_RUN = "reject-blocked-run"
 
 
 @dataclass(frozen=True, slots=True)

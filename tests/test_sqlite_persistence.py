@@ -261,7 +261,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 13
+    assert schema_version[0] == 14
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -366,6 +366,27 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "message_id",
             "payload",
             "created_at",
+        ),
+        "auto_takeover_run": (
+            "run_id",
+            "triage_id",
+            "trigger_event_id",
+            "status",
+            "decision",
+            "attribution",
+            "error",
+            "started_at",
+            "finished_at",
+        ),
+        "auto_takeover_attempt": (
+            "attempt_id",
+            "run_id",
+            "ordinal",
+            "status",
+            "fence_token",
+            "error",
+            "started_at",
+            "finished_at",
         ),
     }
 

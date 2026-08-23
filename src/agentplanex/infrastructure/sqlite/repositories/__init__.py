@@ -1,5 +1,9 @@
 """SQLite repositories."""
 
+from agentplanex.infrastructure.sqlite.repositories.auto_takeover import (
+    AutoTakeoverFenceError,
+    SQLiteAutoTakeoverRepository,
+)
 from agentplanex.infrastructure.sqlite.repositories.execution_event import (
     SQLiteExecutionEventRepository,
 )
@@ -26,6 +30,8 @@ from agentplanex.infrastructure.sqlite.repositories.summary_history import (
 )
 
 __all__ = [
+    "AutoTakeoverFenceError",
+    "SQLiteAutoTakeoverRepository",
     "SQLiteExecutionEventRepository",
     "SQLiteMessageHistoryRepository",
     "SQLiteMilestoneSnapshotRepository",

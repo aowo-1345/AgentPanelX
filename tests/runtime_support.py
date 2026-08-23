@@ -54,6 +54,7 @@ def compose_test_runtime(
     approval_mode: ApprovalMode,
     responses_transport: ResponsesTransport,
     stage_executor: StageExecutor | None = None,
+    mutation_fence_token: str | None = None,
 ) -> RuntimePair:
     graph = _compose_command_graph(
         project_path=project_path,
@@ -67,6 +68,7 @@ def compose_test_runtime(
         control=ProjectRuntimeControl(
             _service=graph.service,
             _context=graph.context,
+            _mutation_fence_token=mutation_fence_token,
         ),
     )
 

@@ -2,8 +2,9 @@
 
 import fcntl
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +50,12 @@ from agentplanex.services.project_runtime_context.models import (
     ProjectOwnerTask,
 )
 
+type MutationFenceGuard = Callable[[sqlite3.Connection, str | None], None]
+
+
+def _allow_mutation(_connection: sqlite3.Connection, _token: str | None) -> None:
+    pass
+
 
 @dataclass(slots=True)
 class ProjectRuntimeContext:
@@ -57,6 +64,7 @@ class ProjectRuntimeContext:
     project_path: Path
     database: SQLiteDatabase
     event_bus: EventBus
+    mutation_fence_guard: MutationFenceGuard = _allow_mutation
     _states: SQLiteProjectRuntimeStateRepository = field(
         default_factory=SQLiteProjectRuntimeStateRepository
     )
@@ -81,6 +89,11 @@ class ProjectRuntimeContext:
         repr=False,
     )
     _sealed: bool = field(default=False, init=False, repr=False)
+    _mutation_fence: ContextVar[str | None] = field(
+        default_factory=lambda: ContextVar("agentplanex_mutation_fence", default=None),
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         self.project_path = self.project_path.resolve()
@@ -95,11 +108,7 @@ class ProjectRuntimeContext:
         tool_executor: RuntimeToolExecutor,
     ) -> None:
         """Install the private execution graph atomically during composition."""
-        if (
-            self._sealed
-            or self._owner_runtime is not None
-            or self._tool_executor is not None
-        ):
+        if self._sealed or self._owner_runtime is not None or self._tool_executor is not None:
             raise RuntimeError("Project Runtime Context composition is already complete")
         self._owner_runtime = owner_runtime
         self._tool_executor = tool_executor
@@ -146,6 +155,7 @@ class ProjectRuntimeContext:
     def initialize(self) -> ProjectRuntimeState:
         """Atomically create or restore the sole State and Owner identity."""
         with self.operation(), self.database.transaction() as connection:
+            self.mutation_fence_guard(connection, self._mutation_fence.get())
             states = self._states.list_all(connection)
             if len(states) > 1:
                 raise RuntimeError("Project contains more than one Runtime State")
@@ -167,6 +177,21 @@ class ProjectRuntimeContext:
         """Restore the sole initialized State without creating it."""
         with self.operation():
             return self._current_state()
+
+    @contextmanager
+    def use_mutation_fence(self, token: str | None) -> Iterator[None]:
+        """Bind the caller's mutation fence across nested Runtime transactions."""
+        reset = self._mutation_fence.set(token)
+        try:
+            yield
+        finally:
+            self._mutation_fence.reset(reset)
+
+    def assert_mutation_fence(self) -> None:
+        """Reject an unfenced Control command before it can cause external effects."""
+        self._require_operation()
+        with self.database.transaction() as connection:
+            self.mutation_fence_guard(connection, self._mutation_fence.get())
 
     def transition(
         self,
@@ -404,6 +429,7 @@ class ProjectRuntimeContext:
         self._require_operation()
         transaction = ProjectRuntimeTransaction(self)
         with self.database.transaction() as connection:
+            self.mutation_fence_guard(connection, self._mutation_fence.get())
             transaction._connection = connection
             try:
                 yield transaction

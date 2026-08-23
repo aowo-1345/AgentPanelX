@@ -300,6 +300,8 @@ def test_drive_until_waiting_blocks_runtime_when_owner_fails(
     context = runtime.runtime.drive_until_waiting()
 
     assert context.status == "BLOCKED"
+    assert context.blocked_capability == "project-owner-runtime"
+    assert context.blocked_previous_status == "TODO"
     workspace = create_project_workspace_query(project_path=project_path).get(context.triage_id)
     assert workspace.owner_activation is None
     assert [(message.role, message.content) for message in workspace.conversation] == [
@@ -381,7 +383,7 @@ def test_drive_until_waiting_stops_at_plan_approval(
     assert context.pending_action == "PLAN_APPROVAL"
 
 
-def test_message_does_not_clear_runtime_execution_block(
+def test_message_retries_a_technical_owner_block_without_new_product_intent(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -396,13 +398,24 @@ def test_message_does_not_clear_runtime_execution_block(
     runtime.runtime.submit_message("Fail the first activation.")
     assert runtime.runtime.drive_until_waiting().status == "BLOCKED"
 
-    pending = runtime.runtime.submit_message("Record follow-up without resuming work.")
-    context = runtime.runtime.drive_until_waiting()
+    pending = runtime.runtime.submit_message("Retry the same Owner workflow.")
+    resumed = runtime.runtime.state()
+    assert resumed.status == "TODO"
+    assert resumed.blocked_reason is None
+    assert resumed.blocked_capability is None
+    assert resumed.blocked_previous_status is None
 
-    assert context.status == "BLOCKED"
+    recovered = compose_test_runtime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+    )
+    context = recovered.runtime.drive_until_waiting()
+    assert context.status == "TODO"
     workspace = create_project_workspace_query(project_path=project_path).get(context.triage_id)
-    assert workspace.owner_activation == pending
-    assert workspace.owner_activation.status.value == "PENDING"
+    assert workspace.owner_activation is None
+    assert pending.status.value == "PENDING"
 
 
 def test_drive_until_waiting_leaves_tool_owned_activation_for_human_control(
@@ -938,9 +951,15 @@ def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
     )
 
     assert retried.activation.activation_id == follow_up.activation_id
-    assert retried.activation.status.value == "COMPLETED"
+    assert retried.activation.status.value == "COMPLETED", retried.exit
     assert retried.exit is not None
-    assert retried.exit.status.value == "MilestoneRunQueued"
+    assert retried.exit.status.value == "BlockedRunApprovalRequested"
+    waiting_approval = runtime.runtime.initialize()
+    assert waiting_approval.status == "BLOCKED"
+    assert waiting_approval.pending_action == "BLOCKED_RUN_APPROVAL"
+
+    queued = runtime.control.approve_blocked_run()
+    assert queued.state.status == "IN_PROGRESS"
     resumed = runtime.runtime.initialize()
     assert resumed.status == "IN_PROGRESS"
     with database.read_only_connection() as connection:

@@ -6,7 +6,10 @@ import hashlib
 import json
 from pathlib import Path
 
-from agentplanex.services.agent_invocation import resolve_observation_skill
+from agentplanex.services.agent_invocation import (
+    AgentInvocationError,
+    resolve_packaged_skill,
+)
 from agentplanex.services.external_agent_runtime.models import (
     AgentDefinition,
     AgentSkill,
@@ -32,13 +35,16 @@ def build_agent_definition(
         ) from error
     if not instructions:
         raise ValueError(f"External Agent instructions are empty: {configured.instructions}")
-    skill_registry = {"observe": resolve_observation_skill()}
     try:
         skills = tuple(
-            AgentSkill(name=name, path=skill_registry[name]) for name in configured.skills
+            AgentSkill(
+                name=f"agentplanex-project-{name}",
+                path=resolve_packaged_skill(f"agentplanex-project-{name}"),
+            )
+            for name in configured.skills
         )
-    except KeyError as error:
-        raise ValueError(f"Unknown External Agent Skill: {error.args[0]}") from error
+    except AgentInvocationError as error:
+        raise ValueError(str(error)) from error
     digest = hashlib.sha256(
         json.dumps(
             {
