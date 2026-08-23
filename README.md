@@ -68,82 +68,39 @@ That Runtime provides four connected capabilities:
 ```mermaid
 flowchart TB
     Human[Human]
-    Browser[Web Console]
-    External[External Codex / Claude Code]
-    Skills[Observe · Control · Attribution]
-    Provider[Model endpoint / local proxy]
-    CodexCLI[Codex CLI workers]
+    CodingAgent[Codex / Claude Code]
+    Web[Web Console]
+    Skills[Agent-native Skills]
+    Models[Model endpoints]
+    CodexCLI[Codex CLI]
 
     subgraph APX[AgentPanelX]
-        subgraph WorkspacePlane[Workspace control plane]
-            API[FastAPI Workspace API]
-            Workspace[Workspace Service]
-            Registry[(Workspace Registry)]
-            Dispatcher[Bounded Feature Dispatcher]
-            Queries[Queries / Projections]
-            Takeover[AutoTakeover Service]
-            Gateway[Shared Model Gateway]
-        end
-
-        subgraph FeaturePlane[Feature Runtime]
-            Runtime[Project Runtime]
-            Control[Project Runtime Control]
-            Owner[Project Owner Agent]
-            Delivery[Planning / Delivery]
-            AgentRuntime[External Agent Runtime]
-            Bus[Event Bus]
-        end
+        Workspace[Workspace Control Plane]
+        Runtime[Project Runtime]
+        Owner[Project Owner Agent]
+        Agents[External Agent Runtime]
+        Delivery[Rolling Delivery]
+        Gateway[Model Gateway]
     end
 
-    subgraph Project[Managed Git project]
-        FeatureWT[Feature Worktree]
-        StageWT[Stage Worktrees]
-        AgentWS[Agent Workspaces]
-        Git[(Git commits / refs)]
-        SQLite[(Feature SQLite)]
-    end
+    Project[(Managed Git project and Runtime evidence)]
 
-    Human --> Browser
-    Browser <-->|commands and polling| API
-    External --> Skills
-    Skills --> Queries
-    Skills --> Control
-
-    API --> Workspace
-    Workspace --> Registry
-    Workspace --> Queries
-    Workspace --> Dispatcher
-    Workspace --> Takeover
-    Workspace --> Gateway
-    Dispatcher --> Runtime
-
-    Control --> Runtime
+    Human --> Web
+    CodingAgent --> Skills
+    Web <--> Workspace
+    Skills <--> Runtime
+    Workspace --> Runtime
     Runtime --> Owner
+    Runtime --> Agents
     Runtime --> Delivery
-    Runtime --> AgentRuntime
-    Takeover --> AgentRuntime
-
+    Workspace -->|Ultra Mode| Agents
     Owner --> Gateway
-    Gateway --> Provider
-    AgentRuntime --> CodexCLI
-    CodexCLI -->|AutoCodex only| Control
-
-    Owner --> FeatureWT
-    Delivery --> StageWT
-    AgentRuntime --> AgentWS
-    CodexCLI -->|Stage Executor only| StageWT
-    FeatureWT --> Git
-    StageWT --> Git
-
-    Runtime --> SQLite
-    Runtime --> Bus
-    Bus --> SQLite
-    Queries --> Registry
-    Queries --> Git
-    Queries --> SQLite
+    Gateway --> Models
+    Agents --> CodexCLI
+    Runtime <--> Project
 ```
 
-The Web Console and repository Skills are separate adapters over the same Runtime facts. The Workspace control plane owns registration, projections, bounded dispatch, and optional Ultra Mode takeover. Inside each Feature Runtime, the Project Owner uses the shared Model Gateway, while Planner, Task Distributor, Reviewer, Hard Gates, Stage Executor, and AutoCodex run through the External Agent Runtime and Codex. Feature state remains in project-local SQLite; accepted and candidate code remains anchored by Git.
+The Web Console enters through the Workspace control plane, while repository Skills provide an agent-native path into the same Feature Runtime. The Project Runtime coordinates the persistent Project Owner, External Agent Runtime, and rolling delivery. The Owner reaches models through the shared Model Gateway; Planner, Task Distributor, Reviewer, Hard Gates, Stage Executor, and AutoCodex run through the External Agent Runtime and Codex. Code and durable Runtime evidence remain anchored in the managed Git project. See [Architecture](docs/architecture.md) for detailed module and lifecycle views.
 
 ## Agent-native operations
 

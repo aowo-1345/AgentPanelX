@@ -68,82 +68,39 @@ Project Owner、Project Runtime、Git worktree，以及 Observe / Control / Attr
 ```mermaid
 flowchart TB
     Human[Human]
-    Browser[Web Console]
-    External[External Codex / Claude Code]
-    Skills[Observe · Control · Attribution]
-    Provider[Model endpoint / local proxy]
-    CodexCLI[Codex CLI workers]
+    CodingAgent[Codex / Claude Code]
+    Web[Web Console]
+    Skills[Agent-native Skills]
+    Models[Model endpoints]
+    CodexCLI[Codex CLI]
 
     subgraph APX[AgentPanelX]
-        subgraph WorkspacePlane[Workspace control plane]
-            API[FastAPI Workspace API]
-            Workspace[Workspace Service]
-            Registry[(Workspace Registry)]
-            Dispatcher[Bounded Feature Dispatcher]
-            Queries[Queries / Projections]
-            Takeover[AutoTakeover Service]
-            Gateway[Shared Model Gateway]
-        end
-
-        subgraph FeaturePlane[Feature Runtime]
-            Runtime[Project Runtime]
-            Control[Project Runtime Control]
-            Owner[Project Owner Agent]
-            Delivery[Planning / Delivery]
-            AgentRuntime[External Agent Runtime]
-            Bus[Event Bus]
-        end
+        Workspace[Workspace Control Plane]
+        Runtime[Project Runtime]
+        Owner[Project Owner Agent]
+        Agents[External Agent Runtime]
+        Delivery[Rolling Delivery]
+        Gateway[Model Gateway]
     end
 
-    subgraph Project[Managed Git project]
-        FeatureWT[Feature Worktree]
-        StageWT[Stage Worktrees]
-        AgentWS[Agent Workspaces]
-        Git[(Git commits / refs)]
-        SQLite[(Feature SQLite)]
-    end
+    Project[(Managed Git project and Runtime evidence)]
 
-    Human --> Browser
-    Browser <-->|commands and polling| API
-    External --> Skills
-    Skills --> Queries
-    Skills --> Control
-
-    API --> Workspace
-    Workspace --> Registry
-    Workspace --> Queries
-    Workspace --> Dispatcher
-    Workspace --> Takeover
-    Workspace --> Gateway
-    Dispatcher --> Runtime
-
-    Control --> Runtime
+    Human --> Web
+    CodingAgent --> Skills
+    Web <--> Workspace
+    Skills <--> Runtime
+    Workspace --> Runtime
     Runtime --> Owner
+    Runtime --> Agents
     Runtime --> Delivery
-    Runtime --> AgentRuntime
-    Takeover --> AgentRuntime
-
+    Workspace -->|Ultra Mode| Agents
     Owner --> Gateway
-    Gateway --> Provider
-    AgentRuntime --> CodexCLI
-    CodexCLI -->|AutoCodex only| Control
-
-    Owner --> FeatureWT
-    Delivery --> StageWT
-    AgentRuntime --> AgentWS
-    CodexCLI -->|Stage Executor only| StageWT
-    FeatureWT --> Git
-    StageWT --> Git
-
-    Runtime --> SQLite
-    Runtime --> Bus
-    Bus --> SQLite
-    Queries --> Registry
-    Queries --> Git
-    Queries --> SQLite
+    Gateway --> Models
+    Agents --> CodexCLI
+    Runtime <--> Project
 ```
 
-Web Console 与仓库 Skills 是同一组 Runtime 事实之上的两类适配器。Workspace 控制面负责项目注册、查询投影、有界调度和可选的 Ultra Mode 接管。每个 Feature Runtime 内，Project Owner 使用共享 Model Gateway；Planner、Task Distributor、Reviewer、Hard Gate、Stage Executor 与 AutoCodex 则统一通过 External Agent Runtime 和 Codex 执行。Feature 状态保存在项目本地 SQLite，已接受代码与 Candidate 由 Git 锚定。
+Web Console 通过 Workspace 控制面进入系统，仓库 Skills 则为 Coding Agent 提供同一 Feature Runtime 的 Agent-native 入口。Project Runtime 协调持久化 Project Owner、External Agent Runtime 与滚动交付；Owner 通过共享 Model Gateway 访问模型，Planner、Task Distributor、Reviewer、Hard Gate、Stage Executor 与 AutoCodex 统一经 External Agent Runtime 和 Codex 执行。代码与持久 Runtime 证据仍锚定在受管 Git 项目中。详细模块和生命周期见[架构文档](docs/architecture.md)。
 
 ## Agent-native 操作面
 

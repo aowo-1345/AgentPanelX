@@ -16,82 +16,39 @@ AgentPanelX 是一个面向长周期 Coding Tasks 的本地优先交付运行时
 ```mermaid
 flowchart TB
     Human[Human]
-    Browser[Web Console]
-    External[External Codex / Claude Code]
-    Skills[Observe · Control · Attribution]
-    Provider[Model endpoint / local proxy]
-    CodexCLI[Codex CLI workers]
+    CodingAgent[Codex / Claude Code]
+    Web[Web Console]
+    Skills[Agent-native Skills]
+    Models[Model endpoints]
+    CodexCLI[Codex CLI]
 
     subgraph APX[AgentPanelX]
-        subgraph WorkspacePlane[Workspace control plane]
-            API[FastAPI Workspace API]
-            Workspace[Workspace Service]
-            Registry[(Workspace Registry)]
-            Dispatcher[Bounded Feature Dispatcher]
-            Queries[Queries / Projections]
-            Takeover[AutoTakeover Service]
-            Gateway[Shared Model Gateway]
-        end
-
-        subgraph FeaturePlane[Feature Runtime]
-            Runtime[Project Runtime]
-            Control[Project Runtime Control]
-            Owner[Project Owner Agent]
-            Delivery[Planning / Delivery]
-            AgentRuntime[External Agent Runtime]
-            Bus[Event Bus]
-        end
+        Workspace[Workspace Control Plane]
+        Runtime[Project Runtime]
+        Owner[Project Owner Agent]
+        Agents[External Agent Runtime]
+        Delivery[Rolling Delivery]
+        Gateway[Model Gateway]
     end
 
-    subgraph Project[Managed Git project]
-        FeatureWT[Feature Worktree]
-        StageWT[Stage Worktrees]
-        AgentWS[Agent Workspaces]
-        Git[(Git commits / refs)]
-        SQLite[(Feature SQLite)]
-    end
+    Project[(Managed Git project and Runtime evidence)]
 
-    Human --> Browser
-    Browser <-->|commands and polling| API
-    External --> Skills
-    Skills --> Queries
-    Skills --> Control
-
-    API --> Workspace
-    Workspace --> Registry
-    Workspace --> Queries
-    Workspace --> Dispatcher
-    Workspace --> Takeover
-    Workspace --> Gateway
-    Dispatcher --> Runtime
-
-    Control --> Runtime
+    Human --> Web
+    CodingAgent --> Skills
+    Web <--> Workspace
+    Skills <--> Runtime
+    Workspace --> Runtime
     Runtime --> Owner
+    Runtime --> Agents
     Runtime --> Delivery
-    Runtime --> AgentRuntime
-    Takeover --> AgentRuntime
-
+    Workspace -->|Ultra Mode| Agents
     Owner --> Gateway
-    Gateway --> Provider
-    AgentRuntime --> CodexCLI
-    CodexCLI -->|AutoCodex only| Control
-
-    Owner --> FeatureWT
-    Delivery --> StageWT
-    AgentRuntime --> AgentWS
-    CodexCLI -->|Stage Executor only| StageWT
-    FeatureWT --> Git
-    StageWT --> Git
-
-    Runtime --> SQLite
-    Runtime --> Bus
-    Bus --> SQLite
-    Queries --> Registry
-    Queries --> Git
-    Queries --> SQLite
+    Gateway --> Models
+    Agents --> CodexCLI
+    Runtime <--> Project
 ```
 
-Web Console 与仓库 Skills 是同一组 Runtime 事实之上的两类适配器：浏览器通过 Workspace Service 执行用户命令和读取 Projection；Skills 分别经 Query 或 ProjectRuntimeControl 读取证据、受控介入或复盘历史失败。Workspace 控制面持有 Registry、Queries、Dispatcher、共享 Model Gateway 生命周期与可选 AutoTakeover。每个 Feature Runtime 组合 Project Owner、Planning、Delivery 和 External Agent Runtime；Owner 单独使用 Model Gateway，其他外部角色统一通过 External Agent Runtime 调用 Codex。Feature Worktree、Stage Worktree 与 Agent Workspace 具有不同写入责任，SQLite 与 Git 共同提供权威事实。
+Web Console 通过 Workspace 控制面提交命令并读取投影，仓库 Skills 则通过查询与受控介入入口访问同一 Feature Runtime。Project Runtime 负责协调持久化 Project Owner、External Agent Runtime 与 Rolling Delivery；Owner 通过共享 Model Gateway 访问模型，其他外部角色统一由 External Agent Runtime 调用 Codex。Ultra Mode 由 Workspace 控制面触发 AutoCodex 接管，但仍复用 External Agent Runtime。受管 Git 项目承载代码与持久 Runtime 证据；Registry、Dispatcher、Query、Control、EventBus 和具体 Workspace 布局在后续分层与时序中展开。
 
 ## 3. 运行时分层
 
