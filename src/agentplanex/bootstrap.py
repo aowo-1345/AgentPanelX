@@ -131,14 +131,15 @@ def create_workspace(
             raise ValueError("Ultra Mode requires the Runtime settings file path")
 
         def schedule_drive(binding: FeatureBinding) -> None:
-            assert takeover is not None
-            watermark = takeover.event_watermark(binding)
+            active_takeover = takeover
+            assert active_takeover is not None
+            watermark = active_takeover.event_watermark(binding)
             runtime = runtime_factory(binding.worktree_path)
             dispatcher.dispatch(
                 binding.triage_id,
                 persist=lambda: None,
                 drive=runtime.drive_until_waiting,
-                after_release=lambda: takeover.after_drive_released(
+                after_release=lambda: active_takeover.after_drive_released(
                     binding,
                     after_event_id=watermark,
                 ),

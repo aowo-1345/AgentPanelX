@@ -25,10 +25,7 @@ from agentplanex.services._hard_gate import HardGateOperation
 from agentplanex.services.agent_collaboration import AgentCollaborationService
 from agentplanex.services.agent_collaboration._catalog import AgentCatalog
 from agentplanex.services.agent_collaboration._operations import A2AOperation
-from agentplanex.services.agent_invocation import (
-    AgentPromptCatalog,
-    resolve_observation_skill,
-)
+from agentplanex.services.agent_invocation import AgentPromptCatalog
 from agentplanex.services.auto_takeover import AutoTakeoverOperation
 from agentplanex.services.delivery._milestone_hard_gate import MilestoneHardGate
 from agentplanex.services.delivery._service import DeliveryService
@@ -172,7 +169,6 @@ def _compose_command_graph(
     initialize_schema(database)
     takeover_runs = SQLiteAutoTakeoverRepository()
     event_bus = EventBus((SQLiteTimelineRecorder(database),))
-    observation_skill = resolve_observation_skill()
     runtime_settings = settings.runtime
     catalog = AgentCatalog(runtime_settings)
     external_agents = compose_external_agent_runtime(

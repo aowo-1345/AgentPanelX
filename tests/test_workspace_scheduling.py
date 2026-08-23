@@ -301,7 +301,11 @@ def test_http_rejects_busy_and_capacity_before_persistence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace, runtimes = _workspace(tmp_path, max_parallel_features=1)
-    monkeypatch.setattr(web_app, "create_workspace", lambda _settings: workspace)
+    monkeypatch.setattr(
+        web_app,
+        "create_workspace",
+        lambda _settings, **_kwargs: workspace,
+    )
     first_runtime = runtimes[tmp_path / "feature-a"]
     second_runtime = runtimes[tmp_path / "feature-b"]
 
@@ -479,7 +483,11 @@ def test_http_returns_200_for_begin_and_202_for_automatic_actions(
     workspace, runtimes = _workspace(tmp_path, max_parallel_features=1)
     runtime = runtimes[tmp_path / "feature-a"]
     runtime.release_drive.set()
-    monkeypatch.setattr(web_app, "create_workspace", lambda _settings: workspace)
+    monkeypatch.setattr(
+        web_app,
+        "create_workspace",
+        lambda _settings, **_kwargs: workspace,
+    )
 
     with TestClient(web_app.create_app(load_settings(DEFAULT_SETTINGS_PATH))) as client:
         begun = client.post(

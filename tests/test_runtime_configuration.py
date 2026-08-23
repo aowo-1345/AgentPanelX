@@ -425,7 +425,10 @@ def test_workspace_runtimes_share_one_responses_transport(
         }
     )
 
-    workspace = bootstrap.create_workspace(settings)
+    workspace = bootstrap.create_workspace(
+        settings,
+        settings_path=DEFAULT_SETTINGS_PATH,
+    )
     workspace.runtime_factory(tmp_path / "feature-a")
     workspace.runtime_factory(tmp_path / "feature-b")
     workspace.close()
@@ -658,6 +661,7 @@ def test_cli_reports_missing_model_credentials(
     )
     monkeypatch.delenv(api_key_env, raising=False)
     monkeypatch.delenv("OPENAI_ADMIN_KEY", raising=False)
+    monkeypatch.setattr(bootstrap, "_local_cliproxy_api_key", lambda *_args: None)
 
     result = cli.main(
         ["--cwd", str(project_path), "--mode", "yolo", "--print", "hello"]

@@ -24,9 +24,18 @@
 <p align="center">
   <a href="https://github.com/aowo-1345/AgentPanelX/actions/workflows/ci.yml"><img src="https://github.com/aowo-1345/AgentPanelX/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7c3aed" alt="MIT License" /></a>
+  <img src="https://img.shields.io/badge/release-v0.2.0-7c3aed" alt="AgentPanelX v0.2.0" />
   <img src="https://img.shields.io/badge/Python-3.12-3776ab" alt="Python 3.12" />
   <img src="https://img.shields.io/badge/local--first-Project_Runtime-111827" alt="Local-first" />
 </p>
+
+## v0.2 — Rolling delivery that keeps moving
+
+AgentPanelX v0.2 advances the project from coordinated execution toward a control plane that can sustain real, long-running delivery:
+
+- **A stronger local model gateway:** connect through a local OpenAI-compatible proxy backed by an OpenAI subscription, preserve Project Owner context and cache affinity across activations, and surface gateway timeouts and failures as explicit Runtime evidence.
+- **Task Distributor and rolling Milestones:** plan the next executable horizon instead of freezing an exhaustive roadmap up front, then add a hardening pass that evaluates code quality, applies behavior-preserving refactoring when justified, and records QA evidence.
+- **Ultra Mode:** when delivery moves from `IN_PROGRESS` to `BLOCKED`, AutoCodex uses the bound Observe, Control, and Attribution Skills to decide whether established intent is sufficient to continue. Clear decisions return the Project Owner to rolling delivery; genuinely unresolved cases remain blocked with an attribution report and a Historical Owner reflection.
 
 ## Agent-native onboarding
 

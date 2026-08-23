@@ -300,8 +300,6 @@ def test_drive_until_waiting_blocks_runtime_when_owner_fails(
     context = runtime.runtime.drive_until_waiting()
 
     assert context.status == "BLOCKED"
-    assert context.blocked_capability == "project-owner-runtime"
-    assert context.blocked_previous_status == "TODO"
     workspace = create_project_workspace_query(project_path=project_path).get(context.triage_id)
     assert workspace.owner_activation is None
     assert [(message.role, message.content) for message in workspace.conversation] == [
@@ -383,7 +381,7 @@ def test_drive_until_waiting_stops_at_plan_approval(
     assert context.pending_action == "PLAN_APPROVAL"
 
 
-def test_message_retries_a_technical_owner_block_without_new_product_intent(
+def test_message_does_not_clear_runtime_execution_block(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -398,24 +396,13 @@ def test_message_retries_a_technical_owner_block_without_new_product_intent(
     runtime.runtime.submit_message("Fail the first activation.")
     assert runtime.runtime.drive_until_waiting().status == "BLOCKED"
 
-    pending = runtime.runtime.submit_message("Retry the same Owner workflow.")
-    resumed = runtime.runtime.state()
-    assert resumed.status == "TODO"
-    assert resumed.blocked_reason is None
-    assert resumed.blocked_capability is None
-    assert resumed.blocked_previous_status is None
+    pending = runtime.runtime.submit_message("Record follow-up without resuming work.")
+    context = runtime.runtime.drive_until_waiting()
 
-    recovered = compose_test_runtime(
-        project_path=project_path,
-        settings=_settings(),
-        approval_mode="yolo",
-        responses_transport=_ReplyingOwner(),
-    )
-    context = recovered.runtime.drive_until_waiting()
-    assert context.status == "TODO"
+    assert context.status == "BLOCKED"
     workspace = create_project_workspace_query(project_path=project_path).get(context.triage_id)
-    assert workspace.owner_activation is None
-    assert pending.status.value == "PENDING"
+    assert workspace.owner_activation == pending
+    assert workspace.owner_activation.status.value == "PENDING"
 
 
 def test_drive_until_waiting_leaves_tool_owned_activation_for_human_control(

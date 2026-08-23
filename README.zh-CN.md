@@ -24,9 +24,18 @@
 <p align="center">
   <a href="https://github.com/aowo-1345/AgentPanelX/actions/workflows/ci.yml"><img src="https://github.com/aowo-1345/AgentPanelX/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-7c3aed" alt="MIT License" /></a>
+  <img src="https://img.shields.io/badge/release-v0.2.0-7c3aed" alt="AgentPanelX v0.2.0" />
   <img src="https://img.shields.io/badge/Python-3.12-3776ab" alt="Python 3.12" />
   <img src="https://img.shields.io/badge/local--first-Project_Runtime-111827" alt="Local-first" />
 </p>
+
+## v0.2 — 让滚动交付持续向前
+
+AgentPanelX v0.2 从“能够协调执行”继续走向可承载真实长周期交付的本地控制平面：
+
+- **更完整的本地模型网关：** 支持通过 OpenAI-compatible 本地代理使用 OpenAI 订阅账号，在多次 Activation 之间保持 Project Owner 上下文与 Cache Affinity，并将网关超时和异常沉淀为明确的 Runtime 证据。
+- **Task Distributor 与滚动 Milestone：** 不在开始时冻结一份穷尽所有细节的路线图，而是持续规划近期可执行范围；交付后再进入质量加固阶段，评估代码质量，视证据进行行为保持式重构并记录 QA 结果。
+- **Ultra Mode：** 当交付从 `IN_PROGRESS` 进入 `BLOCKED`，AutoCodex 使用绑定的 Observe、Control 与 Attribution Skills 判断既有意图是否足以继续。明确的问题会让 Project Owner 回到滚动交付；确实无法定夺的问题继续保持阻塞，并产出归因报告与 Historical Owner 反思。
 
 ## Agent-native 上手方式
 

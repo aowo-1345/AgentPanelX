@@ -295,7 +295,7 @@ class AutoTakeoverService:
     ) -> AutoTakeoverPayload:
         if attempt.fence_token is None:
             raise ValueError("AutoTakeover Attempt has no active fence")
-        cli_prefix = (
+        cli_prefix: tuple[str, ...] = (
             sys.executable,
             "-m",
             "agentplanex.app_cli",

@@ -147,7 +147,10 @@ def _database_schema(database_path: Path) -> dict[str, tuple[str, ...]]:
 
 def test_workspace_deletes_only_clean_managed_feature_worktrees() -> None:
     repository_path, config_path = _prepare_case("workspace-feature-deletion")
-    workspace = create_workspace(load_settings(config_path))
+    workspace = create_workspace(
+        load_settings(config_path),
+        settings_path=config_path,
+    )
     project = workspace.register_project(
         name="Deletion Project",
         repository_path=repository_path,
