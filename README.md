@@ -33,7 +33,7 @@
 
 AgentPanelX v0.2 advances the project from coordinated execution toward a control plane that can sustain real, long-running delivery:
 
-- **[A stronger local model gateway](docs/chatgpt-local-auth.md):** connect through a local OpenAI-compatible proxy backed by an OpenAI subscription, preserve Project Owner context and cache affinity across activations, and surface gateway timeouts and failures as explicit Runtime evidence.
+- [A stronger local model gateway](docs/chatgpt-local-auth.md): connect through a local OpenAI-compatible proxy backed by an **OpenAI subscription**, preserve Project Owner context and cache affinity across activations, and surface gateway timeouts and failures as explicit Runtime evidence.
 - **Task Distributor and rolling Milestones:** plan the next executable horizon instead of freezing an exhaustive roadmap up front, then add a hardening pass that evaluates code quality, applies behavior-preserving refactoring when justified, and records QA evidence.
 - **Ultra Mode:** when delivery moves from `IN_PROGRESS` to `BLOCKED`, AutoCodex uses the bound Observe, Control, and Attribution Skills to decide whether established intent is sufficient to continue. Clear decisions return the Project Owner to rolling delivery; genuinely unresolved cases remain blocked with an attribution report and a Historical Owner reflection.
 
