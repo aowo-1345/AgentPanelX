@@ -4,6 +4,8 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleX,
+  FileText,
+  History,
   LockKeyhole,
   Loader2,
   Send,
@@ -13,8 +15,9 @@ import {
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ConversationMessage, FeatureAction, Panel } from '@/api/types';
+import type { AttributionData, ConversationMessage, FeatureAction, Panel } from '@/api/types';
 import { ActionCard } from './ActionCard';
+import { AttributionPanel } from './AttributionPanel';
 
 interface CommandNotice {
   kind: 'success' | 'warning' | 'error';
@@ -24,6 +27,7 @@ interface CommandNotice {
 
 interface ChatAreaProps {
   conversation: Panel<ConversationMessage[]>;
+  attribution?: Panel<AttributionData>;
   actions: FeatureAction[];
   activationStatus: string | null;
   activationHasReply: boolean;
@@ -167,6 +171,7 @@ function ToolPreview({ label, value }: { label: string; value: string }) {
 
 export function ChatArea({
   conversation,
+  attribution,
   actions,
   activationStatus,
   activationHasReply,
@@ -179,10 +184,13 @@ export function ChatArea({
   readOnlyLabel = 'This workspace snapshot is read-only.',
 }: ChatAreaProps) {
   const [text, setText] = useState('');
+  const [proposalsOpen, setProposalsOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const hasRunningTool = conversation.data?.some(
     (message) => message.role === 'tool' && message.tool_activity?.status === 'running',
   );
+  const attributionState = attribution?.data?.state ?? 'idle';
+  const proposalCount = attribution?.data?.reports.length ?? 0;
 
   useEffect(() => {
     if (readOnly) return;
@@ -206,17 +214,47 @@ export function ChatArea({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/15">
-          <Bot className="h-4 w-4 text-emerald-400" />
-        </div>
-        <div>
-          <div className="text-sm font-medium">Project Owner</div>
-          <div className="text-[11px] text-muted-foreground">
-            Codex{activationStatus ? ` · activation ${activationStatus.toLowerCase()}` : ' · local runtime'}
+      <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500/15">
+            <Bot className="h-4 w-4 text-emerald-400" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-medium">Project Owner</div>
+            <div className="truncate text-[11px] text-muted-foreground">
+              Codex{activationStatus ? ` · activation ${activationStatus.toLowerCase()}` : ' · local runtime'}
+            </div>
           </div>
         </div>
+        <button
+          type="button"
+          className="btn btn-ghost h-8 shrink-0 px-2"
+          aria-expanded={proposalsOpen}
+          onClick={() => setProposalsOpen((open) => !open)}
+        >
+          {attributionState === 'running' ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-300" />
+          ) : attributionState === 'failed' ? (
+            <CircleX className="h-3.5 w-3.5 text-red-300" />
+          ) : proposalCount > 0 ? (
+            <FileText className="h-3.5 w-3.5" />
+          ) : (
+            <History className="h-3.5 w-3.5" />
+          )}
+          {attributionState === 'running'
+            ? '归因中'
+            : attributionState === 'failed'
+              ? '归因失败'
+              : 'Proposals'}
+          {proposalCount > 0 && <span className="text-[10px]">{proposalCount}</span>}
+        </button>
       </header>
+
+      {proposalsOpen && (
+        <div className="max-h-[48%] shrink-0 overflow-y-auto border-b border-border bg-card/40">
+          <AttributionPanel panel={attribution} />
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
         {conversation.error ? (

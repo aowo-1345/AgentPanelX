@@ -6,6 +6,7 @@ from pathlib import Path
 import yaml
 
 from agentplanex.domains.workspace import FeatureBinding
+from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.logging import configure_logging
 from agentplanex.infrastructure.model_gateway import (
@@ -98,9 +99,15 @@ def create_project_workspace_query(*, project_path: Path) -> ProjectWorkspaceQue
     resolved = project_path.resolve()
     if not resolved.is_dir():
         raise ValueError(f"Project path is not a directory: {resolved}")
+    codex_settings = load_settings().runtime.codex
     return ProjectWorkspaceQuery(
         database=SQLiteDatabase.for_project(resolved),
         git=GitRepository(resolved),
+        artifacts=AgentWorkspaceStore(
+            project_path=resolved,
+            response_limit=codex_settings.response_limit,
+            artifact_limit=codex_settings.artifact_limit,
+        ),
     )
 
 
@@ -159,7 +166,12 @@ def create_workspace(
         data_home=settings.workspace.data_home,
         registry=registry,
         git=git,
-        queries=WorkspaceQueries(registry=registry, git=git),
+        queries=WorkspaceQueries(
+            registry=registry,
+            git=git,
+            artifact_response_limit=settings.runtime.codex.response_limit,
+            artifact_limit=settings.runtime.codex.artifact_limit,
+        ),
         dispatcher=dispatcher,
         runtime_factory=runtime_factory,
         auto_takeover=takeover,

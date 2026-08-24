@@ -159,6 +159,19 @@ class GitData(Schema):
     head: str
 
 
+class AttributionReportData(Schema):
+    run_id: str
+    created_at: datetime
+    completed_at: datetime | None
+    status: Literal["available", "unavailable"]
+    content_markdown: str | None
+
+
+class AttributionPanelData(Schema):
+    state: Literal["idle", "running", "completed", "failed"]
+    reports: list[AttributionReportData]
+
+
 class WorkspaceResponse(Schema):
     project: ProjectResponse
     feature: WorkspaceFeatureResponse
@@ -169,6 +182,7 @@ class WorkspaceResponse(Schema):
     milestones: Panel[MilestonesData]
     timeline: Panel[list[TimelineEventData]]
     git: Panel[GitData]
+    attribution: Panel[AttributionPanelData]
 
 
 def project_response(
@@ -342,6 +356,26 @@ def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
                 else None
             ),
             error=runtime_view.timeline_error,
+        ),
+        attribution=Panel(
+            data=(
+                AttributionPanelData(
+                    state=runtime_view.attribution.state,
+                    reports=[
+                        AttributionReportData(
+                            run_id=report.run_id,
+                            created_at=report.created_at,
+                            completed_at=report.completed_at,
+                            status=report.status,
+                            content_markdown=report.content_markdown,
+                        )
+                        for report in runtime_view.attribution.reports
+                    ],
+                )
+                if runtime_view.attribution_error is None
+                else None
+            ),
+            error=runtime_view.attribution_error,
         ),
         git=Panel(
             data=(

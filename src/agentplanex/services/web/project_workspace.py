@@ -4,6 +4,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -12,9 +13,11 @@ from agentplanex.domains.execution_event import (
 )
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.domains.workspace import FeatureAction
+from agentplanex.infrastructure.agent_workspace import AgentWorkspaceError, AgentWorkspaceStore
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteAutoTakeoverRepository,
     SQLiteExecutionEventRepository,
     SQLiteMessageHistoryRepository,
     SQLiteMilestoneSnapshotRepository,
@@ -25,6 +28,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.project_owner_agent.context.models import MessageHistory
 from agentplanex.project_owner_agent.contracts import Message
+from agentplanex.services.auto_takeover.models import TakeoverStatus
 from agentplanex.services.delivery.models import MilestoneSnapshot, StageRun
 from agentplanex.services.planning.models import PLAN_DOCUMENT_NAMES
 from agentplanex.services.project_runtime_context.models import (
@@ -34,6 +38,8 @@ from agentplanex.services.project_runtime_context.models import (
 )
 
 type ToolActivityStatus = Literal["running", "completed", "failed"]
+type AttributionState = Literal["idle", "running", "completed", "failed"]
+type AttributionReportStatus = Literal["available", "unavailable"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +65,21 @@ class PlanDocument:
 
 
 @dataclass(frozen=True, slots=True)
+class AttributionReport:
+    run_id: str
+    created_at: datetime
+    completed_at: datetime | None
+    status: AttributionReportStatus
+    content_markdown: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AttributionData:
+    state: AttributionState
+    reports: tuple[AttributionReport, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ProjectWorkspaceView:
     """Panels derived from one required persisted Runtime State."""
 
@@ -78,6 +99,10 @@ class ProjectWorkspaceView:
     git_head: str | None
     git_error: str | None
     available_actions: tuple[FeatureAction, ...]
+    attribution: AttributionData = field(
+        default_factory=lambda: AttributionData(state="idle", reports=())
+    )
+    attribution_error: str | None = None
 
 
 @dataclass(slots=True)
@@ -86,6 +111,7 @@ class ProjectWorkspaceQuery:
 
     database: SQLiteDatabase
     git: GitRepository
+    artifacts: AgentWorkspaceStore
     states: SQLiteProjectRuntimeStateRepository = field(
         default_factory=SQLiteProjectRuntimeStateRepository
     )
@@ -101,7 +127,11 @@ class ProjectWorkspaceQuery:
     )
     messages: SQLiteMessageHistoryRepository = field(default_factory=SQLiteMessageHistoryRepository)
     events: SQLiteExecutionEventRepository = field(default_factory=SQLiteExecutionEventRepository)
+    takeover_runs: SQLiteAutoTakeoverRepository = field(
+        default_factory=SQLiteAutoTakeoverRepository
+    )
     history_limit: int = 50
+    attribution_history_limit: int = 20
 
     def get(self, triage_id: str) -> ProjectWorkspaceView:
         state = self._state(triage_id)
@@ -113,6 +143,7 @@ class ProjectWorkspaceQuery:
             activation,
         )
         plan_documents, plan_error = _read_plan_documents(self.git)
+        attribution, attribution_error = self._attribution(triage_id)
         branch, head, git_error = _git_panel(self.git)
         return ProjectWorkspaceView(
             state=state,
@@ -127,6 +158,8 @@ class ProjectWorkspaceQuery:
             conversation_error=conversation_error,
             plan_documents=plan_documents,
             plan_error=plan_error,
+            attribution=attribution,
+            attribution_error=attribution_error,
             git_branch=branch,
             git_head=head,
             git_error=git_error,
@@ -137,6 +170,55 @@ class ProjectWorkspaceQuery:
                 runtime_error,
             ),
         )
+
+    def _attribution(self, triage_id: str) -> tuple[AttributionData, str | None]:
+        try:
+            with self.database.read_only_connection() as connection:
+                latest = self.takeover_runs.latest(connection, triage_id)
+                runs = self.takeover_runs.list_reports(
+                    connection,
+                    triage_id,
+                    limit=self.attribution_history_limit,
+                )
+        except (sqlite3.Error, ValueError) as error:
+            return AttributionData(state="idle", reports=()), str(error)
+
+        reports: list[AttributionReport] = []
+        for run in runs:
+            if run.attribution is None:
+                continue
+            try:
+                content = self.artifacts.read_descriptor_text(run.attribution)
+            except AgentWorkspaceError:
+                reports.append(
+                    AttributionReport(
+                        run_id=run.run_id,
+                        created_at=run.started_at,
+                        completed_at=run.finished_at,
+                        status="unavailable",
+                        content_markdown=None,
+                    )
+                )
+            else:
+                reports.append(
+                    AttributionReport(
+                        run_id=run.run_id,
+                        created_at=run.started_at,
+                        completed_at=run.finished_at,
+                        status="available",
+                        content_markdown=content,
+                    )
+                )
+
+        if latest is not None and latest.status is TakeoverStatus.RUNNING:
+            state: AttributionState = "running"
+        elif latest is not None and latest.status is TakeoverStatus.FAILED:
+            state = "failed"
+        elif latest is not None and latest.attribution is not None:
+            state = "completed"
+        else:
+            state = "idle"
+        return AttributionData(state=state, reports=tuple(reports)), None
 
     def _state(self, triage_id: str) -> ProjectRuntimeState:
         with self.database.read_only_connection() as connection:

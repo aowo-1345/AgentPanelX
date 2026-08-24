@@ -473,6 +473,12 @@ Takeover 的业务 Run、最多两个 Attempt 和 fence 存在 Feature SQLite；
 Artifact 通过 size/digest 校验。第一次不一致只在同一 Feature Session correction 一次，
 第二次不一致、技术故障或 1800 秒预算耗尽均终结为 `FAILED`，不会生成伪归因。
 
+Workspace 的只读查询直接从 AutoTakeover Run 构造一个粗粒度归因投影：最新 Run 决定
+`running`、`completed` 或 `failed` 状态，最近 20 份冻结 Attribution Artifact 按时间倒序
+形成报告列表。查询时继续校验 Artifact descriptor；单份报告损坏只标记该项不可用，不影响
+其他 Workspace 面板。Workspace API 直接内联报告 Markdown，不要求 Web 客户端读取本地
+Artifact URI 或调用额外详情接口。
+
 ```mermaid
 stateDiagram-v2
     [*] --> TRIAGE: create Feature

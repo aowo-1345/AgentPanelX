@@ -10,6 +10,7 @@ from agentplanex.domains.workspace import (
     ManagedProject,
     ProjectBoard,
 )
+from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
@@ -46,6 +47,8 @@ class WorkspaceQueries:
     stage_runs: SQLiteStageRunRepository = field(
         default_factory=SQLiteStageRunRepository
     )
+    artifact_response_limit: int = 65_536
+    artifact_limit: int = 262_144
 
     def project_board(self, project_id: str) -> ProjectBoard:
         project = self.registry.get_project(project_id)
@@ -75,6 +78,11 @@ class WorkspaceQueries:
         runtime_view = ProjectWorkspaceQuery(
             database=SQLiteDatabase.for_project(binding.worktree_path),
             git=GitRepository(binding.worktree_path),
+            artifacts=AgentWorkspaceStore(
+                project_path=binding.worktree_path,
+                response_limit=self.artifact_response_limit,
+                artifact_limit=self.artifact_limit,
+            ),
         ).get(binding.triage_id)
         return FeatureWorkspaceView(
             project=project,

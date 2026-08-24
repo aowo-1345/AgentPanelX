@@ -139,6 +139,19 @@ export interface GitData {
   head: string;
 }
 
+export interface AttributionReport {
+  run_id: string;
+  created_at: string;
+  completed_at: string | null;
+  status: 'available' | 'unavailable';
+  content_markdown: string | null;
+}
+
+export interface AttributionData {
+  state: 'idle' | 'running' | 'completed' | 'failed';
+  reports: AttributionReport[];
+}
+
 export interface Workspace {
   project: Project;
   feature: WorkspaceFeature;
@@ -149,6 +162,7 @@ export interface Workspace {
   milestones: Panel<MilestonesData>;
   timeline: Panel<TimelineEvent[]>;
   git: Panel<GitData>;
+  attribution?: Panel<AttributionData>;
 }
 
 export interface CreateProjectInput {

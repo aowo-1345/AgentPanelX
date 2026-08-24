@@ -18,6 +18,7 @@ from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
 )
+from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
@@ -1314,7 +1315,11 @@ def test_running_stage_rejects_concurrent_interruption_recovery(
     database = SQLiteDatabase.for_project(project_path)
     git = GitRepository(project_path)
     control_query = ProjectControlQuery(database=database, git=git)
-    workspace_query = ProjectWorkspaceQuery(database=database, git=git)
+    workspace_query = ProjectWorkspaceQuery(
+        database=database,
+        git=git,
+        artifacts=AgentWorkspaceStore(project_path, 65_536, 262_144),
+    )
     with ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(runtime.runtime.drive_until_waiting)
         assert stage_executor.entered.wait(timeout=5)

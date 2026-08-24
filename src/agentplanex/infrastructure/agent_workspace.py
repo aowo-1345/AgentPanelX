@@ -324,6 +324,10 @@ class AgentWorkspaceStore:
 
     def resolve_artifact(self, uri: str) -> ResolvedArtifact:
         """Resolve one supported URI to a validated project-local text file."""
+        resolved, _content = self._resolve_artifact(uri)
+        return resolved
+
+    def _resolve_artifact(self, uri: str) -> tuple[ResolvedArtifact, bytes]:
         parsed = urlparse(uri)
         decoded_path = unquote(parsed.path)
         published_identity: tuple[str, str] | None = None
@@ -368,11 +372,23 @@ class AgentWorkspaceStore:
                 or descriptor.sha256 != resolved.sha256
             ):
                 raise AgentWorkspaceError("Published Artifact integrity check failed")
-        return resolved
+        return resolved, content
 
     def resolve_descriptor(self, descriptor: ArtifactDescriptor) -> ResolvedArtifact:
         """Resolve an Artifact and recheck all published integrity facts."""
-        resolved = self.resolve_artifact(descriptor.uri)
+        resolved, _content = self._resolve_descriptor(descriptor)
+        return resolved
+
+    def read_descriptor_text(self, descriptor: ArtifactDescriptor) -> str:
+        """Return the exact UTF-8 text whose descriptor facts were validated."""
+        _resolved, content = self._resolve_descriptor(descriptor)
+        return content.decode("utf-8")
+
+    def _resolve_descriptor(
+        self,
+        descriptor: ArtifactDescriptor,
+    ) -> tuple[ResolvedArtifact, bytes]:
+        resolved, content = self._resolve_artifact(descriptor.uri)
         expected_path = self.project_path / descriptor.project_relative_path
         if (
             resolved.path.resolve() != expected_path.resolve()
@@ -381,7 +397,7 @@ class AgentWorkspaceStore:
             or resolved.sha256 != descriptor.sha256
         ):
             raise AgentWorkspaceError("Artifact descriptor integrity check failed")
-        return resolved
+        return resolved, content
 
     def read_result_json(self, invocation: AgentInvocation) -> dict[str, Any]:
         """Load a newly allocated model-written Outbox result object."""

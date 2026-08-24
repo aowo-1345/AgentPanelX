@@ -209,6 +209,25 @@ class SQLiteAutoTakeoverRepository:
         ).fetchone()
         return _run(row) if row is not None else None
 
+    def list_reports(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+        *,
+        limit: int,
+    ) -> tuple[TakeoverRun, ...]:
+        """Return bounded newest-first Runs that produced Attribution artifacts."""
+        rows = connection.execute(
+            """
+            SELECT * FROM auto_takeover_run
+            WHERE triage_id = ? AND attribution IS NOT NULL
+            ORDER BY started_at DESC, run_id DESC
+            LIMIT ?
+            """,
+            (triage_id, limit),
+        ).fetchall()
+        return tuple(_run(row) for row in rows)
+
     def get_active_attempt(
         self,
         connection: sqlite3.Connection,

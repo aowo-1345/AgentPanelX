@@ -31,6 +31,7 @@ function mergeWorkspace(current: Workspace | null, next: Workspace): Workspace {
     milestones: preserveEqual(current.milestones, next.milestones),
     timeline: preserveEqual(current.timeline, next.timeline),
     git: preserveEqual(current.git, next.git),
+    attribution: preserveEqual(current.attribution, next.attribution),
   };
 }
 
@@ -277,6 +278,7 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
             <div className="min-h-0 flex-1">
               <ChatArea
                 conversation={workspace.conversation}
+                attribution={workspace.attribution}
                 actions={workspace.available_actions}
                 activationStatus={activationStatus}
                 activationHasReply={workspace.runtime.data?.activation_has_reply ?? false}
