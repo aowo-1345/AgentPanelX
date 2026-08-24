@@ -200,13 +200,7 @@ class GitRepository:
         """Commit all non-Runtime worktree changes and return the new HEAD."""
         if not self.changed_paths():
             raise GitRepositoryError("Stage produced no Git changes")
-        self._run(
-            "add",
-            "-A",
-            "--",
-            ".",
-            f":(exclude){_RUNTIME_DIRECTORY}",
-        )
+        self._run("add", "-A")
         staged = self._run_unchecked("diff", "--cached", "--quiet")
         if staged.returncode == 0:
             raise GitRepositoryError("Stage produced no committable Git changes")
