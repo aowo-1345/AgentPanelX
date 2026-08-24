@@ -221,15 +221,13 @@ def test_plan_decision_does_not_clear_an_unrelated_runtime_failure(
 
     assert decision.state.status == "BLOCKED"
     assert resumed.drive_until_waiting().status == "BLOCKED"
-    resumed_control = create_project_runtime_control(
-        project_path=project_path,
-        settings=load_settings(DEFAULT_SETTINGS_PATH),
-        approval_mode="yolo",
-        responses_transport=_ReplyingResponsesTransport(),
-    )
-    driven = resumed_control.drive_owner_model()
-    assert driven.activation is not None
-    assert driven.activation.status.value == "COMPLETED"
+    with SQLiteDatabase.for_project(project_path).read_only_connection() as connection:
+        processed = SQLiteOwnerActivationRepository().get(
+            connection,
+            decision.activation.activation_id,
+        )
+    assert processed is not None
+    assert processed.status.value == "COMPLETED"
     assert resumed.state().status == "BLOCKED"
     assert (
         create_project_control_query(project_path=project_path).get_current().owner_activation

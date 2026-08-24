@@ -381,7 +381,7 @@ def test_drive_until_waiting_stops_at_plan_approval(
     assert context.pending_action == "PLAN_APPROVAL"
 
 
-def test_message_does_not_clear_runtime_execution_block(
+def test_message_is_processed_without_clearing_runtime_execution_block(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -396,13 +396,20 @@ def test_message_does_not_clear_runtime_execution_block(
     runtime.runtime.submit_message("Fail the first activation.")
     assert runtime.runtime.drive_until_waiting().status == "BLOCKED"
 
-    pending = runtime.runtime.submit_message("Record follow-up without resuming work.")
+    follow_up = runtime.runtime.submit_message("Process follow-up without resuming work.")
     context = runtime.runtime.drive_until_waiting()
 
     assert context.status == "BLOCKED"
     workspace = create_project_workspace_query(project_path=project_path).get(context.triage_id)
-    assert workspace.owner_activation == pending
-    assert workspace.owner_activation.status.value == "PENDING"
+    assert workspace.owner_activation is None
+    with SQLiteDatabase.for_project(project_path).read_only_connection() as connection:
+        processed = SQLiteOwnerActivationRepository().get(
+            connection,
+            follow_up.activation_id,
+        )
+    assert processed is not None
+    assert processed.status.value == "FAILED"
+    assert processed.started_at is not None
 
 
 def test_drive_until_waiting_leaves_tool_owned_activation_for_human_control(
@@ -922,12 +929,6 @@ def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
     assert owner is not None
     owner_session_id = owner.project_owner_session_id
     follow_up = runtime.runtime.submit_message("Retry the failed Milestone deliberately.")
-    waiting = runtime.runtime.drive_until_waiting()
-    assert waiting.status == "BLOCKED"
-    assert (
-        create_project_control_query(project_path=project_path).get_current().owner_activation
-        == follow_up
-    )
 
     retried = runtime.control.drive_owner_tool(
         {
