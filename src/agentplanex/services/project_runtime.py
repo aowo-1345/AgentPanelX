@@ -95,7 +95,7 @@ class ProjectRuntimeService:
                     "Project Runtime invariant violated: Owner activation and "
                     "StageRun are both runnable"
                 )
-            if state.status in {"BLOCKED", "DONE"}:
+            if state.status == "DONE":
                 return state
             if state.pending_action is not None:
                 return state
@@ -104,6 +104,8 @@ class ProjectRuntimeService:
                     return state
                 self.context.drive_owner()
                 continue
+            if state.status == "BLOCKED":
+                return state
             if delivery_work is not DeliveryWorkState.IDLE:
                 if not delivery_runnable:
                     return state
