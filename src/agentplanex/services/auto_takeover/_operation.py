@@ -105,12 +105,19 @@ class AutoTakeoverOperation:
             runtime_context["runtime_correction"] = payload.correction
         contract = {
             "result_path": str(context.outbox_result_path.resolve()),
-            "manifest": {
-                "version": 1,
-                "decision": "YES or NO",
-                "NO_attribution": {
-                    "path": "documents/attribution.md",
-                    "media_type": "text/markdown",
+            "manifest_variants": {
+                "YES": {
+                    "version": 1,
+                    "decision": "YES",
+                    "attribution": None,
+                },
+                "NO": {
+                    "version": 1,
+                    "decision": "NO",
+                    "attribution": {
+                        "path": "documents/attribution.md",
+                        "media_type": "text/markdown",
+                    },
                 },
             },
             "attribution_document_path": str(
@@ -119,16 +126,19 @@ class AutoTakeoverOperation:
         }
         return PreparedAgentTurn(
             task_text=(
-                "Investigate the newly persisted BLOCKED transition and either restore "
-                "rolling delivery or prove that real user intervention is required."
+                "Fixed takeover task:\nInvestigate the newly persisted BLOCKED transition and "
+                "either restore rolling delivery or prove that real user intervention is "
+                "required."
             ),
             runtime_context_text=(
-                "Current Runtime activation facts:\n"
-                + json.dumps(runtime_context, ensure_ascii=False, sort_keys=True)
+                "Current authoritative Runtime activation facts:\n"
+                + json.dumps(runtime_context, ensure_ascii=False, indent=2, sort_keys=True)
             ),
             control_text=(
-                "Write the exact result Contract below, then return only a short JSON "
-                f"summary:\n{json.dumps(contract, ensure_ascii=False, sort_keys=True)}"
+                "Activation output contract:\n"
+                + json.dumps(contract, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\nWrite the exact result contract, then return only a JSON object containing "
+                "one non-empty short summary field."
             ),
             execution_workspace=Path(context.workspaces.project_path),
         )

@@ -75,9 +75,17 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
             for directory in request.workspace.glob("outbox/*")
             if not (directory / "result.json").exists()
         )
-        is_gate = "Hard Gate" in request.developer_instructions
+        is_gate = any(
+            marker in request.developer_instructions
+            for marker in (
+                "You are the AgentPanelX Plan Hard Gate",
+                "You are the AgentPanelX Milestone Hard Gate",
+            )
+        )
         is_task = "stable Task manifest" in request.message
-        is_stage = "Stage Executor" in request.developer_instructions
+        is_stage = "You are the AgentPanelX Stage Executor" in (
+            request.developer_instructions
+        )
         if is_stage:
             marker = "Fixed StageRun contract:\n"
             start = request.message.index(marker) + len(marker)
@@ -112,10 +120,12 @@ def deterministic_codex_transport(monkeypatch: pytest.MonkeyPatch) -> None:
             result_path = pending[0]
             document_name = (
                 "review.md"
-                if is_gate or "Reviewer" in request.developer_instructions
+                if is_gate
+                or "You are the AgentPanelX Reviewer" in request.developer_instructions
                 else (
                     "milestone-plan.md"
-                    if "Task Distributor" in request.developer_instructions
+                    if "You are the AgentPanelX Task Distributor"
+                    in request.developer_instructions
                     else "plan.md"
                 )
             )

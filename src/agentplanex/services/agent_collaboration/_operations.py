@@ -143,19 +143,41 @@ class A2AOperation:
                 {"uri": resource.uri, "sha256": resource.sha256} for resource in resources
             ],
         }
-        control = "Return only a JSON object containing one short summary field."
+        control = (
+            "Activation output contract:\n"
+            "This is a Message interaction; no contracted Task artifact or Task manifest is "
+            "published. Return only a JSON object containing one non-empty short summary field."
+        )
         if payload.kind is AgentInteractionKind.TASK:
             if self.document_name is None:
                 raise ValueError("Task Operation has no document Contract")
+            document_path = f"documents/{self.document_name}"
+            manifest_contract = {
+                "result_path": str(context.outbox_result_path),
+                "manifest": {
+                    "version": 1,
+                    "summary": "non-empty string",
+                    "artifacts": [
+                        {
+                            "path": document_path,
+                            "media_type": "text/markdown",
+                        }
+                    ],
+                },
+                "final_response": {"summary": "non-empty short string"},
+            }
             control = (
-                f"Write the role document to documents/{self.document_name} and the "
-                f"stable Task manifest to {context.outbox_result_path}. " + control
+                "Activation output contract:\n"
+                + json.dumps(manifest_contract, ensure_ascii=False, indent=2, sort_keys=True)
+                + f"\nWrite the substantive role document to {document_path}, write the exact "
+                "stable Task manifest to the declared result path, and return only the "
+                "declared JSON summary."
             )
         return PreparedAgentTurn(
-            task_text=payload.message,
+            task_text="Delegated task from the Project Owner:\n" + payload.message,
             runtime_context_text=(
-                "Current AgentPlaneX Runtime context:\n"
-                + json.dumps(runtime_context, ensure_ascii=False, sort_keys=True)
+                "Current authoritative AgentPlaneX Runtime facts:\n"
+                + json.dumps(runtime_context, ensure_ascii=False, indent=2, sort_keys=True)
             ),
             resources=tuple(staged),
             control_text=control,

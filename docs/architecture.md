@@ -287,8 +287,10 @@ sequenceDiagram
     Runtime-->>Business: typed static-contract result
 ```
 
-稳定 Definition 来自 `resources/external_agents/*.md` 和 `runtime.external_agents` 配置；每次
-Activation 只包含本轮任务、小型 Runtime Context、明确附件和本轮输出位置。Planner 与 Task
+稳定 Definition 由 `resources/external_agents/common.md` 与对应角色 Markdown 组合，并由
+`runtime.external_agents` 配置绑定；Common 说明 AgentPanelX 工作流、事实优先级与共同实践，
+角色文件说明稳定职责、工作方法、判断标准和权限边界。每次 Activation 只包含本轮任务、
+小型权威 Runtime Context、明确附件和机械输出 Contract。Planner 与 Task
 Distributor 分别按 Feature 自动恢复 Session，Reviewer 与两个 Gate 每次独立，Stage Executor
 按 StageRun 恢复。调用方不接触 `conversation_id`。Codex thread、request、已验证结果和冻结
 Artifact 存在 `.agentplanex/agent-workspaces/`，不增加 External Agent SQLite 生命周期表；只有

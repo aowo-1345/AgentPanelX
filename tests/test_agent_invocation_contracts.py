@@ -125,6 +125,56 @@ def _normalized(value: str) -> str:
     return " ".join(value.split())
 
 
+@pytest.mark.parametrize(
+    ("agent_key", "role_marker", "method_marker"),
+    (
+        ("planner", "You are the AgentPanelX Planner", "Required planning method"),
+        (
+            "task_distributor",
+            "You are the AgentPanelX Task Distributor",
+            "Mandatory two-pass analysis",
+        ),
+        ("reviewer", "You are the AgentPanelX Reviewer", "Required review method"),
+        ("plan_hard_gate", "You are the AgentPanelX Plan Hard Gate", "Gate criteria"),
+        (
+            "milestone_hard_gate",
+            "You are the AgentPanelX Milestone Hard Gate",
+            "Gate criteria",
+        ),
+        (
+            "stage_executor",
+            "You are the AgentPanelX Stage Executor",
+            "Required execution method",
+        ),
+        (
+            "auto_takeover",
+            "You are the AgentPanelX AutoCodex takeover user proxy",
+            "Required recovery method",
+        ),
+    ),
+)
+def test_external_agent_definitions_compose_common_and_role_instructions(
+    agent_key: str,
+    role_marker: str,
+    method_marker: str,
+) -> None:
+    runtime_settings = _settings().runtime
+
+    definition = build_agent_definition(
+        agent_key,
+        runtime_settings.external_agents[agent_key],
+    )
+
+    instructions = definition.stable_instructions
+    assert instructions.startswith("# AgentPanelX External Agent Common Instructions")
+    assert "You are one external Agent working inside AgentPanelX" in instructions
+    assert "Operating model" in instructions
+    assert "Activation and evidence practices" in instructions
+    assert role_marker in instructions
+    assert method_marker in instructions
+    assert instructions.index(role_marker) > instructions.index("Operating model")
+
+
 def test_owner_requests_extend_the_persisted_session_without_an_invocation_envelope(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -308,7 +358,8 @@ def test_talk_to_agent_reanchors_configured_agents_to_runtime_context(
             )
             document_name = (
                 "milestone-plan.md"
-                if "Task Distributor" in request.developer_instructions
+                if "You are the AgentPanelX Task Distributor"
+                in request.developer_instructions
                 else "plan.md"
             )
             artifact = {
@@ -408,18 +459,48 @@ def test_talk_to_agent_reanchors_configured_agents_to_runtime_context(
     assert second_review.output["ok"] is True
 
     planner, task_distributor, reviewer, resumed_planner, reviewer_again = recorded
-    assert planner.developer_instructions.startswith("You are the AgentPlaneX Planner")
-    assert task_distributor.developer_instructions.startswith(
-        "You are the AgentPlaneX Task Distributor"
+    assert planner.developer_instructions.startswith(
+        "# AgentPanelX External Agent Common Instructions"
+    )
+    assert "You are the AgentPanelX Planner" in planner.developer_instructions
+    assert "You are the AgentPanelX Task Distributor" in (
+        task_distributor.developer_instructions
     )
     assert task_distributor.workspace != planner.workspace
     assert task_distributor.thread_id is None
-    assert "first unfinished Milestone" in _normalized(task_distributor.developer_instructions)
-    assert "nested Task schema" in _normalized(task_distributor.developer_instructions)
-    assert reviewer.developer_instructions.startswith("You are the AgentPlaneX Reviewer")
+    task_distributor_instructions = _normalized(task_distributor.developer_instructions)
+    for required_contract in (
+        "first unfinished Milestone",
+        "Mandatory two-pass analysis",
+        "Delivery pass",
+        "Risk and hardening pass",
+        "Stage count is unrestricted",
+        "nested Task schemas",
+        "evidence-only or read-only QA Stage",
+        "meaningful project or test change",
+        "Each Stage objective is a fixed contract",
+        "KEEP_VIEW",
+        "REPLACE_VIEW",
+        "PLAN_CHANGE",
+        "CRAP",
+        "Mutation testing",
+        "Behavior-preserving refactoring",
+        "Acceptance verification",
+    ):
+        assert required_contract in task_distributor_instructions
+    assert "You are the AgentPanelX Reviewer" in reviewer.developer_instructions
     for request in (planner, task_distributor, reviewer):
         assert request.skills == (("agentplanex-project-observe", skill_path),)
         assert str(skill_path) not in request.message
+        assert request.message.startswith("Delegated task from the Project Owner:")
+        assert "Current authoritative AgentPlaneX Runtime facts:" in request.message
+        assert "Activation output contract:" in request.message
+        assert request.message.index("Delegated task from the Project Owner:") < (
+            request.message.index("Current authoritative AgentPlaneX Runtime facts:")
+        )
+        assert request.message.index("Current authoritative AgentPlaneX Runtime facts:") < (
+            request.message.index("Activation output contract:")
+        )
         assert '"snapshot_id": "snapshot-1"' in request.message
         assert '"stage_key": "stage-1"' in request.message
         assert request.output_schema is not None
@@ -571,13 +652,21 @@ def test_hard_gates_record_distinct_fixed_subject_contracts(
     assert f'"subject_digest": "{plan_subject.digest}"' in plan_gate.message
     assert '"subject_digest": "milestone-digest"' in milestone_gate.message
     assert '"plan_commit_sha": "approved-plan"' in milestone_gate.message
-    assert plan_gate.developer_instructions.startswith("You are the AgentPlaneX Plan Hard Gate")
-    assert milestone_gate.developer_instructions.startswith(
-        "You are the AgentPlaneX Milestone Hard Gate"
+    assert plan_gate.developer_instructions.startswith(
+        "# AgentPanelX External Agent Common Instructions"
+    )
+    assert "You are the AgentPanelX Plan Hard Gate" in plan_gate.developer_instructions
+    assert "You are the AgentPanelX Milestone Hard Gate" in (
+        milestone_gate.developer_instructions
     )
     for request in recorded:
         assert request.skills == (("agentplanex-project-observe", skill_path),)
         assert str(skill_path) not in request.message
+        assert request.message.startswith("Fixed Hard Gate task:")
+        assert "Current authoritative fixed Hard Gate subject:" in request.message
+        assert "Activation output contract:" in request.message
+        assert '"version": 1' in request.message
+        assert '"path": "documents/review.md"' in request.message
         assert len(request.mentions) == (3 if request is plan_gate else 1)
         assert request.output_schema is not None
         assert all(not path.is_relative_to(request.workspace) for _, path in request.mentions)
@@ -665,9 +754,18 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
 
     request = recorded[0]
     assert request.thread_id is None
-    assert request.developer_instructions.startswith("You are the AgentPlaneX Stage Executor")
+    assert request.developer_instructions.startswith(
+        "# AgentPanelX External Agent Common Instructions"
+    )
+    assert "You are the AgentPanelX Stage Executor" in request.developer_instructions
+    assert "behavior-preserving cleanup" in request.developer_instructions
+    assert "hardening" in request.developer_instructions
     assert request.skills == (("agentplanex-project-observe", skill_path),)
     assert str(skill_path) not in request.message
+    assert request.message.startswith("Fixed Stage assignment:")
+    assert "Current authoritative Runtime facts:" in request.message
+    assert "Fixed StageRun contract:" in request.message
+    assert "Activation output contract:" in request.message
     assert '"stage_run_id": "stage-run-1"' in request.message
     assert '"input_commit_sha": "input-commit"' in request.message
     assert "Establish contracts." in request.message

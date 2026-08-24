@@ -105,17 +105,40 @@ class HardGateOperation:
             )
         control = {
             "result_path": str(context.outbox_result_path),
-            "subject_digest": payload.subject_digest,
-            "review_document": "documents/review.md",
-            "rules": {
-                "pass_required_changes": [],
-                "revise_requires_concrete_changes": True,
+            "manifest_variants": {
+                "pass": {
+                    "version": 1,
+                    "subject_digest": payload.subject_digest,
+                    "decision": "pass",
+                    "summary": "non-empty summary",
+                    "required_changes": [],
+                    "artifacts": [
+                        {
+                            "path": "documents/review.md",
+                            "media_type": "text/markdown",
+                        }
+                    ],
+                },
+                "revise": {
+                    "version": 1,
+                    "subject_digest": payload.subject_digest,
+                    "decision": "revise",
+                    "summary": "non-empty summary",
+                    "required_changes": ["one or more concrete change strings"],
+                    "artifacts": [
+                        {
+                            "path": "documents/review.md",
+                            "media_type": "text/markdown",
+                        }
+                    ],
+                },
             },
+            "final_response": {"summary": "non-empty short string"},
         }
         return PreparedAgentTurn(
-            task_text=payload.task,
+            task_text="Fixed Hard Gate task:\n" + payload.task,
             runtime_context_text=(
-                "Fixed Hard Gate subject:\n"
+                "Current authoritative fixed Hard Gate subject:\n"
                 + json.dumps(
                     {
                         "triage_id": payload.triage_id,
@@ -129,8 +152,10 @@ class HardGateOperation:
             ),
             resources=tuple(resolved),
             control_text=(
-                "Write the exact Contract outputs described here and return only a short "
-                f"JSON summary:\n{json.dumps(control, ensure_ascii=False, sort_keys=True)}"
+                "Activation output contract:\n"
+                + json.dumps(control, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\nWrite the substantive review document and exact manifest, then return only "
+                "the declared JSON summary."
             ),
         )
 

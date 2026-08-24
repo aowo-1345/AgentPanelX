@@ -108,14 +108,18 @@ class _StageOperation:
             "delivery_document": relative_document.as_posix(),
         }
         return PreparedAgentTurn(
-            task_text=f"Execute Stage {payload.stage_key}: {payload.stage_objective}",
+            task_text=(
+                f"Fixed Stage assignment:\nExecute Stage {payload.stage_key}: "
+                f"{payload.stage_objective}"
+            ),
             runtime_context_text=(
-                "Fixed StageRun contract:\n"
-                + json.dumps(contract, ensure_ascii=False, sort_keys=True)
+                "Current authoritative Runtime facts:\nFixed StageRun contract:\n"
+                + json.dumps(contract, ensure_ascii=False, indent=2, sort_keys=True)
             ),
             control_text=(
-                "Leave all Candidate changes uncommitted, write the declared delivery "
-                "document, and return only a JSON object with one short summary."
+                "Activation output contract:\nLeave all Candidate changes uncommitted, write "
+                "the declared non-empty delivery document, and return only a JSON object "
+                "containing one non-empty short summary field."
             ),
             execution_workspace=worktree,
         )

@@ -19,6 +19,7 @@ from agentplanex.services.external_agent_runtime.models import (
 from agentplanex.settings import ExternalAgentDefinitionSettings
 
 _INSTRUCTIONS_ROOT = Path(__file__).resolve().parents[2] / "resources" / "external_agents"
+_COMMON_INSTRUCTIONS = _INSTRUCTIONS_ROOT / "common.md"
 
 
 def build_agent_definition(
@@ -28,13 +29,17 @@ def build_agent_definition(
     """Resolve and integrity-bind one stable configured Agent."""
     instructions_path = _INSTRUCTIONS_ROOT / f"{configured.instructions}.md"
     try:
-        instructions = instructions_path.read_text(encoding="utf-8").strip()
+        common_instructions = _COMMON_INSTRUCTIONS.read_text(encoding="utf-8").strip()
+        role_instructions = instructions_path.read_text(encoding="utf-8").strip()
     except OSError as error:
         raise ValueError(
             f"External Agent instructions are unavailable: {configured.instructions}"
         ) from error
-    if not instructions:
+    if not common_instructions:
+        raise ValueError("External Agent common instructions are empty")
+    if not role_instructions:
         raise ValueError(f"External Agent instructions are empty: {configured.instructions}")
+    instructions = "\n\n".join((common_instructions, role_instructions))
     try:
         skills = tuple(
             AgentSkill(
