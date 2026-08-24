@@ -5,10 +5,18 @@ from fastapi.responses import JSONResponse
 
 from agentplanex.infrastructure.workspace_git import WorkspaceGitError
 from agentplanex.project_runtime.errors import FeatureBusyError
+from agentplanex.services.web.to_issue import GitHubIssueError
 from agentplanex.services.workspace.errors import WorkspaceCapacityExhaustedError
 
 
 def install_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(GitHubIssueError)
+    async def github_issue_failure(
+        _request: Request,
+        error: GitHubIssueError,
+    ) -> JSONResponse:
+        return JSONResponse(status_code=502, content={"detail": str(error)})
+
     @app.exception_handler(FeatureBusyError)
     async def feature_busy(
         _request: Request,

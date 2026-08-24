@@ -15,7 +15,13 @@ import {
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { AttributionData, ConversationMessage, FeatureAction, Panel } from '@/api/types';
+import type {
+  AttributionData,
+  ConversationMessage,
+  CreatedIssue,
+  FeatureAction,
+  Panel,
+} from '@/api/types';
 import { ActionCard } from './ActionCard';
 import { AttributionDialog } from './AttributionDialog';
 
@@ -36,6 +42,7 @@ interface ChatAreaProps {
   notice: CommandNotice | null;
   onSend: (content: string) => Promise<boolean>;
   onAction: (action: FeatureAction, feedback?: string) => Promise<void>;
+  onCreateProposalIssue?: (runId: string) => Promise<CreatedIssue>;
   readOnly?: boolean;
   readOnlyLabel?: string;
 }
@@ -180,6 +187,7 @@ export function ChatArea({
   notice,
   onSend,
   onAction,
+  onCreateProposalIssue,
   readOnly = false,
   readOnlyLabel = 'This workspace snapshot is read-only.',
 }: ChatAreaProps) {
@@ -251,7 +259,11 @@ export function ChatArea({
       </header>
 
       {proposalsOpen && (
-        <AttributionDialog panel={attribution} onClose={() => setProposalsOpen(false)} />
+        <AttributionDialog
+          panel={attribution}
+          onClose={() => setProposalsOpen(false)}
+          onCreateIssue={onCreateProposalIssue}
+        />
       )}
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">

@@ -25,6 +25,7 @@ from agentplanex.services.project_runtime_context.models import (
     ProjectOwnerTaskType,
 )
 from agentplanex.services.web import ProjectWorkspaceView
+from agentplanex.services.web.to_issue import CreatedIssue, ProposalToIssue
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.errors import WorkspaceCapacityExhaustedError
 from agentplanex.services.workspace.queries import (
@@ -34,6 +35,21 @@ from agentplanex.services.workspace.queries import (
 from agentplanex.services.workspace.service import WorkspaceService
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 from agentplanex.web import app as web_app
+
+
+class _ControlledProposalToIssue:
+    def __init__(self) -> None:
+        self.calls: list[tuple[ManagedProject, FeatureBinding, str]] = []
+
+    def create(
+        self,
+        *,
+        project: ManagedProject,
+        feature: FeatureBinding,
+        run_id: str,
+    ) -> CreatedIssue:
+        self.calls.append((project, feature, run_id))
+        return CreatedIssue(number=42, url="https://github.test/issues/42")
 
 
 class _ControlledRuntime:
@@ -167,6 +183,7 @@ def _workspace(
         queries=cast(WorkspaceQueries, _ControlledQueries(registry)),
         dispatcher=WorkspaceDispatcher(max_parallel_features=max_parallel_features),
         runtime_factory=runtime_factory,
+        proposal_to_issue=cast(ProposalToIssue, _ControlledProposalToIssue()),
     )
     return service, runtimes
 
@@ -334,6 +351,35 @@ def test_http_rejects_busy_and_capacity_before_persistence(
         assert second_runtime.submitted_messages == []
 
         first_runtime.release_drive.set()
+
+
+def test_http_creates_an_issue_from_the_selected_proposal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, _runtimes = _workspace(tmp_path, max_parallel_features=1)
+    proposal_to_issue = cast(_ControlledProposalToIssue, workspace.proposal_to_issue)
+    monkeypatch.setattr(
+        web_app,
+        "create_workspace",
+        lambda _settings, **_kwargs: workspace,
+    )
+
+    with TestClient(web_app.create_app(load_settings(DEFAULT_SETTINGS_PATH))) as client:
+        response = client.post(
+            "/api/projects/project-1/features/feature-a/proposals/run-7/issue"
+        )
+
+    assert response.status_code == 201
+    assert response.json() == {
+        "number": 42,
+        "url": "https://github.test/issues/42",
+    }
+    assert len(proposal_to_issue.calls) == 1
+    project, feature, run_id = proposal_to_issue.calls[0]
+    assert project.project_id == "project-1"
+    assert feature.triage_id == "feature-a"
+    assert run_id == "run-7"
 
 
 def test_start_only_fails_interrupted_work_without_driving(tmp_path: Path) -> None:

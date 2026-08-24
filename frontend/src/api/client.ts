@@ -2,6 +2,7 @@ import type {
   ActivationReceipt,
   BoardFeature,
   CreateProjectInput,
+  CreatedIssue,
   CreatedFeature,
   FeatureAction,
   Project,
@@ -98,6 +99,12 @@ export const api = {
 
   getWorkspace: (projectId: string, triageId: string, signal?: AbortSignal) =>
     request<Workspace>(`${featurePath(projectId, triageId)}/workspace`, { signal }),
+
+  createProposalIssue: (projectId: string, triageId: string, runId: string) =>
+    request<CreatedIssue>(
+      `${featurePath(projectId, triageId)}/proposals/${encodeURIComponent(runId)}/issue`,
+      { method: 'POST' },
+    ),
 
   sendMessage: (projectId: string, triageId: string, content: string) =>
     request<ActivationReceipt>(`${featurePath(projectId, triageId)}/messages`, {

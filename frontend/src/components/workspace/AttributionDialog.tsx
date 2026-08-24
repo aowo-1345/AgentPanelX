@@ -1,24 +1,36 @@
 import { useState } from 'react';
-import { AlertCircle, FileText, FileWarning, Loader2 } from 'lucide-react';
-import type { AttributionData, AttributionReport, Panel } from '@/api/types';
+import {
+  AlertCircle,
+  ExternalLink,
+  FileText,
+  FileWarning,
+  Github,
+  Loader2,
+} from 'lucide-react';
+import { readableError } from '@/api/client';
+import type { AttributionData, AttributionReport, CreatedIssue, Panel } from '@/api/types';
 import { DocumentDialog } from '@/components/workspace/DocumentDialog';
 import { MarkdownDocument } from '@/components/workspace/MarkdownDocument';
 
 interface AttributionDialogProps {
   panel?: Panel<AttributionData>;
   onClose: () => void;
+  onCreateIssue?: (runId: string) => Promise<CreatedIssue>;
 }
 
 function reportTime(report: AttributionReport) {
   return new Date(report.completed_at ?? report.created_at).toLocaleString();
 }
 
-export function AttributionDialog({ panel, onClose }: AttributionDialogProps) {
+export function AttributionDialog({ panel, onClose, onCreateIssue }: AttributionDialogProps) {
   const reports = panel?.data?.reports ?? [];
   const [selectedRunId, setSelectedRunId] = useState<string | null>(
     reports[0]?.run_id ?? null,
   );
   const selected = reports.find((report) => report.run_id === selectedRunId) ?? reports[0];
+  const [creatingRunId, setCreatingRunId] = useState<string | null>(null);
+  const [createdIssues, setCreatedIssues] = useState<Record<string, CreatedIssue>>({});
+  const [issueError, setIssueError] = useState<{ runId: string; message: string } | null>(null);
   const state = panel?.data?.state ?? 'idle';
   const subtitle = selected ? (
     <span className="font-mono">
@@ -28,6 +40,20 @@ export function AttributionDialog({ panel, onClose }: AttributionDialogProps) {
   ) : (
     'Current Feature · no generated Proposal'
   );
+
+  async function createIssue() {
+    if (!selected || !onCreateIssue || creatingRunId) return;
+    setCreatingRunId(selected.run_id);
+    setIssueError(null);
+    try {
+      const issue = await onCreateIssue(selected.run_id);
+      setCreatedIssues((current) => ({ ...current, [selected.run_id]: issue }));
+    } catch (caught) {
+      setIssueError({ runId: selected.run_id, message: readableError(caught) });
+    } finally {
+      setCreatingRunId(null);
+    }
+  }
 
   return (
     <DocumentDialog
@@ -119,7 +145,40 @@ export function AttributionDialog({ panel, onClose }: AttributionDialogProps) {
             )}
             <div className="mx-auto max-w-4xl">
               {selected?.status === 'available' && selected.content_markdown ? (
-                <MarkdownDocument content={selected.content_markdown} />
+                <div className="space-y-4">
+                  {onCreateIssue &&
+                    (createdIssues[selected.run_id] ? (
+                      <a
+                        className="btn btn-secondary h-8 w-fit"
+                        href={createdIssues[selected.run_id].url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        Open GitHub Issue #{createdIssues[selected.run_id].number}
+                      </a>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-secondary h-8"
+                        disabled={creatingRunId !== null}
+                        onClick={() => void createIssue()}
+                      >
+                        {creatingRunId === selected.run_id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Github className="h-3.5 w-3.5" />
+                        )}
+                        {creatingRunId === selected.run_id
+                          ? 'Creating Issue…'
+                          : 'Create GitHub Issue'}
+                      </button>
+                    ))}
+                  {issueError?.runId === selected.run_id && (
+                    <p className="text-xs text-red-300">{issueError.message}</p>
+                  )}
+                  <MarkdownDocument content={selected.content_markdown} />
+                </div>
               ) : (
                 <div className="flex items-center gap-2 text-sm text-amber-300">
                   <FileWarning className="h-4 w-4" />

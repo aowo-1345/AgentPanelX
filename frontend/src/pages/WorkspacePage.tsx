@@ -2,7 +2,7 @@ import { ArrowLeft, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { api, readableError } from '@/api/client';
-import type { ActivationReceipt, FeatureAction, Workspace } from '@/api/types';
+import type { ActivationReceipt, CreatedIssue, FeatureAction, Workspace } from '@/api/types';
 import { SkeletonWorkspace } from '@/components/common/Skeletons';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { ChatArea, type CommandNotice } from '@/components/workspace/ChatArea';
@@ -186,6 +186,12 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
     }
   }
 
+  async function createProposalIssue(runId: string): Promise<CreatedIssue> {
+    if (snapshot) throw new Error(READ_ONLY_NOTICE.text);
+    if (!projectId || !triageId) throw new Error('Workspace identity is missing');
+    return api.createProposalIssue(projectId, triageId, runId);
+  }
+
   async function deleteFeature() {
     if (snapshot) {
       setDeleteError(READ_ONLY_NOTICE.text);
@@ -287,6 +293,7 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
                 notice={notice}
                 onSend={sendMessage}
                 onAction={performAction}
+                onCreateProposalIssue={snapshot ? undefined : createProposalIssue}
               />
             </div>
           </div>

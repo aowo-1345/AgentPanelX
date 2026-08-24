@@ -19,6 +19,7 @@ from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.services.auto_takeover import AutoTakeoverPort
 from agentplanex.services.project_runtime_context.models import OwnerActivation
+from agentplanex.services.web.to_issue import CreatedIssue, ProposalToIssue
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.queries import (
     FeatureWorkspaceView,
@@ -42,6 +43,7 @@ class WorkspaceService:
     queries: WorkspaceQueries
     dispatcher: WorkspaceDispatcher
     runtime_factory: Callable[[Path], ProjectRuntime]
+    proposal_to_issue: ProposalToIssue
     auto_takeover: AutoTakeoverPort | None = None
     close_resources: Callable[[], None] = _noop
 
@@ -192,6 +194,21 @@ class WorkspaceService:
         return self.queries.feature_workspace(
             project_id=_required_text("Project ID", project_id),
             triage_id=_required_text("Feature Triage ID", triage_id),
+        )
+
+    def create_proposal_issue(
+        self,
+        *,
+        project_id: str,
+        triage_id: str,
+        run_id: str,
+    ) -> CreatedIssue:
+        binding = self._require_feature_binding(project_id, triage_id)
+        project = self.registry.get_project(binding.project_id)
+        return self.proposal_to_issue.create(
+            project=project,
+            feature=binding,
+            run_id=run_id,
         )
 
     def perform_feature_action(

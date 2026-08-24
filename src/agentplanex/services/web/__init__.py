@@ -1,4 +1,4 @@
-"""Read-only service projections consumed by the Web application."""
+"""Web-facing service projections and use cases."""
 
 from agentplanex.services.web.project_workspace import (
     PlanDocument,

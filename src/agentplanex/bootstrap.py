@@ -8,6 +8,7 @@ import yaml
 from agentplanex.domains.workspace import FeatureBinding
 from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.git_repository import GitRepository
+from agentplanex.infrastructure.github_issue import GitHubIssuePublisher
 from agentplanex.infrastructure.logging import configure_logging
 from agentplanex.infrastructure.model_gateway import (
     ModelGateway,
@@ -29,6 +30,7 @@ from agentplanex.project_runtime.control import ProjectRuntimeControl
 from agentplanex.services.auto_takeover import AutoTakeoverService
 from agentplanex.services.project_control import ProjectControlQuery
 from agentplanex.services.web import ProjectWorkspaceQuery
+from agentplanex.services.web.to_issue import ProposalToIssue
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.queries import WorkspaceQueries
 from agentplanex.services.workspace.service import WorkspaceService
@@ -174,6 +176,11 @@ def create_workspace(
         ),
         dispatcher=dispatcher,
         runtime_factory=runtime_factory,
+        proposal_to_issue=ProposalToIssue(
+            publisher=GitHubIssuePublisher(data_home=settings.workspace.data_home),
+            artifact_response_limit=settings.runtime.codex.response_limit,
+            artifact_limit=settings.runtime.codex.artifact_limit,
+        ),
         auto_takeover=takeover,
         close_resources=responses_transport.close,
     )

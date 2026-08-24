@@ -67,6 +67,11 @@ export interface ActivationReceipt {
   created_at: string;
 }
 
+export interface CreatedIssue {
+  number: number;
+  url: string;
+}
+
 export interface Panel<T> {
   data: T | null;
   error: string | null;

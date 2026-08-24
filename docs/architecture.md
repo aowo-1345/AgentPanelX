@@ -480,6 +480,9 @@ Workspace 的只读查询直接从 AutoTakeover Run 构造一个粗粒度归因�
 Workspace API 直接内联报告 Markdown，不要求 Web 客户端读取本地 Artifact URI 或调用额外
 详情接口。
 
+实时 Workspace 可将一份可用 Proposal 的原文同步创建为 GitHub Issue；这是独立的外部写入，
+不改变 Project Runtime 状态，也不持久化发布任务。
+
 ```mermaid
 stateDiagram-v2
     [*] --> TRIAGE: create Feature

@@ -14,6 +14,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.services.auto_takeover.models import TakeoverStatus
 from agentplanex.services.web import ProjectWorkspaceQuery
+from agentplanex.services.web.to_issue import CreatedIssue, ProposalToIssue
 from agentplanex.services.workspace.queries import FeatureWorkspaceView
 from agentplanex.web.schemas import workspace_response
 
@@ -49,6 +50,102 @@ def _publish_report(
         result={"attribution": asdict(descriptor)},
     )
     return descriptor
+
+
+class _RecordingIssuePublisher:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Path, str, str]] = []
+
+    def create(
+        self,
+        *,
+        repository_path: Path,
+        title: str,
+        body: str,
+    ) -> CreatedIssue:
+        self.calls.append((repository_path, title, body))
+        return CreatedIssue(number=42, url="https://github.test/issues/42")
+
+
+def test_proposal_to_issue_publishes_the_selected_attribution_document_unchanged(
+    initialize_git_project,
+) -> None:
+    feature_path = initialize_git_project()
+    database = SQLiteDatabase.for_project(feature_path)
+    initialize_schema(database)
+    store = AgentWorkspaceStore(
+        project_path=feature_path,
+        response_limit=65_536,
+        artifact_limit=262_144,
+    )
+    first_document = "# First proposal\n\nKeep this content exactly.\n"
+    first_descriptor = _publish_report(
+        store,
+        request_key="publish-first-report",
+        content=first_document,
+    )
+    second_descriptor = _publish_report(
+        store,
+        request_key="publish-second-report",
+        content="# Second proposal\n",
+    )
+    repository = SQLiteAutoTakeoverRepository()
+    with database.transaction() as connection:
+        first = repository.begin(
+            connection,
+            triage_id="feature-attribution",
+            trigger_event_id=10,
+        )
+        assert first is not None
+        repository.complete(
+            connection,
+            first[0].run_id,
+            TakeoverStatus.NO,
+            attribution=first_descriptor,
+        )
+        second = repository.begin(
+            connection,
+            triage_id="feature-attribution",
+            trigger_event_id=20,
+        )
+        assert second is not None
+        repository.complete(
+            connection,
+            second[0].run_id,
+            TakeoverStatus.NO,
+            attribution=second_descriptor,
+        )
+
+    publisher = _RecordingIssuePublisher()
+    issue = ProposalToIssue(
+        publisher=publisher,
+        artifact_response_limit=65_536,
+        artifact_limit=262_144,
+    ).create(
+        project=ManagedProject(
+            project_id="project-1",
+            name="Project",
+            repository_path=feature_path,
+            git_common_dir=feature_path / ".git",
+            main_branch="main",
+        ),
+        feature=FeatureBinding(
+            triage_id="feature-attribution",
+            project_id="project-1",
+            name="Repair delivery",
+            worktree_path=feature_path,
+        ),
+        run_id=first[0].run_id,
+    )
+
+    assert issue == CreatedIssue(number=42, url="https://github.test/issues/42")
+    assert publisher.calls == [
+        (
+            feature_path,
+            "[AgentPanelX] Repair delivery",
+            first_document,
+        )
+    ]
 
 
 def test_workspace_exposes_recent_reports_and_current_running_state(

@@ -76,6 +76,11 @@ class ActivationResponse(Schema):
     created_at: datetime
 
 
+class CreatedIssueResponse(Schema):
+    number: int
+    url: str
+
+
 class ActionRequest(Schema):
     action: FeatureAction
     feedback: str | None = None

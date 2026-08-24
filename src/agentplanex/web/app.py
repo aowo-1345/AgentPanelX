@@ -19,6 +19,7 @@ from agentplanex.web.schemas import (
     ActionRequest,
     ActivationResponse,
     BoardFeatureResponse,
+    CreatedIssueResponse,
     CreateFeatureRequest,
     CreateProjectRequest,
     FeatureResponse,
@@ -134,6 +135,23 @@ def _install_routes(
                 triage_id=triage_id,
             )
         )
+
+    @app.post(
+        "/api/projects/{project_id}/features/{triage_id}/proposals/{run_id}/issue",
+        response_model=CreatedIssueResponse,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_proposal_issue(
+        project_id: str,
+        triage_id: str,
+        run_id: str,
+    ) -> CreatedIssueResponse:
+        issue = workspace.create_proposal_issue(
+            project_id=project_id,
+            triage_id=triage_id,
+            run_id=run_id,
+        )
+        return CreatedIssueResponse(number=issue.number, url=issue.url)
 
     @app.post(
         "/api/projects/{project_id}/features/{triage_id}/messages",
