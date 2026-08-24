@@ -166,9 +166,12 @@ class DeliveryService:
         milestone = self._first_pending(snapshot)
         self._assert_approved_specs(current)
         if current.rolling_started_at is None:
-            if current.status != "TODO" or current.pending_action is not None:
+            if (
+                current.status not in {"TODO", "BLOCKED"}
+                or current.pending_action is not None
+            ):
                 raise DeliveryError(
-                    "First Run can only be requested from TODO with no pending action"
+                    "First Run can only be requested from TODO or BLOCKED with no pending action"
                 )
             if current.current_run_id is not None:
                 raise DeliveryError("First Run already has an active Milestone Run")
@@ -431,7 +434,7 @@ class DeliveryService:
         snapshot: MilestoneSnapshot,
     ) -> ProjectRuntimeState:
         if (
-            context.status != "TODO"
+            context.status not in {"TODO", "BLOCKED"}
             or context.pending_action is not None
             or context.rolling_started_at is not None
             or context.current_run_id is not None
