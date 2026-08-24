@@ -34,6 +34,7 @@ class _OpenAICompatibleResponsesAdapter:
         base_url: str,
         timeout_seconds: float,
         api_key_env: str,
+        max_retries: int = 2,
         fallback_api_key: str | None = None,
         http_headers: Mapping[str, str] | None = None,
         reasoning_effort: ReasoningEffort | None = None,
@@ -41,6 +42,7 @@ class _OpenAICompatibleResponsesAdapter:
     ) -> None:
         self.base_url = base_url
         self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
         self.api_key_env = api_key_env
         self._fallback_api_key = fallback_api_key
         self.http_headers = dict(http_headers or {})
@@ -100,7 +102,7 @@ class _OpenAICompatibleResponsesAdapter:
                             api_key=api_key,
                             base_url=self.base_url,
                             timeout=self.timeout_seconds,
-                            max_retries=2,
+                            max_retries=self.max_retries,
                             default_headers=self.http_headers,
                         )
                     except OpenAIError as error:

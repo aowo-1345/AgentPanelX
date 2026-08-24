@@ -180,6 +180,7 @@ def create_responses_transport(settings: Settings) -> ModelGateway:
     adapter = adapter_type(
         base_url=model.base_url,
         timeout_seconds=model.timeout_seconds,
+        max_retries=model.max_retries,
         api_key_env=model.api_key_env,
         fallback_api_key=_local_cliproxy_api_key(settings, model.api_key_env),
         http_headers=model.http_headers,

@@ -18,7 +18,8 @@ project_owner_agent:
       api_key_env: "CLIPROXY_API_KEY"
       reasoning_effort: "high"
       service_tier: null
-      timeout_seconds: 60.0
+      timeout_seconds: 180.0
+      max_retries: 1
   step_limit: 200
   max_consecutive_format_errors: 3
   context_memory:

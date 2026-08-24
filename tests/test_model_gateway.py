@@ -195,6 +195,8 @@ def test_bootstrap_binds_the_explicit_openai_adapter_without_connecting() -> Non
     gateway = bootstrap.create_responses_transport(settings)
 
     assert isinstance(gateway.adapter, OpenAIResponsesAdapter)
+    assert gateway.adapter.timeout_seconds == 180.0
+    assert gateway.adapter.max_retries == 1
     assert gateway.adapter.client is None
 
 
@@ -251,3 +253,5 @@ def test_bootstrap_uses_environment_before_the_local_cliproxy_key(
         "local-file-key",
         "environment-key",
     ]
+    assert [client["timeout"] for client in clients] == [180.0, 180.0]
+    assert [client["max_retries"] for client in clients] == [1, 1]

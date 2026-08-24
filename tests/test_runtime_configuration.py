@@ -218,6 +218,7 @@ def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> Non
                 "reasoning_effort": "high",
                 "service_tier": None,
                 "timeout_seconds": 12.5,
+                "max_retries": 1,
             }
         },
         "step_limit": 7,
@@ -240,6 +241,7 @@ def test_settings_load_model_agent_and_bash_configuration(tmp_path: Path) -> Non
     assert model.reasoning_effort == "high"
     assert model.service_tier is None
     assert model.timeout_seconds == 12.5
+    assert model.max_retries == 1
     assert settings.project_owner_agent.step_limit == 7
     assert settings.project_owner_agent.max_consecutive_format_errors == 2
     assert settings.runtime.bash.timeout_seconds == 3.5

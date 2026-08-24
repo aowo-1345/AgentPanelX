@@ -36,6 +36,7 @@ class ModelSettings(_SettingsModel):
     )
     service_tier: Literal["auto", "default", "flex", "scale", "priority"] | None = "priority"
     timeout_seconds: float = Field(default=60.0, gt=0)
+    max_retries: int = Field(default=2, ge=0)
 
     @field_validator("name", "base_url", "api_key_env")
     @classmethod
