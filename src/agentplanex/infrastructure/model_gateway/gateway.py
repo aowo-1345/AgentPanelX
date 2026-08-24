@@ -9,6 +9,7 @@ from typing import Protocol
 
 from loguru import logger
 
+from agentplanex.project_owner_agent.exception import ModelGatewayError
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 
 
@@ -32,6 +33,9 @@ class ModelGateway:
     _close_lock: Lock = field(default_factory=Lock, init=False, repr=False)
 
     def create(self, request: ResponsesRequest) -> object:
+        with self._close_lock:
+            if self._closed:
+                raise ModelGatewayError("Responses gateway is closed")
         started = monotonic()
         try:
             response = self.adapter.create(request)

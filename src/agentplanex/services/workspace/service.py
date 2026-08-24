@@ -55,16 +55,17 @@ class WorkspaceService:
         return failed_features
 
     def close(self) -> None:
+        if self.auto_takeover is not None:
+            self.auto_takeover.stop_accepting()
+        self.dispatcher.stop_accepting()
         try:
-            if self.auto_takeover is not None:
-                self.auto_takeover.stop_accepting()
-            if self.auto_takeover is not None:
-                self.auto_takeover.close()
+            self.close_resources()
         finally:
             try:
-                self.dispatcher.close()
+                if self.auto_takeover is not None:
+                    self.auto_takeover.close()
             finally:
-                self.close_resources()
+                self.dispatcher.close()
 
     def register_project(
         self,

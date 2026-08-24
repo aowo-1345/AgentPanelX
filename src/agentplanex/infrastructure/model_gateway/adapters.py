@@ -49,6 +49,7 @@ class _OpenAICompatibleResponsesAdapter:
         self.reasoning_effort = reasoning_effort
         self.service_tier = service_tier
         self.client: OpenAI | None = None
+        self._closed = False
         self._lock = Lock()
 
     def create(self, request: ResponsesRequest) -> object:
@@ -80,36 +81,38 @@ class _OpenAICompatibleResponsesAdapter:
         """Close the shared SDK client when the application shuts down."""
 
         with self._lock:
+            self._closed = True
             client = self.client
             self.client = None
         if client is not None:
             client.close()
 
     def _client(self) -> OpenAI:
-        if self.client is None:
-            with self._lock:
-                if self.client is None:
-                    api_key = os.getenv(self.api_key_env)
-                    if api_key is None or not api_key.strip():
-                        api_key = self._fallback_api_key
-                    if api_key is None or not api_key.strip():
-                        raise ModelGatewayError(
-                            "Missing credentials: environment variable "
-                            f"{self.api_key_env} is not set"
-                        )
-                    try:
-                        self.client = OpenAI(
-                            api_key=api_key,
-                            base_url=self.base_url,
-                            timeout=self.timeout_seconds,
-                            max_retries=self.max_retries,
-                            default_headers=self.http_headers,
-                        )
-                    except OpenAIError as error:
-                        raise ModelGatewayError(
-                            f"Failed to initialize Responses gateway: {error}"
-                        ) from error
-        return self.client
+        with self._lock:
+            if self._closed:
+                raise ModelGatewayError("Responses gateway is closed")
+            if self.client is None:
+                api_key = os.getenv(self.api_key_env)
+                if api_key is None or not api_key.strip():
+                    api_key = self._fallback_api_key
+                if api_key is None or not api_key.strip():
+                    raise ModelGatewayError(
+                        "Missing credentials: environment variable "
+                        f"{self.api_key_env} is not set"
+                    )
+                try:
+                    self.client = OpenAI(
+                        api_key=api_key,
+                        base_url=self.base_url,
+                        timeout=self.timeout_seconds,
+                        max_retries=self.max_retries,
+                        default_headers=self.http_headers,
+                    )
+                except OpenAIError as error:
+                    raise ModelGatewayError(
+                        f"Failed to initialize Responses gateway: {error}"
+                    ) from error
+            return self.client
 
 
 class QwenResponsesAdapter(_OpenAICompatibleResponsesAdapter):

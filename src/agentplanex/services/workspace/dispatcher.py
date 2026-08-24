@@ -62,9 +62,13 @@ class WorkspaceDispatcher:
             self._release(triage_id)
 
     def close(self) -> None:
+        self.stop_accepting()
+        self._executor.shutdown(wait=True, cancel_futures=True)
+
+    def stop_accepting(self) -> None:
+        """Reject new work before shutdown starts draining active work."""
         with self._guard:
             self._closed = True
-        self._executor.shutdown(wait=True)
 
     def _admit_automatic(self, triage_id: str) -> None:
         with self._guard:
