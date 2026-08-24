@@ -226,7 +226,7 @@ function MilestonesPanel({
                     return (
                       <div
                         key={stage.key}
-                        className={`flex items-start gap-1.5 rounded px-1.5 py-1 text-[11px] ${
+                        className={`rounded px-1.5 py-1 text-[11px] ${
                           stageState === 'blocked'
                             ? 'bg-red-500/10 text-red-200'
                             : stageState === 'running'
@@ -234,17 +234,19 @@ function MilestonesPanel({
                               : 'text-muted-foreground'
                         }`}
                       >
-                        <span className="font-mono">{stage.key}</span>
-                        <span className="min-w-0 flex-1">· {stage.objective}</span>
-                        {stageState && (
-                          <span
-                            className={`shrink-0 text-[9px] uppercase ${
-                              stageState === 'blocked' ? 'text-red-300' : 'text-blue-300'
-                            }`}
-                          >
-                            {stageState}
-                          </span>
-                        )}
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="min-w-0 break-words font-mono">{stage.key}</span>
+                          {stageState && (
+                            <span
+                              className={`shrink-0 text-[9px] uppercase ${
+                                stageState === 'blocked' ? 'text-red-300' : 'text-blue-300'
+                              }`}
+                            >
+                              {stageState}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 leading-relaxed">{stage.objective}</p>
                       </div>
                     );
                   })}
