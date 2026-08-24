@@ -67,6 +67,7 @@ class PlanDocument:
 @dataclass(frozen=True, slots=True)
 class AttributionReport:
     run_id: str
+    trigger_event_id: int
     created_at: datetime
     completed_at: datetime | None
     status: AttributionReportStatus
@@ -193,6 +194,7 @@ class ProjectWorkspaceQuery:
                 reports.append(
                     AttributionReport(
                         run_id=run.run_id,
+                        trigger_event_id=run.trigger_event_id,
                         created_at=run.started_at,
                         completed_at=run.finished_at,
                         status="unavailable",
@@ -203,6 +205,7 @@ class ProjectWorkspaceQuery:
                 reports.append(
                     AttributionReport(
                         run_id=run.run_id,
+                        trigger_event_id=run.trigger_event_id,
                         created_at=run.started_at,
                         completed_at=run.finished_at,
                         status="available",

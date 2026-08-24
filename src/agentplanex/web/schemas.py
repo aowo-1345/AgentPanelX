@@ -161,6 +161,7 @@ class GitData(Schema):
 
 class AttributionReportData(Schema):
     run_id: str
+    trigger_event_id: int
     created_at: datetime
     completed_at: datetime | None
     status: Literal["available", "unavailable"]
@@ -364,6 +365,7 @@ def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
                     reports=[
                         AttributionReportData(
                             run_id=report.run_id,
+                            trigger_event_id=report.trigger_event_id,
                             created_at=report.created_at,
                             completed_at=report.completed_at,
                             status=report.status,

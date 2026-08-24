@@ -141,6 +141,7 @@ export interface GitData {
 
 export interface AttributionReport {
   run_id: string;
+  trigger_event_id?: number;
   created_at: string;
   completed_at: string | null;
   status: 'available' | 'unavailable';

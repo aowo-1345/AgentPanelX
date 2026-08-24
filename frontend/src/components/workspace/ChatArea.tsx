@@ -17,7 +17,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { AttributionData, ConversationMessage, FeatureAction, Panel } from '@/api/types';
 import { ActionCard } from './ActionCard';
-import { AttributionPanel } from './AttributionPanel';
+import { AttributionDialog } from './AttributionDialog';
 
 interface CommandNotice {
   kind: 'success' | 'warning' | 'error';
@@ -229,8 +229,8 @@ export function ChatArea({
         <button
           type="button"
           className="btn btn-ghost h-8 shrink-0 px-2"
-          aria-expanded={proposalsOpen}
-          onClick={() => setProposalsOpen((open) => !open)}
+          aria-haspopup="dialog"
+          onClick={() => setProposalsOpen(true)}
         >
           {attributionState === 'running' ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-300" />
@@ -251,9 +251,7 @@ export function ChatArea({
       </header>
 
       {proposalsOpen && (
-        <div className="max-h-[48%] shrink-0 overflow-y-auto border-b border-border bg-card/40">
-          <AttributionPanel panel={attribution} />
-        </div>
+        <AttributionDialog panel={attribution} onClose={() => setProposalsOpen(false)} />
       )}
 
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">

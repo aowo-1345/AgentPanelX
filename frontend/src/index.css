@@ -120,11 +120,11 @@
     @apply border border-red-500/30 bg-red-500/10 text-red-400;
   }
 
-  .plan-document-dialog {
+  .document-dialog {
     @apply m-auto h-[min(880px,90vh)] w-[min(1120px,94vw)] max-h-none max-w-none overflow-hidden rounded-xl border border-border bg-card p-0 shadow-2xl;
   }
 
-  .plan-document-dialog::backdrop {
+  .document-dialog::backdrop {
     @apply bg-black/75 backdrop-blur-sm;
   }
 

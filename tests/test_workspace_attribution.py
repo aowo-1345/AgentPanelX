@@ -122,6 +122,7 @@ def test_workspace_exposes_recent_reports_and_current_running_state(
     assert view.attribution_error is None
     assert view.attribution.state == "running"
     assert [report.run_id for report in view.attribution.reports] == [second[0].run_id]
+    assert view.attribution.reports[0].trigger_event_id == 20
     assert view.attribution.reports[0].content_markdown == "# Second proposal\n"
 
     response = workspace_response(
@@ -144,6 +145,7 @@ def test_workspace_exposes_recent_reports_and_current_running_state(
     ).model_dump(mode="json")
     assert response["attribution"]["data"]["state"] == "running"
     assert len(response["attribution"]["data"]["reports"]) == 1
+    assert response["attribution"]["data"]["reports"][0]["trigger_event_id"] == 20
 
 
 def test_latest_failed_run_does_not_hide_older_report(
