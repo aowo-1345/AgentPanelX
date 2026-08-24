@@ -112,7 +112,7 @@ def _request_path(request: CodexTurnRequest, name: str) -> Path:
 
 
 def _fence(request: CodexTurnRequest) -> str:
-    match = re.search(r'--takeover-fence", "([^"]+)"', request.message)
+    match = re.search(r'--takeover-fence",\s*"([^"]+)"', request.message)
     assert match is not None
     return match.group(1)
 
