@@ -261,7 +261,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 14
+    assert schema_version[0] == 15
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -377,6 +377,8 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "error",
             "started_at",
             "finished_at",
+            "issue_number",
+            "issue_url",
         ),
         "auto_takeover_attempt": (
             "attempt_id",
@@ -410,6 +412,56 @@ def test_schema_contains_current_control_plane_tables_and_columns(
                 ).fetchall()
             )
             assert actual_columns == columns
+
+
+def test_schema_migrates_version_14_issue_columns_without_losing_runs(
+    project_path: Path,
+) -> None:
+    database = SQLiteDatabase.for_project(project_path)
+    with database.transaction() as connection:
+        connection.execute(
+            """
+            CREATE TABLE auto_takeover_run (
+                run_id TEXT PRIMARY KEY,
+                triage_id TEXT NOT NULL,
+                trigger_event_id INTEGER NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                decision TEXT,
+                attribution TEXT,
+                error TEXT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO auto_takeover_run (
+                run_id, triage_id, trigger_event_id, status, started_at
+            ) VALUES ('run-existing', 'triage-existing', 178, 'NO', ?)
+            """,
+            (datetime(2026, 8, 25, tzinfo=UTC).isoformat(),),
+        )
+        connection.execute("PRAGMA user_version = 14")
+
+    initialize_schema(database)
+
+    with database.connection() as connection:
+        version = connection.execute("PRAGMA user_version").fetchone()
+        row = connection.execute(
+            """
+            SELECT run_id, issue_number, issue_url
+            FROM auto_takeover_run WHERE run_id = 'run-existing'
+            """
+        ).fetchone()
+    assert version is not None
+    assert version[0] == 15
+    assert row is not None
+    assert dict(row) == {
+        "run_id": "run-existing",
+        "issue_number": None,
+        "issue_url": None,
+    }
 
 
 def test_schema_rejects_old_versions_and_requires_recreation(

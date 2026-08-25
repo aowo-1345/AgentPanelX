@@ -151,6 +151,7 @@ export interface AttributionReport {
   completed_at: string | null;
   status: 'available' | 'unavailable';
   content_markdown: string | null;
+  created_issue: CreatedIssue | null;
 }
 
 export interface AttributionData {

@@ -32,6 +32,9 @@ export function AttributionDialog({ panel, onClose, onCreateIssue }: Attribution
   const [createdIssues, setCreatedIssues] = useState<Record<string, CreatedIssue>>({});
   const [issueError, setIssueError] = useState<{ runId: string; message: string } | null>(null);
   const state = panel?.data?.state ?? 'idle';
+  const selectedIssue = selected
+    ? createdIssues[selected.run_id] ?? selected.created_issue
+    : null;
   const subtitle = selected ? (
     <span className="font-mono">
       {selected.trigger_event_id !== undefined && `Timeline event #${selected.trigger_event_id} · `}
@@ -143,42 +146,41 @@ export function AttributionDialog({ panel, onClose, onCreateIssue }: Attribution
                 最近一次归因失败；当前展示此前已生成的 Proposal。
               </div>
             )}
-            <div className="mx-auto max-w-4xl">
-              {selected?.status === 'available' && selected.content_markdown ? (
-                <div className="space-y-4">
-                  {onCreateIssue &&
-                    (createdIssues[selected.run_id] ? (
-                      <a
-                        className="btn btn-secondary h-8 w-fit"
-                        href={createdIssues[selected.run_id].url}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        Open GitHub Issue #{createdIssues[selected.run_id].number}
-                      </a>
-                    ) : (
-                      <button
-                        type="button"
-                        className="btn btn-secondary h-8"
-                        disabled={creatingRunId !== null}
-                        onClick={() => void createIssue()}
-                      >
-                        {creatingRunId === selected.run_id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Github className="h-3.5 w-3.5" />
-                        )}
-                        {creatingRunId === selected.run_id
-                          ? 'Creating Issue…'
-                          : 'Create GitHub Issue'}
-                      </button>
-                    ))}
-                  {issueError?.runId === selected.run_id && (
-                    <p className="text-xs text-red-300">{issueError.message}</p>
+            <div className="mx-auto max-w-4xl space-y-4">
+              {selectedIssue ? (
+                <a
+                  className="btn btn-secondary h-8 w-fit"
+                  href={selectedIssue.url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Open GitHub Issue #{selectedIssue.number}
+                </a>
+              ) : selected?.status === 'available' &&
+                selected.content_markdown &&
+                onCreateIssue ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary h-8"
+                  disabled={creatingRunId !== null}
+                  onClick={() => void createIssue()}
+                >
+                  {creatingRunId === selected.run_id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Github className="h-3.5 w-3.5" />
                   )}
-                  <MarkdownDocument content={selected.content_markdown} />
-                </div>
+                  {creatingRunId === selected.run_id
+                    ? 'Creating Issue…'
+                    : 'Create GitHub Issue'}
+                </button>
+              ) : null}
+              {issueError?.runId === selected?.run_id && (
+                <p className="text-xs text-red-300">{issueError.message}</p>
+              )}
+              {selected?.status === 'available' && selected.content_markdown ? (
+                <MarkdownDocument content={selected.content_markdown} />
               ) : (
                 <div className="flex items-center gap-2 text-sm text-amber-300">
                   <FileWarning className="h-4 w-4" />

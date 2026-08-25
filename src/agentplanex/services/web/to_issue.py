@@ -60,6 +60,8 @@ class ProposalToIssue:
             or run.attribution is None
         ):
             raise LookupError("Attribution Proposal not found")
+        if run.issue_number is not None and run.issue_url is not None:
+            return CreatedIssue(number=run.issue_number, url=run.issue_url)
 
         artifacts = AgentWorkspaceStore(
             project_path=feature.worktree_path,
@@ -71,8 +73,16 @@ class ProposalToIssue:
         except AgentWorkspaceError as error:
             raise ValueError("Attribution Proposal content is unavailable") from error
 
-        return self.publisher.create(
+        issue = self.publisher.create(
             repository_path=project.repository_path,
             title=f"[AgentPanelX] {feature.name}",
             body=body,
         )
+        with database.transaction() as connection:
+            SQLiteAutoTakeoverRepository().record_created_issue(
+                connection,
+                selected_run_id,
+                number=issue.number,
+                url=issue.url,
+            )
+        return issue

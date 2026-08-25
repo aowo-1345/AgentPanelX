@@ -44,6 +44,8 @@ class SQLiteAutoTakeoverRepository:
             error=None,
             started_at=now,
             finished_at=None,
+            issue_number=None,
+            issue_url=None,
         )
         connection.execute(
             """
@@ -132,6 +134,28 @@ class SQLiteAutoTakeoverRepository:
         completed = self.get(connection, run_id)
         assert completed is not None
         return completed
+
+    def record_created_issue(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        *,
+        number: int,
+        url: str,
+    ) -> TakeoverRun:
+        cursor = connection.execute(
+            """
+            UPDATE auto_takeover_run
+            SET issue_number = ?, issue_url = ?
+            WHERE run_id = ? AND issue_number IS NULL AND issue_url IS NULL
+            """,
+            (number, url, run_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("Attribution Proposal Issue is already recorded")
+        run = self.get(connection, run_id)
+        assert run is not None
+        return run
 
     def require_active_fence(
         self,
@@ -293,6 +317,8 @@ def _run(row: sqlite3.Row) -> TakeoverRun:
         error=row["error"],
         started_at=datetime.fromisoformat(row["started_at"]),
         finished_at=(datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None),
+        issue_number=row["issue_number"],
+        issue_url=row["issue_url"],
     )
 
 

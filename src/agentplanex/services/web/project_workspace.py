@@ -36,10 +36,17 @@ from agentplanex.services.project_runtime_context.models import (
     OwnerActivationStatus,
     ProjectOwnerTaskType,
 )
+from agentplanex.services.web.to_issue import CreatedIssue
 
 type ToolActivityStatus = Literal["running", "completed", "failed"]
 type AttributionState = Literal["idle", "running", "completed", "failed"]
 type AttributionReportStatus = Literal["available", "unavailable"]
+
+
+def _created_issue(number: int | None, url: str | None) -> CreatedIssue | None:
+    if number is None or url is None:
+        return None
+    return CreatedIssue(number=number, url=url)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +79,7 @@ class AttributionReport:
     completed_at: datetime | None
     status: AttributionReportStatus
     content_markdown: str | None
+    created_issue: CreatedIssue | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +207,7 @@ class ProjectWorkspaceQuery:
                         completed_at=run.finished_at,
                         status="unavailable",
                         content_markdown=None,
+                        created_issue=_created_issue(run.issue_number, run.issue_url),
                     )
                 )
             else:
@@ -210,6 +219,7 @@ class ProjectWorkspaceQuery:
                         completed_at=run.finished_at,
                         status="available",
                         content_markdown=content,
+                        created_issue=_created_issue(run.issue_number, run.issue_url),
                     )
                 )
 

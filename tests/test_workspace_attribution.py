@@ -148,6 +148,92 @@ def test_proposal_to_issue_publishes_the_selected_attribution_document_unchanged
     ]
 
 
+def test_workspace_remembers_created_issue_for_attribution_report(
+    initialize_git_project,
+) -> None:
+    project_path = initialize_git_project()
+    database = SQLiteDatabase.for_project(project_path)
+    initialize_schema(database)
+    triage_id = "feature-attribution"
+    with database.transaction() as connection:
+        SQLiteProjectRuntimeStateRepository().insert(
+            connection,
+            ProjectRuntimeState(triage_id=triage_id, status="BLOCKED"),
+        )
+
+    store = AgentWorkspaceStore(project_path, 65_536, 262_144)
+    descriptor = _publish_report(
+        store,
+        request_key="published-report",
+        content="# Published proposal\n",
+    )
+    repository = SQLiteAutoTakeoverRepository()
+    with database.transaction() as connection:
+        started = repository.begin(
+            connection,
+            triage_id=triage_id,
+            trigger_event_id=178,
+        )
+        assert started is not None
+        repository.complete(
+            connection,
+            started[0].run_id,
+            TakeoverStatus.NO,
+            attribution=descriptor,
+        )
+
+    publisher = _RecordingIssuePublisher()
+    proposal_to_issue = ProposalToIssue(
+        publisher=publisher,
+        artifact_response_limit=65_536,
+        artifact_limit=262_144,
+    )
+    project = ManagedProject(
+        project_id="project-1",
+        name="Project",
+        repository_path=project_path,
+        git_common_dir=project_path / ".git",
+        main_branch="main",
+    )
+    feature = FeatureBinding(
+        triage_id=triage_id,
+        project_id="project-1",
+        name="Published attribution",
+        worktree_path=project_path,
+    )
+    issue = proposal_to_issue.create(
+        project=project,
+        feature=feature,
+        run_id=started[0].run_id,
+    )
+    repeated = proposal_to_issue.create(
+        project=project,
+        feature=feature,
+        run_id=started[0].run_id,
+    )
+
+    view = ProjectWorkspaceQuery(
+        database=database,
+        git=GitRepository(project_path),
+        artifacts=store,
+    ).get(triage_id)
+    response = workspace_response(
+        FeatureWorkspaceView(
+            project=project,
+            binding=feature,
+            runtime_view=view,
+        )
+    ).model_dump(mode="json")
+
+    assert repeated == issue
+    assert len(publisher.calls) == 1
+    assert view.attribution.reports[0].created_issue == issue
+    assert response["attribution"]["data"]["reports"][0]["created_issue"] == {
+        "number": 42,
+        "url": "https://github.test/issues/42",
+    }
+
+
 def test_workspace_exposes_recent_reports_and_current_running_state(
     initialize_git_project,
 ) -> None:

@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 _INITIAL_SCHEMA = (
     """
@@ -191,7 +191,9 @@ _INITIAL_SCHEMA = (
         attribution TEXT,
         error TEXT,
         started_at TEXT NOT NULL,
-        finished_at TEXT
+        finished_at TEXT,
+        issue_number INTEGER,
+        issue_url TEXT
     )
     """,
     """
@@ -236,6 +238,16 @@ def initialize_schema(database: SQLiteDatabase) -> None:
         if current_version == 0:
             for statement in _INITIAL_SCHEMA:
                 connection.execute(statement)
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            return
+
+        if current_version == 14:
+            connection.execute(
+                "ALTER TABLE auto_takeover_run ADD COLUMN issue_number INTEGER"
+            )
+            connection.execute(
+                "ALTER TABLE auto_takeover_run ADD COLUMN issue_url TEXT"
+            )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             return
 

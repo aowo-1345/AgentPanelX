@@ -171,6 +171,7 @@ class AttributionReportData(Schema):
     completed_at: datetime | None
     status: Literal["available", "unavailable"]
     content_markdown: str | None
+    created_issue: CreatedIssueResponse | None
 
 
 class AttributionPanelData(Schema):
@@ -375,6 +376,14 @@ def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
                             completed_at=report.completed_at,
                             status=report.status,
                             content_markdown=report.content_markdown,
+                            created_issue=(
+                                CreatedIssueResponse(
+                                    number=report.created_issue.number,
+                                    url=report.created_issue.url,
+                                )
+                                if report.created_issue is not None
+                                else None
+                            ),
                         )
                         for report in runtime_view.attribution.reports
                     ],

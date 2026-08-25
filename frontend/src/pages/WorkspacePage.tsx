@@ -189,7 +189,25 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
   async function createProposalIssue(runId: string): Promise<CreatedIssue> {
     if (snapshot) throw new Error(READ_ONLY_NOTICE.text);
     if (!projectId || !triageId) throw new Error('Workspace identity is missing');
-    return api.createProposalIssue(projectId, triageId, runId);
+    const issue = await api.createProposalIssue(projectId, triageId, runId);
+    setWorkspace((current) => {
+      const panel = current?.attribution;
+      const attribution = panel?.data;
+      if (!current || !panel || !attribution) return current;
+      return {
+        ...current,
+        attribution: {
+          ...panel,
+          data: {
+            ...attribution,
+            reports: attribution.reports.map((report) =>
+              report.run_id === runId ? { ...report, created_issue: issue } : report,
+            ),
+          },
+        },
+      };
+    });
+    return issue;
   }
 
   async function deleteFeature() {

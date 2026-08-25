@@ -33,6 +33,8 @@ class TakeoverRun:
     error: str | None
     started_at: datetime
     finished_at: datetime | None
+    issue_number: int | None
+    issue_url: str | None
 
 
 @dataclass(frozen=True, slots=True)
