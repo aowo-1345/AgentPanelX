@@ -16,6 +16,7 @@ from agentplanex.bootstrap import create_project_control_query, create_workspace
 from agentplanex.domains.execution_event import ExecutionEventType
 from agentplanex.domains.workspace import FeatureBinding
 from agentplanex.infrastructure.codex import CodexTurnRequest, CodexTurnResult, CodexTurnTransport
+from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
 from agentplanex.infrastructure.sqlite.repositories.auto_takeover import (
     AutoTakeoverFenceError,
@@ -348,10 +349,19 @@ def test_false_yes_gets_one_same_session_correction_then_no_with_attribution(
     assert requests[1].thread_id == "takeover-thread"
     assert "runtime_correction" in requests[1].message
     assert snapshot is not None and snapshot.attribution is not None
-    compose_external_agent_runtime(
+    external_runtime = compose_external_agent_runtime(
         project_path=project_path,
         settings=load_settings(DEFAULT_SETTINGS_PATH),
-    ).workspaces.resolve_descriptor(snapshot.attribution)
+    )
+    proposal = external_runtime.workspaces.read_descriptor_text(snapshot.attribution)
+    source_commit = GitRepository(DEFAULT_SETTINGS_PATH.resolve().parent.parent).head_sha()
+    assert state.git_main_version is not None
+    assert proposal.startswith(
+        "## Source Commits\n\n"
+        f"- AgentPanelX Source Commit: `{source_commit}`\n"
+        f"- Target Feature Commit: `{state.git_main_version}`\n\n"
+        "# BLOCKED 归因与优化 Proposal\n"
+    )
     assert runtime.runtime.state().status == "BLOCKED"
 
 

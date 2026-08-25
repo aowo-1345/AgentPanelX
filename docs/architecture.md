@@ -414,6 +414,11 @@ Owner message checkpoint 的后继 Snapshot。决策结果只返回业务收据�
 不会把持久化 Snapshot 实体泄漏到 Runtime 编排层。Run/Candidate refs 在决策后作为历史
 证据保留；回收属于独立的未来策略。这里不声称 Git 与 SQLite 具有跨存储原子性。
 
+若最近一次 `CANDIDATE_ACCEPTED` 之后已存在一次 `CANDIDATE_REJECTED`，下一次 Reject
+仍会完整提交后继 Snapshot 与 Timeline 事实，但 Runtime 随后以
+`RepeatedCandidateRejection` 失败退出并进入 `BLOCKED`。Milestone View 更新不会重置这项
+连续性；只有 Candidate Accepted 代表取得了新的已接受进展。
+
 ## 8. Feature 生命周期
 
 ### Ultra Mode AutoTakeover
@@ -472,6 +477,8 @@ Takeover 的业务 Run、最多两个 Attempt 和 fence 存在 Feature SQLite；
 `IN_PROGRESS + exactly one untouched QUEUED StageRun`；`NO` 必须匹配 `BLOCKED` 且 Attribution
 Artifact 通过 size/digest 校验。第一次不一致只在同一 Feature Session correction 一次，
 第二次不一致、技术故障或 1800 秒预算耗尽均终结为 `FAILED`，不会生成伪归因。
+Runtime 在冻结 `NO` 的 Proposal 前，会在文档顶部写入 AgentPanelX 源码仓库 HEAD 与目标
+Feature 的 `git_main_version`；两个 SHA 随不可变 Attribution Artifact 一同接受完整性校验。
 
 Workspace 的只读查询直接从 AutoTakeover Run 构造一个粗粒度归因投影：最新 Run 决定
 `running`、`completed` 或 `failed` 状态，最近 20 份冻结 Attribution Artifact 按时间倒序

@@ -15,6 +15,7 @@ from agentplanex.domains.execution_event import (
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.infrastructure.sqlite.repositories import (
+    SQLiteExecutionEventRepository,
     SQLiteMilestoneSnapshotRepository,
 )
 from agentplanex.services.delivery._driver import _StageDriver
@@ -57,6 +58,9 @@ class DeliveryService:
     event_bus: EventBus = field(default_factory=EventBus)
     snapshots: SQLiteMilestoneSnapshotRepository = field(
         default_factory=SQLiteMilestoneSnapshotRepository
+    )
+    events: SQLiteExecutionEventRepository = field(
+        default_factory=SQLiteExecutionEventRepository
     )
     review_milestones: MilestoneHardGate = missing_milestone_hard_gate
     _driver: _StageDriver = field(init=False, repr=False)
@@ -367,6 +371,10 @@ class DeliveryService:
                     ),
                 )
             else:
+                repeated_rejection = self._has_unaccepted_candidate_rejection(
+                    transaction.connection,
+                    latest.triage_id,
+                )
                 successor = MilestoneSnapshot(
                     snapshot_id=uuid4().hex,
                     triage_id=latest_snapshot.triage_id,
@@ -384,6 +392,7 @@ class DeliveryService:
                         saved,
                         candidate_commit_sha,
                         successor,
+                        blocked=repeated_rejection,
                     ),
                 )
         self.event_bus.publish(
@@ -598,18 +607,32 @@ class DeliveryService:
         context: ProjectRuntimeState,
         candidate_commit_sha: str,
         successor: MilestoneSnapshot,
+        *,
+        blocked: bool,
     ) -> ProjectRuntimeState:
         if context.current_candidate_commit_sha != candidate_commit_sha:
             raise DeliveryError("Candidate changed while being rejected")
         return replace(
             context,
-            status="IN_PROGRESS",
+            status="BLOCKED" if blocked else "IN_PROGRESS",
             current_snapshot_id=successor.snapshot_id,
             current_run_id=None,
             current_milestone_key=None,
             current_stage_key=None,
             current_candidate_commit_sha=None,
         )
+
+    def _has_unaccepted_candidate_rejection(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+    ) -> bool:
+        for event in reversed(self.events.list_by_triage_id(connection, triage_id)):
+            if event.event_type is ExecutionEventType.CANDIDATE_ACCEPTED:
+                return False
+            if event.event_type is ExecutionEventType.CANDIDATE_REJECTED:
+                return True
+        return False
 
     def _assert_publishable(
         self,

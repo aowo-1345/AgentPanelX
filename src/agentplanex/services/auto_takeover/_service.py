@@ -17,6 +17,7 @@ from loguru import logger
 from agentplanex.domains.execution_event import ExecutionEvent, ExecutionEventType
 from agentplanex.domains.workspace import FeatureBinding
 from agentplanex.infrastructure.agent_workspace import AgentWorkspaceError
+from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteAutoTakeoverRepository,
@@ -295,6 +296,13 @@ class AutoTakeoverService:
     ) -> AutoTakeoverPayload:
         if attempt.fence_token is None:
             raise ValueError("AutoTakeover Attempt has no active fence")
+        if self.settings_path is None:
+            raise ValueError("AutoTakeover Runtime settings file is unavailable")
+        database = SQLiteDatabase.for_project(binding.worktree_path)
+        with database.read_only_connection() as connection:
+            state = self._states.get(connection, binding.triage_id)
+        if state is None or state.git_main_version is None:
+            raise ValueError("AutoTakeover Runtime has no target Feature commit")
         cli_prefix: tuple[str, ...] = (
             sys.executable,
             "-m",
@@ -330,6 +338,10 @@ class AutoTakeoverService:
             remaining_seconds=max(0.001, remaining),
             control_command_prefix=control_prefix,
             owner_fork_command=owner_prefix,
+            agentpanelx_source_commit=GitRepository(
+                self.settings_path.parent.parent
+            ).head_sha(),
+            target_feature_commit=state.git_main_version,
             correction=correction,
         )
 
