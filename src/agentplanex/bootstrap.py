@@ -177,7 +177,14 @@ def create_workspace(
         dispatcher=dispatcher,
         runtime_factory=runtime_factory,
         proposal_to_issue=ProposalToIssue(
-            publisher=GitHubIssuePublisher(data_home=settings.workspace.data_home),
+            publisher=GitHubIssuePublisher(
+                data_home=settings.workspace.data_home,
+                issue_repository_path=(
+                    settings_path.resolve().parent.parent
+                    if settings_path is not None
+                    else Path.cwd().resolve()
+                ),
+            ),
             artifact_response_limit=settings.runtime.codex.response_limit,
             artifact_limit=settings.runtime.codex.artifact_limit,
         ),

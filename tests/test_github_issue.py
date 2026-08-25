@@ -68,16 +68,19 @@ def _github_endpoint() -> Iterator[tuple[str, list[_RecordedRequest]]]:
         thread.join()
 
 
-def test_create_issue_uses_local_token_and_registered_repository_origin(
+def test_create_issue_uses_local_token_and_agentpanelx_repository_origin(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-    repository_path = tmp_path / "repository"
-    repository_path.mkdir()
-    _git(repository_path, "init", "--initial-branch=main")
+    managed_repository_path = tmp_path / "managed-repository"
+    managed_repository_path.mkdir()
+    _git(managed_repository_path, "init", "--initial-branch=main")
+    issue_repository_path = tmp_path / "agentpanelx-repository"
+    issue_repository_path.mkdir()
+    _git(issue_repository_path, "init", "--initial-branch=main")
     _git(
-        repository_path,
+        issue_repository_path,
         "remote",
         "add",
         "origin",
@@ -91,9 +94,10 @@ def test_create_issue_uses_local_token_and_registered_repository_origin(
     with _github_endpoint() as (api_base_url, requests):
         issue = GitHubIssuePublisher(
             data_home=data_home,
+            issue_repository_path=issue_repository_path,
             api_base_url=api_base_url,
         ).create(
-            repository_path=repository_path,
+            repository_path=managed_repository_path,
             title="[AgentPanelX] Repair delivery",
             body="# Proposal\n\nFix the actual cause.\n",
         )

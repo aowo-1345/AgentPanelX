@@ -1,4 +1,4 @@
-"""Create GitHub Issues for a registered local Git repository."""
+"""Create Harness Proposal Issues in the AgentPanelX repository."""
 
 import json
 import os
@@ -17,9 +17,10 @@ _REPOSITORY_SUFFIX = re.compile(r"(?P<owner>[^/:]+)/(?P<repository>[^/]+)$")
 
 @dataclass(slots=True)
 class GitHubIssuePublisher:
-    """Hide credential, Git remote, and GitHub REST details behind one operation."""
+    """Publish every Harness Proposal to the configured AgentPanelX repository."""
 
     data_home: Path
+    issue_repository_path: Path
     api_base_url: str = "https://api.github.com"
 
     def create(
@@ -29,7 +30,12 @@ class GitHubIssuePublisher:
         title: str,
         body: str,
     ) -> CreatedIssue:
-        owner, repository = _origin_repository(repository_path)
+        # ``repository_path`` identifies the managed project and remains part of
+        # the generic IssuePublisher contract. Attribution Proposals describe
+        # AgentPanelX harness improvements, so their destination is the control
+        # plane repository rather than that managed project.
+        del repository_path
+        owner, repository = _origin_repository(self.issue_repository_path)
         token = _github_token(self.data_home)
         payload = json.dumps({"title": title, "body": body}).encode()
         endpoint = (
