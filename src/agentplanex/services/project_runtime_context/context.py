@@ -27,6 +27,7 @@ from agentplanex.project_owner_agent.contracts import (
     AgentExitStatus,
     ToolExecutionResult,
 )
+from agentplanex.project_owner_agent.exception import AgentFlowExit
 from agentplanex.project_runtime.errors import FeatureBusyError
 from agentplanex.services.event_bus import EventBus
 from agentplanex.services.project_runtime_context._activation import (
@@ -270,6 +271,15 @@ class ProjectRuntimeContext:
                     self._reload_state(),
                     claim.activation,
                     action,
+                )
+            except AgentFlowExit as error:
+                result = AgentExit(status=error.status, content=error.content)
+                failed = self._finish_owner(claim.activation, result)
+                return ToolActivationDriveResult(
+                    activation=failed,
+                    started=claim.started,
+                    tool_result=None,
+                    exit=result,
                 )
             except Exception as error:
                 return self._fail_tool_step(claim.activation, claim.started, error)

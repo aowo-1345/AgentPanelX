@@ -62,6 +62,7 @@ class _ActivationClaim:
 _FAILED_EXIT_STATUSES = {
     AgentExitStatus.MANUAL_DRIVE_FAILED,
     AgentExitStatus.REPEATED_FORMAT_ERROR,
+    AgentExitStatus.REPEATED_CANDIDATE_REJECTION,
     AgentExitStatus.STEP_LIMIT_EXCEEDED,
     AgentExitStatus.UNHANDLED_EXCEPTION,
 }

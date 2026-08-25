@@ -10,6 +10,7 @@ from agentplanex.project_owner_agent.contracts import (
     AgentExitStatus,
     ToolExecutionResult,
 )
+from agentplanex.project_owner_agent.exception import RepeatedCandidateRejection
 from agentplanex.project_owner_agent.tools import (
     NonBlankText,
     ToolArgumentsModel,
@@ -90,6 +91,8 @@ class DecideMilestoneCandidateExecution(
             "next_milestone_key": result.next_milestone_key,
             "completed": result.completed,
         }
+        if result.decision == "reject" and result.state.status == "BLOCKED":
+            raise RepeatedCandidateRejection
         if not result.completed:
             return ToolExecutionResult(output=output)
         return ToolExecutionResult(

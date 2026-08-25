@@ -38,6 +38,8 @@ class AutoTakeoverPayload(BaseModel):
     remaining_seconds: float = Field(gt=0)
     control_command_prefix: tuple[str, ...] = Field(min_length=1)
     owner_fork_command: tuple[str, ...] = Field(min_length=1)
+    agentpanelx_source_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
+    target_feature_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
     correction: str | None = None
 
 
@@ -145,7 +147,7 @@ class AutoTakeoverOperation:
 
     def validate(
         self,
-        _payload: AutoTakeoverPayload,
+        payload: AutoTakeoverPayload,
         context: AgentInvocationContext,
         turn: CodexTurnResult,
     ) -> AutoTakeoverOutput:
@@ -160,6 +162,14 @@ class AutoTakeoverOperation:
             return AutoTakeoverOutput(decision="YES")
         if manifest.attribution is None:
             raise ValueError("AutoTakeover NO requires Attribution")
+        attribution_path = (
+            context.invocation.workspace.path / "workspace" / manifest.attribution.path
+        )
+        proposal = attribution_path.read_text(encoding="utf-8")
+        attribution_path.write_text(
+            _source_commit_header(payload) + proposal,
+            encoding="utf-8",
+        )
         return AutoTakeoverOutput(
             decision="NO",
             attribution=context.publish_artifact(
@@ -202,3 +212,11 @@ class AutoTakeoverOperation:
         if artifact is not None:
             context.workspaces.resolve_descriptor(artifact)
         return AutoTakeoverOutput(decision=decision, attribution=artifact)
+
+
+def _source_commit_header(payload: AutoTakeoverPayload) -> str:
+    return (
+        "## Source Commits\n\n"
+        f"- AgentPanelX Source Commit: `{payload.agentpanelx_source_commit}`\n"
+        f"- Target Feature Commit: `{payload.target_feature_commit}`\n\n"
+    )

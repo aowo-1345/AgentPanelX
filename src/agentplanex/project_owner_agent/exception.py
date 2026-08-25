@@ -63,6 +63,16 @@ class RepeatedFormatError(AgentFlowExit):
         )
 
 
+class RepeatedCandidateRejection(AgentFlowExit):
+    """Two Candidates were rejected without an intervening acceptance."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status=AgentExitStatus.REPEATED_CANDIDATE_REJECTION,
+            content=AgentExitStatus.REPEATED_CANDIDATE_REJECTION.value,
+        )
+
+
 class ToolRequestedExit(AgentFlowExit):
     """A completed tool execution requested that the Agent Loop stop."""
 

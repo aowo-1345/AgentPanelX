@@ -812,6 +812,73 @@ def test_reject_sqlite_failure_keeps_candidate_retryable(
     assert view.snapshot.reason == "Needs revision."
 
 
+def test_second_consecutive_candidate_rejection_fails_owner_and_blocks_runtime(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = compose_test_runtime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=_SuccessfulStageExecutor(),
+    )
+    runtime.runtime.initialize()
+    runtime.runtime.begin_feature()
+    _queue_first_run(runtime, project_path)
+    runtime.runtime.drive_until_waiting()
+    first = runtime.control.execute_tool(
+        {
+            "tool": "decide_milestone_candidate",
+            "arguments": _candidate_decision_arguments(
+                runtime,
+                decision="reject",
+                reason="The first Candidate needs revision.",
+            ),
+        }
+    )
+    assert first.output["ok"] is True
+
+    with SQLiteDatabase.for_project(project_path).transaction() as connection:
+        SQLiteExecutionEventRepository().insert(
+            connection,
+            ExecutionEvent(
+                triage_id=runtime.runtime.state().triage_id,
+                event_type=ExecutionEventType.MILESTONES_UPDATED,
+                payload={"reason": "Refine the rejected Milestone before retrying."},
+            ),
+        )
+    runtime.control.execute_tool({"tool": "run_next_milestone", "arguments": {}})
+    assert runtime.control.drive_delivery() == "stage_succeeded"
+    assert runtime.control.drive_delivery() == "candidate_ready"
+    second = runtime.control.drive_owner_tool(
+        {
+            "tool": "decide_milestone_candidate",
+            "call_id": "reject-second-candidate",
+            "arguments": _candidate_decision_arguments(
+                runtime,
+                decision="reject",
+                reason="The revised Candidate is still unacceptable.",
+            ),
+        }
+    )
+
+    assert second.tool_result is None
+    assert second.exit is not None
+    assert second.exit.status.value == "RepeatedCandidateRejection"
+    assert second.activation.status.value == "FAILED"
+    state = runtime.runtime.state()
+    assert state.status == "BLOCKED"
+    assert state.current_candidate_commit_sha is None
+    with SQLiteDatabase.for_project(project_path).read_only_connection() as connection:
+        events = SQLiteExecutionEventRepository().list_by_triage_id(
+            connection, state.triage_id
+        )
+    assert sum(
+        event.event_type is ExecutionEventType.CANDIDATE_REJECTED for event in events
+    ) == 2
+
+
 def test_drive_until_waiting_returns_immediately_when_runtime_is_done(
     initialize_git_project: Callable[[], Path],
 ) -> None:
