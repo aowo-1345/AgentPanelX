@@ -326,7 +326,7 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">
                   AgentPanelX will remove this Feature from the Board and delete its managed
                   worktree and local Runtime history. Its Git branch and commits will be preserved.
-                  Dirty or active worktrees are refused.
+                  Uncommitted changes will be discarded. Active worktrees are refused.
                 </p>
                 <div className="mt-3 space-y-1 rounded-lg border border-border bg-background/60 p-3 font-mono text-[10px] text-muted-foreground">
                   <div className="break-all">{workspace.feature.worktree_path}</div>

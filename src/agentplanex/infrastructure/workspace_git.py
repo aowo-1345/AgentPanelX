@@ -82,7 +82,7 @@ class WorkspaceGit:
         *,
         worktree_path: Path,
     ) -> None:
-        """Remove one registered linked worktree without forcing dirty data away."""
+        """Remove one registered linked worktree, including uncommitted changes."""
         target = worktree_path.resolve()
         registered = {
             Path(line.removeprefix("worktree ")).resolve()
@@ -116,7 +116,7 @@ class WorkspaceGit:
             runtime_backup = quarantine / ".agentplanex"
             runtime_path.rename(runtime_backup)
         try:
-            self._run(repository_path, "worktree", "remove", str(target))
+            self._run(repository_path, "worktree", "remove", "--force", str(target))
         except Exception:
             if runtime_backup is not None and runtime_backup.exists():
                 runtime_backup.rename(runtime_path)

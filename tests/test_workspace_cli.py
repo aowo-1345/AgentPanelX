@@ -19,7 +19,6 @@ from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectOwnerAgentRepository,
 )
-from agentplanex.infrastructure.workspace_git import WorkspaceGitError
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 
 
@@ -145,7 +144,7 @@ def _database_schema(database_path: Path) -> dict[str, tuple[str, ...]]:
         connection.close()
 
 
-def test_workspace_deletes_only_clean_managed_feature_worktrees() -> None:
+def test_workspace_deletes_managed_feature_worktrees_and_preserves_branches() -> None:
     repository_path, config_path = _prepare_case("workspace-feature-deletion")
     workspace = create_workspace(
         load_settings(config_path),
@@ -171,19 +170,19 @@ def test_workspace_deletes_only_clean_managed_feature_worktrees() -> None:
     assert workspace.list_features(project.project_id) == ()
     assert _git(repository_path, "rev-parse", "--verify", removable_branch)
 
-    dirty = workspace.create_feature(project_id=project.project_id, name="Keep me")
+    dirty = workspace.create_feature(project_id=project.project_id, name="Discard me")
     dirty_file = dirty.worktree_path / "unfinished.txt"
     dirty_file.write_text("do not delete\n", encoding="utf-8")
+    dirty_branch = dirty.branch
 
-    with pytest.raises(WorkspaceGitError, match="worktree remove"):
-        workspace.delete_feature(
-            project_id=project.project_id,
-            triage_id=dirty.triage_id,
-        )
+    workspace.delete_feature(
+        project_id=project.project_id,
+        triage_id=dirty.triage_id,
+    )
 
-    assert dirty_file.read_text(encoding="utf-8") == "do not delete\n"
-    assert (dirty.worktree_path / ".agentplanex" / "agentplanex.sqlite3").is_file()
-    assert workspace.list_features(project.project_id) == (dirty,)
+    assert not dirty.worktree_path.exists()
+    assert workspace.list_features(project.project_id) == ()
+    assert _git(repository_path, "rev-parse", "--verify", dirty_branch)
 
     workspace.registry.insert_feature(
         FeatureBinding(

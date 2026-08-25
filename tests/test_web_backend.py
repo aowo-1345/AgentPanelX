@@ -264,6 +264,10 @@ def test_installed_web_backend_runs_and_fails_interrupted_work() -> None:
             assert isinstance(disposable, dict)
             disposable_path = Path(disposable["worktree_path"])
             disposable_branch = disposable["branch"]
+            (disposable_path / "unfinished.txt").write_text(
+                "uncommitted\n",
+                encoding="utf-8",
+            )
             assert _request(
                 base_url,
                 "DELETE",
@@ -278,16 +282,6 @@ def test_installed_web_backend_runs_and_fails_interrupted_work() -> None:
                 ("roadmap.md", "# Roadmap\n\nShip the backend.\n"),
             ):
                 (feature_path / document_name).write_text(content, encoding="utf-8")
-
-            status, refused = _request(
-                base_url,
-                "DELETE",
-                f"/api/projects/{project_id}/features/{triage_id}",
-            )
-            assert status == 400
-            assert isinstance(refused, dict)
-            assert "worktree remove" in refused["detail"]
-            assert feature_path.exists()
 
             status, board = _request(base_url, "GET", "/api/features")
             assert status == 200
