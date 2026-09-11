@@ -8,6 +8,8 @@
 | `approve` | `pending_action=PLAN_APPROVAL` | 提交 Spec，写入 `PLAN_DECISION` message，创建 Activation。 |
 | `reject <原因>` | `pending_action=PLAN_APPROVAL` | 保留反馈并创建 `PLAN_DECISION` Activation。 |
 | `start` | `pending_action=FIRST_RUN_APPROVAL`，Owner 和 Delivery 均空闲 | 开始首次 Run，入队首个 StageRun。 |
+| `approve-blocked-run` | `pending_action=BLOCKED_RUN_APPROVAL`，Owner 和 Delivery 均空闲 | 批准 Owner 已请求的失败 Run 重试，重新校验游标并入队 StageRun。 |
+| `reject-blocked-run <原因>` | `pending_action=BLOCKED_RUN_APPROVAL`，Owner 和 Delivery 均空闲 | 拒绝本次重试，清除待审批请求并保留 BLOCKED 失败游标。 |
 | `drive-delivery` | Owner 空闲，存在可 claim 的 StageRun | 执行一个 Stage；终态结果会创建 `EXECUTION_RESULT` Activation。 |
 | `view` | 无 | 返回组合后的 ProjectRuntimeState、Snapshot、StageRun、Activation、Timeline 和 Git 事实。 |
 | 裸 Tool Action JSON | 没有未完成 Activation | 独立验证一个真实 Tool；不代表一次 Owner ReAct loop。 |
@@ -68,6 +70,12 @@ approve
 ```
 
 `update_milestones` 和非最终的 Candidate 决策通常没有 `AgentExit`，因此同一个 Activation 会等待下一条 Tool Action。`run_next_milestone` 会产生首次启动关卡或入队结果并终结当前 Activation。`drive-delivery` 不在 Owner loop 内运行；Stage 终态会通过邮箱唤醒下一次 Owner 处理。
+
+从 `BLOCKED` 恢复时，`drive tool run_next_milestone` 只请求
+`BLOCKED_RUN_APPROVAL`，不会直接入队。检查请求对象与失败证据后再执行
+`approve-blocked-run`，或以 `reject-blocked-run <原因>` 拒绝本次请求；批准成功才迁移到
+`IN_PROGRESS` 并产生新的 StageRun。人工操作和
+AutoTakeover 都必须走这条相同链路。
 
 具体 Tool 参数以代码中的 Tool Schema 为准，不要从示例中的 `{...}` 猜测字段。
 

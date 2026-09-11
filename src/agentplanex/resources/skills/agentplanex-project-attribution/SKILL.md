@@ -1,6 +1,6 @@
 ---
 name: agentplanex-project-attribution
-description: 对 AgentPlaneX 项目进入 BLOCKED 的历史执行过程进行只读归因，恢复当时的 Project Owner、Plan、Message Store、Milestone Snapshot 与 Delivery 上下文，并通过反思和追问形成统一的归因与优化 Proposal。当用户要求解释、分析或复盘项目为什么进入 BLOCKED/broken 状态，质询 Historical Owner，检查 Planner、Reviewer、Executor、Owner 与 Runtime 的协作问题，或为此提出整体优化方案时使用；不要用于解除阻塞、修改 Runtime 或一般状态观测。
+description: 对 AgentPlaneX 项目进入 BLOCKED 的历史执行过程进行只读归因，恢复当时的 Project Owner、Plan、Message Store、Milestone Snapshot 与 Delivery 上下文，并通过反思和追问形成统一的归因与优化 Proposal。当用户要求解释、分析或复盘项目为什么进入 BLOCKED/broken 状态，质询 Historical Owner，检查多 Agent、门控与 Runtime 的协作问题，或为此提出整体优化方案时使用；不要用于解除阻塞、修改 Runtime 或一般状态观测。
 ---
 
 # AgentPlaneX 项目归因
@@ -87,8 +87,8 @@ uv run python scripts/debug_owner_fork_cli.py \
 BLOCKED 的过程，并反思：
 
 - 当前目标仓库有哪些实际问题；
-- Planner、Reviewer、Executor、Project Owner 与 Runtime 之间的规划、
-  建议、输入、判断或交接有哪些不合理之处；
+- Planner、Task Distributor、Reviewer、Executor、Project Owner、
+  Plan / Milestone Hard Gate 与 Runtime 之间的规划、建议、输入、判断或交接有哪些不合理之处；
 - 必要的信息是否进入正式产物并传递给后续角色；
 - 哪些问题没有被较早发现，最后共同造成了这次阻塞；
 - 目标仓库和 AgentPlaneX 下一轮分别可以改善什么。
@@ -98,6 +98,10 @@ BLOCKED 的过程，并反思：
 ```
 
 让 Owner 先完成一轮整体反思，不要一开始就用固定问题清单逐项审讯。
+
+按历史版本及实际执行证据检查相关角色和门控的参与情况。对影响归因的环节说明输入、
+产出及后续处理；未参与时区分“不适用”“未调用”和“证据不足”。无关环节不必展开，
+也不要求报告按角色逐一分节。
 
 ### 5. 根据反思继续追问
 

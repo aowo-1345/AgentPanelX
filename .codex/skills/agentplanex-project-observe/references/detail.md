@@ -11,7 +11,7 @@
 
 ## 权威与访问
 
-项目数据库位于 `<project>/.agentplanex/agentplanex.sqlite3`。依赖表结构前先检查 `PRAGMA user_version`；本参考说明的是 schema version 9。
+项目数据库位于 `<project>/.agentplanex/agentplanex.sqlite3`。本参考只列常用调查字段；查询前用 `PRAGMA user_version`、`sqlite_master` 和 `PRAGMA table_info(...)` 核对目标数据库的实际版本与结构，不将当前源码契约套用于旧版本证据。
 
 SQLite 和 Git 只能作为只读证据源。不要为了观察项目而初始化 Runtime，不要修改 SQLite、变更 Git ref 或伪造证据文件。
 
@@ -130,7 +130,7 @@ erDiagram
 | `triage_id` | 被开发项目 Runtime 的稳定身份。 |
 | `idea` | 已记录时的原始用户想法。 |
 | `status` | 当前项目生命周期：`TRIAGE`、`TODO`、`READY`、`IN_PROGRESS`、`BLOCKED` 或 `DONE`。 |
-| `pending_action` | 显式人类关卡：`PLAN_APPROVAL`、`FIRST_RUN_APPROVAL` 或 `NULL`。 |
+| `pending_action` | 显式人类关卡：`PLAN_APPROVAL`、`FIRST_RUN_APPROVAL`、`BLOCKED_RUN_APPROVAL` 或 `NULL`。 |
 | `git_branch` | 配置的项目接受分支。 |
 | `git_main_version` | Runtime 记录的 Git 基准版本；当前 Git 状态须单独验证。 |
 | `rolling_started_at` | Rolling Delivery 开始的时间。 |
@@ -233,9 +233,9 @@ erDiagram
 
 ### 项目 Runtime
 
-`TRIAGE` 是初始探索状态。`TODO` 表示尚未开始 Rolling Delivery：Owner 可以维护和请求批准 Plan，也可以在已有批准 Plan 后发布初始 Milestone View。是否已有批准基线必须检查 `current_plan_commit_sha`，不能仅由状态推断。`READY` 等待首次 Run 的显式批准。`IN_PROGRESS` 表示 Rolling Delivery 正在进行；此时提交新的 Plan 或完整 Milestone View 会自动运行相应 Hard Gate。`BLOCKED` 记录需要 Owner 决策的终态失败，不运行 Hard Gate；若 Plan 与 Snapshot 未变化，可以重新运行第一个未完成 Milestone。`DONE` 表示最终未完成 Milestone 的 Candidate 已被接受。
+`TRIAGE` 是初始探索状态。`TODO` 表示尚未开始 Rolling Delivery：Owner 可以维护和请求批准 Plan，也可以在已有批准 Plan 后发布初始 Milestone View。是否已有批准基线必须检查 `current_plan_commit_sha`，不能仅由状态推断。`READY` 等待首次 Run 的显式批准。`IN_PROGRESS` 表示 Rolling Delivery 正在进行；此时提交新的 Plan 或完整 Milestone View 会自动运行相应 Hard Gate。`BLOCKED` 记录终态失败或需人工介入的阻塞，不运行 Hard Gate；能否重试以实际失败对象和 Runtime 校验为准。`DONE` 表示最终未完成 Milestone 的 Candidate 已被接受。
 
-`pending_action` 独立于描述性的 Timeline 历史。`PLAN_APPROVAL` 表示精确 Plan subject 等待用户决策；只有在 `IN_PROGRESS` 提交时才必然具有 Hard Gate review。`FIRST_RUN_APPROVAL` 表示 Milestone 已发布，但首次 Run 尚未显式开始。
+`pending_action` 独立于描述性的 Timeline 历史。`PLAN_APPROVAL` 表示精确 Plan subject 等待用户决策；只有在 `IN_PROGRESS` 提交时才必然具有 Hard Gate review。`FIRST_RUN_APPROVAL` 表示 Milestone 已发布，但首次 Run 尚未显式开始。`BLOCKED_RUN_APPROVAL` 表示失败 Run 的重试等待批准；请求本身不启动执行，批准时重新校验 Plan、Snapshot 和失败游标。
 
 ### StageRun 与 Activation
 

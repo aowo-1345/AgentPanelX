@@ -21,6 +21,8 @@ uv run python scripts/debug_tool_cli.py --cwd <project> --print "message <内容
 uv run python scripts/debug_tool_cli.py --cwd <project> --print "approve"
 uv run python scripts/debug_tool_cli.py --cwd <project> --print "reject <原因>"
 uv run python scripts/debug_tool_cli.py --cwd <project> --print "start"
+uv run python scripts/debug_tool_cli.py --cwd <project> --print "approve-blocked-run"
+uv run python scripts/debug_tool_cli.py --cwd <project> --print "reject-blocked-run <原因>"
 uv run python scripts/debug_tool_cli.py --cwd <project> --print "drive-delivery"
 ```
 

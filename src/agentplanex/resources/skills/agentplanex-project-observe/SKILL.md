@@ -15,16 +15,17 @@ description: 理解 AgentPlaneX 项目的执行上下文、交付历史与 Timel
 
 三份 Spec 合起来是规范性的 Project Plan。`requirements.md` 记录用户目标、范围和验收标准，`architecture.md` 记录系统边界和长期设计约束，`roadmap.md` 记录总体交付策略。Planner 的 `documents/plan.md` 是可被 Owner 采纳的建议；Reviewer 或 Hard Gate 的 `documents/review.md` 是固定对象的审查证据。两者都不会自动改写 Spec、Runtime 或接受分支。
 
-`TODO` 用于与用户维护 Spec、请求 Plan 批准和建立初始完整 Milestone View，不自动调用 Hard Gate。首次 Run 获用户批准后进入 `IN_PROGRESS`；此后提交新的 Plan 或完整 Milestone View 时，Runtime 才自动调用相应 Hard Gate。`BLOCKED` 用于 Owner 处理终态失败，不调用 Hard Gate；若批准的 Plan 和 Snapshot 仍有效，可以重新运行第一个未完成 Milestone。
+`TODO` 用于与用户维护 Spec、请求 Plan 批准和建立初始完整 Milestone View，不自动调用 Hard Gate。首次 Run 获用户批准后进入 `IN_PROGRESS`；此后提交新的 Plan 或完整 Milestone View 时，Runtime 才自动调用相应 Hard Gate。`BLOCKED` 用于 Owner 处理终态失败，不调用 Hard Gate；失败 Run 的重试须通过 `BLOCKED_RUN_APPROVAL`，批准时重新校验 Plan、Snapshot 和失败游标。
 
 各角色共享同一套事实，但职责不同：
 
 | 角色 | 负责 | 不负责 |
 |---|---|---|
-| Project Owner | 维护用户意图和三份 Spec，采纳或拒绝 Agent 建议，发布完整 Milestone View，对 Candidate 作最终决定 | 冒充 Planner、Reviewer、Hard Gate 或 Executor，自行替用户批准 Plan |
+| Project Owner | 维护用户意图和三份 Spec，采纳或拒绝 Agent 建议，发布完整 Milestone View，对 Candidate 作最终决定 | 冒充其他 Agent，自行替用户批准 Plan |
 | Planner | 针对委派问题讨论或产出 `documents/plan.md` | 直接修改 canonical Spec、发布 Milestones 或批准 Plan |
+| Task Distributor | 建议完整 Milestone View 与 Stage 拆分，产出 `documents/milestone-plan.md`；观测时核对 artifact、Owner 采纳记录和最终 Snapshot | 发布 Milestones、执行 Stage 或接受 Candidate |
 | Reviewer | 审查固定 Plan、Milestone 或 Candidate，并产出可追溯证据 | 接受 Candidate、改变 Runtime 或替 Owner 决策 |
-| Hard Gate | 在 Runtime 指定的 `IN_PROGRESS` 受保护操作中判断固定 subject 是否可继续 | 在 `TODO`/`BLOCKED` 自行运行、修改 subject 或决定用户意图 |
+| Plan / Milestone Hard Gate | 在 Runtime 指定的 `IN_PROGRESS` 受保护操作中审查固定 Plan 或完整 Milestone View | 充当代码 Candidate 验收门控，在 `TODO`/`BLOCKED` 自行运行、修改 subject 或决定用户意图 |
 | Stage Executor | 在固定 worktree 中实现固定 Stage 并留下 delivery document | 修改三份 canonical Spec、重规划 Milestone、提交或接受 Candidate |
 
 ## 核心流程
