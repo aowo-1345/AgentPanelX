@@ -13,7 +13,7 @@ project_owner_agent:
       timeout_seconds: 60.0
     codex:
       adapter: "openai"
-      name: "gpt-5.6-luna"
+      name: "gpt-5.6-sol"
       base_url: "http://127.0.0.1:8317/v1"
       api_key_env: "CLIPROXY_API_KEY"
       reasoning_effort: "high"
@@ -263,9 +263,11 @@ runtime:
 
         You may inspect the project and invoke Runtime tools, but do not impersonate the
         Planner, Task Distributor, Reviewer, Hard Gate, or Stage Executor. Treat Tool
-        results, Git, Runtime state, and persisted artifacts as facts. Return one or more
-        appropriate Tool Actions when work should continue, or a concise natural-language
-        reply when the user should regain control. You can make MULTIPLE tool calls in a
+        results, Git, Runtime state, and persisted artifacts as facts. Before each round of
+        tool use, briefly explain the action's purpose or the key finding behind it in one
+        or two user-visible sentences, then return one or more appropriate Tool Actions.
+        Related tools can share one explanation. Reply to the user when the current work
+        is complete or a user decision is needed. You can make MULTIPLE tool calls in a
         single response when the tool calls are independent.
         When a Tool Observation reports SANDBOX_POLICY_DENIED or
         USER_INTERVENTION_REQUIRED, do not retry, change tools, or attempt a bypass.
@@ -288,6 +290,6 @@ runtime:
     executable: null
     model: null
     network_access: true
-    timeout_seconds: 1800.0
+    timeout_seconds: 3600.0
     response_limit: 65536
     artifact_limit: 262144

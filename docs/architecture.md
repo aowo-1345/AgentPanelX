@@ -552,18 +552,18 @@ flowchart TB
     Observe[Observe]
     Control[Control]
     Attribution[Attribution]
-    Query[Project Control Query]
-    Commands[Project Runtime Commands]
+    View[ProjectControlView<br/>State · Snapshot · StageRun<br/>Activation · Timeline · Git]
+    Commands[ProjectRuntimeControl]
     Checkpoint[Historical Checkpoint]
-    Historical[Historical Project Owner Fork]
+    Historical[Historical Project Owner Fork<br/>in-memory · tools = empty]
     Runtime[(Authoritative Project Runtime)]
     Proposal[Harness Evolution Proposal]
 
     Codex --> Observe
     Codex --> Control
     Codex --> Attribution
-    Observe --> Query
-    Query --> Runtime
+    Observe --> View
+    View --> Runtime
     Control --> Commands
     Commands --> Runtime
     Attribution --> Checkpoint
@@ -574,15 +574,42 @@ flowchart TB
 
 ### Observe
 
-只读恢复指定 Feature 的 Project Runtime、Message History、Plan、Milestone Snapshot、Stage Run、Git 与 Timeline，回答“项目现在在哪里”和“它如何到达这里”。
+```text
+view → ProjectControlView
+├── state              ProjectRuntimeState
+├── snapshot           current Milestone Snapshot
+├── stage_runs         recent StageRun history
+├── owner_activation   unfinished Owner Activation
+├── timeline           recent ExecutionEvent history
+├── git                branch + HEAD
+└── allowed_actions    当前可执行动作
+```
 
 ### Control
 
-通过特权 `ProjectRuntimeControl` 执行有边界的单步命令：驱动 Owner Activation、发送消息、批准或拒绝 Plan、开始 Milestone、推进一个 Delivery step。它不是第二套 Runtime 状态机：共享业务命令委托 `ProjectRuntimeService`，Owner 生命周期命令委托同一个 `ProjectRuntimeContext`，且不持有 Repository、Runner、Executor 或 Git。另行创建的 Runtime 与 Control 实例通过同一 SQLite/Git 事实和 `runtime.lock` 协作，而不是共享进程内对象。`view` 独立构造只读 `ProjectControlQuery`，不获取 operation lock，也不构造 Owner/Responses 命令图。
+```text
+Control Skill → CLI → ProjectRuntimeControl → real Runtime Services
+├── 用户操作       message / approve / reject / start
+├── Owner 决策     drive model / drive tool / reply / fail
+└── Delivery 操作  drive one Stage
+```
 
 ### Attribution
 
-以 BLOCKED 检查点为锚点，恢复当时的 Owner Context、Rolling Summary、Plan、Message Store、Milestone 与 Delivery evidence；随后 fork 一个只读 Historical Project Owner，对当时的判断、上下文和协作过程进行质询与反思，最终汇总为 Harness Evolution Proposal。
+```text
+BLOCKED Event
+└── Historical Checkpoint
+    ├── Message + Rolling Summary
+    ├── Plan + Milestone Snapshot
+    └── StageRun + Git evidence
+         ↓
+    Historical Project Owner Fork
+    ├── in-memory
+    ├── tools = []
+    ├── 不写 Message History / SQLite / Git
+    ├── 不影响当前 Project Owner 上下文
+    └── 反思 + 追问 → Harness Evolution Proposal
+```
 
 ## 11. Harness Evolution 闭环
 
