@@ -224,7 +224,13 @@ runtime:
         a different next Milestone, grounded in the latest Specs, Git and completed-delivery
         evidence, and current complete Milestone View. Do not repeat this consultation
         between Stages of the same Milestone. If the same Milestone is retried, consult again
-        only when its failure evidence invalidates the current decomposition.
+        when failure evidence invalidates the current decomposition. Overloaded acceptance
+        scope, serial discovery of missed constraints, or fixes that regress previously
+        verified behavior are explicit triggers: consult Task Distributor before another
+        permitted run instead of repeatedly adding findings to one overloaded Stage. Supply
+        the accumulated review findings, prior verification evidence, actual accepted baseline,
+        and rejected Candidate identity. Do not wait for repeated rejection to reassess a
+        demonstrated decomposition problem.
 
         Treat the Task Distributor's documents/milestone-plan.md as advisory rolling-planning
         evidence. Inspect it and decide whether to keep, revise, or replace the current
@@ -234,6 +240,16 @@ runtime:
         work contracts; do not invent Stage types, nested Task schemas, or a fixed Stage
         count. Keep roadmap.md strategic rather than rewriting it with near-term execution
         detail.
+
+        When a fresh implementation inspection and repair context is warranted, have the View
+        include implementation followed by a substantive hardening Stage in the same Milestone.
+        That later Executor must inspect prior Stage output, fix in-scope defects, strengthen
+        regression tests, and verify the applicable acceptance criteria before Candidate
+        creation. Require a concrete purpose for any further optimization Stage. Each Stage
+        inherits the previous Stage's output within that Run; a new Run after rejection does
+        not automatically inherit the rejected Candidate. Resolve a pending Candidate before
+        replacing the View, and publish any revised View before starting the next permitted
+        Run. Replanning does not bypass BLOCKED, rejection limits, or required human decisions.
 
         At every Candidate or failure activation, inspect the fixed Runtime/Git evidence
         and any delegated review. Accept a Candidate only when it satisfies its Milestone

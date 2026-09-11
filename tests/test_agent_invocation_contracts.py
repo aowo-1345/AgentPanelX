@@ -203,6 +203,11 @@ def test_owner_requests_extend_the_persisted_session_without_an_invocation_envel
     assert "After each accepted Candidate" in _normalized(instructions)
     assert "Do not repeat this consultation between Stages" in _normalized(instructions)
     assert "failure evidence invalidates the current decomposition" in _normalized(instructions)
+    assert "consult Task Distributor before another permitted run" in _normalized(instructions)
+    assert "Do not wait for repeated rejection" in _normalized(instructions)
+    assert "implementation followed by a substantive hardening Stage" in _normalized(instructions)
+    assert "does not automatically inherit the rejected Candidate" in _normalized(instructions)
+    assert "Replanning does not bypass BLOCKED" in _normalized(instructions)
     assert "one or more appropriate Tool Actions" in _normalized(instructions)
     assert "MULTIPLE tool calls in a single response" in _normalized(instructions)
     assert "tool calls are independent" in instructions
@@ -486,6 +491,11 @@ def test_talk_to_agent_reanchors_configured_agents_to_runtime_context(
         "Mutation testing",
         "Behavior-preserving refactoring",
         "Acceptance verification",
+        "implementation followed by a substantive hardening Stage",
+        "repair in-scope defects",
+        "local fixes that break earlier invariants",
+        "new Run after rejection still starts from the accepted baseline",
+        "do not prescribe a fixed three-Stage recipe",
     ):
         assert required_contract in task_distributor_instructions
     assert "You are the AgentPanelX Reviewer" in reviewer.developer_instructions
@@ -760,6 +770,9 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
     assert "You are the AgentPanelX Stage Executor" in request.developer_instructions
     assert "behavior-preserving cleanup" in request.developer_instructions
     assert "hardening" in request.developer_instructions
+    assert "Fix in-scope defects you discover" in _normalized(request.developer_instructions)
+    assert "Do not stop at a QA report" in _normalized(request.developer_instructions)
+    assert "previously verified invariants" in _normalized(request.developer_instructions)
     assert request.skills == (("agentplanex-project-observe", skill_path),)
     assert str(skill_path) not in request.message
     assert request.message.startswith("Fixed Stage assignment:")

@@ -29,12 +29,22 @@ reinterpret it as permission to re-plan the Milestone.
    change-bearing: do not satisfy it by modifying only the delivery document or by claiming read-only
    analysis as delivery.
 
+When assigned a hardening or repair Stage after implementation, inspect the prior Stage's code
+and delivery evidence at the fixed input commit. Fix in-scope defects you discover, strengthen
+regression tests for the assigned risks, and rerun applicable acceptance checks, including
+previously verified invariants affected by your changes. Do not stop at a QA report when the
+assigned contract includes repairing the findings. Preserve working prior implementation and
+avoid restarting it or making unrelated optimizations. If a finding requires a Spec change or
+exceeds the fixed Stage contract, report the precise unresolved boundary without claiming success.
+
 ## Delivery evidence
 
 The Runtime-declared delivery document must record the actual outcome, material files or behavior
 changed, validation commands or procedures actually performed, their results, and any remaining
 risk or limitation. Never report a command, test, review, or result that was not performed. Leave
 the Candidate in a state that the Delivery Runtime and later reviewers can independently inspect.
+For hardening work, connect each material finding to its correction and regression evidence, and
+identify any unresolved finding explicitly.
 
 ## Authority boundary
 

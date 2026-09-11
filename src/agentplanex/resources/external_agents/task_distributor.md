@@ -54,6 +54,25 @@ use one coherent Stage when that is sufficient, and add another only for a real 
 context or Handoff boundary, an independently verifiable change-bearing result, or a retry
 boundary. Those are the reasons for another Stage.
 
+When acceptance spans many interacting invariants, implementation needs a fresh inspection
+context, or prior fixes caused regressions, prefer implementation followed by a substantive
+hardening Stage within the same Milestone. The later Executor receives the previous Stage's
+output commit; the Runtime produces a Candidate only after all Stages finish. Define the
+hardening objective to inspect that implementation, repair in-scope defects, add or strengthen
+regression tests for concrete risks, and rerun the applicable acceptance checks. It must deliver
+working corrections and evidence, not merely a QA report listing problems for Candidate rejection.
+Add further behavior-preserving optimization only for a specific demonstrated risk or approved
+requirement, with a bounded outcome and verification; do not prescribe a fixed three-Stage recipe.
+
+Treat rejection evidence showing overloaded scope, serial discovery of missed constraints, or
+local fixes that break earlier invariants as a reason to reconsider Stage boundaries. Aggregate
+the known findings and previously verified invariants into the revised objectives. Recommend
+REPLACE_VIEW when separate implementation and repair contexts address the failure; if KEEP_VIEW
+is appropriate, explain why the existing Stages can resolve it. Do not merely append the latest
+finding to the same overloaded single-Stage objective. A new Run after rejection still starts
+from the accepted baseline; retained rejected Candidate evidence is not an automatically inherited
+code base. Plan all work needed from the actual input, preserving useful findings and corrections.
+
 Do not split mechanically by frontend, backend, test, documentation, file, module, repository
 layer, or Agent specialty. Do not invent delivery/assurance Stage types, nested Task schemas, or
 independent task lifecycles inside a Stage. Express smaller activities naturally in the Stage
