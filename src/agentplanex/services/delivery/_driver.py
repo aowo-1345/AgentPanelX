@@ -249,6 +249,7 @@ class _StageDriver:
                 failure="Stage execution lease expired before a terminal result",
                 finished_at=now,
             )
+            self._close_stage_terminal(active.stage_run_id, reason="lease_expired")
             self._publish_stage_failed(completion.stage_run)
             self._remove_worktree(active.run_id)
             return DeliveryDriveOutcome.STAGE_FAILED
@@ -333,6 +334,7 @@ class _StageDriver:
                 candidate_commit_sha=output_commit_sha,
             )
 
+        self._close_stage_terminal(claim.stage_run.stage_run_id, reason="succeeded")
         self._publish_invocation_completed(invocation_id, completion.stage_run)
         self._publish_stage_succeeded(completion)
         if completion.candidate_commit_sha is not None:
@@ -362,6 +364,7 @@ class _StageDriver:
                 mutate=_block_runtime_execution,
             )
         for stage_run in failed:
+            self._close_stage_terminal(stage_run.stage_run_id, reason="interrupted")
             self.event_bus.publish(_interrupted_stage_event(stage_run))
         for run_id in {stage_run.run_id for stage_run in failed}:
             self._remove_worktree(run_id)
@@ -650,6 +653,7 @@ class _StageDriver:
             failure=_failure_message(error),
             finished_at=datetime.now(UTC),
         )
+        self._close_stage_terminal(claim.stage_run.stage_run_id, reason="failed")
         if candidate_ref_created:
             if candidate_commit_sha is None:
                 raise RuntimeError("Created Candidate ref has no known commit")
@@ -675,6 +679,11 @@ class _StageDriver:
         self._publish_stage_failed(completion.stage_run)
         self._remove_worktree(claim.stage_run.run_id)
         return DeliveryDriveOutcome.STAGE_FAILED
+
+    def _close_stage_terminal(self, stage_run_id: str, *, reason: str) -> None:
+        closer = getattr(self.executor, "close_stage", None)
+        if callable(closer):
+            closer(stage_run_id, reason=reason)
 
     def _stage_contract(
         self,

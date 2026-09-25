@@ -40,40 +40,54 @@ export function useStageTerminal(
     terminal.open(containerRef.current);
     terminal.writeln('\x1b[90mConnecting to the active Stage…\x1b[0m');
 
-    const socket = new WebSocket(terminalUrl(projectId, triageId, stageRunId));
-    socket.onopen = () => {
-      setStatus('connected');
-      setError(null);
-    };
-    socket.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data) as {
-          type?: string;
-          data?: string;
-        };
-        if (message.type === 'output' && typeof message.data === 'string') {
-          terminal.write(message.data);
-        } else if (message.type === 'terminal_end') {
-          setStatus('finished');
-          terminal.writeln('\r\n\x1b[90mStage execution finished.\x1b[0m');
+    let disposed = false;
+    let retryTimer: number | undefined;
+    let socket: WebSocket | null = null;
+
+    const connect = () => {
+      if (disposed) return;
+      setStatus('connecting');
+      socket = new WebSocket(terminalUrl(projectId, triageId, stageRunId));
+      socket.onopen = () => {
+        setStatus('connected');
+        setError(null);
+      };
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data) as {
+            type?: string;
+            data?: string;
+          };
+          if (message.type === 'output' && typeof message.data === 'string') {
+            terminal.write(message.data);
+          } else if (message.type === 'terminal_end') {
+            setStatus('finished');
+            terminal.writeln('\r\n\x1b[90mStage execution finished.\x1b[0m');
+          }
+        } catch {
+          terminal.writeln('\r\n\x1b[31mInvalid terminal event received.\x1b[0m');
         }
-      } catch {
-        terminal.writeln('\r\n\x1b[31mInvalid terminal event received.\x1b[0m');
-      }
-    };
-    socket.onerror = () => {
-      setStatus('error');
-      setError('The active Stage terminal could not be reached.');
-    };
-    socket.onclose = (event) => {
-      if (event.code !== 1000) {
-        setStatus('error');
-        setError(event.reason || 'The active Stage terminal closed unexpectedly.');
-      }
+      };
+      socket.onerror = () => {
+        setError('The active Stage terminal could not be reached. Retrying…');
+      };
+      socket.onclose = (event) => {
+        if (disposed || event.code === 1000) return;
+        if (event.code === 4404 || event.code === 4409) {
+          setStatus('error');
+          setError(event.reason || 'The active Stage terminal is no longer available.');
+          return;
+        }
+        retryTimer = window.setTimeout(connect, 500);
+      };
     };
 
+    connect();
+
     return () => {
-      socket.close(1000, 'Terminal page closed');
+      disposed = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      socket?.close(1000, 'Terminal page closed');
       terminal.dispose();
     };
   }, [projectId, stageRunId, triageId]);

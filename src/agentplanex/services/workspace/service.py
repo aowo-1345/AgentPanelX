@@ -54,14 +54,18 @@ class WorkspaceService:
         failed_features = 0
         for project in self.registry.list_projects():
             for binding in self.registry.list_features(project.project_id):
+                active_stage = self.queries.active_stage_run(binding)
                 if self.runtime_factory(binding.worktree_path).fail_interrupted_work():
                     failed_features += 1
+                if active_stage is not None:
+                    self.stage_output_observer.close(active_stage.stage_run_id)
         return failed_features
 
     def close(self) -> None:
         if self.auto_takeover is not None:
             self.auto_takeover.stop_accepting()
         self.dispatcher.stop_accepting()
+        self.stage_output_observer.close_all()
         try:
             self.close_resources()
         finally:

@@ -159,6 +159,10 @@ class CodexStageExecutor:
 
     runtime: ExternalAgentRuntime
 
+    def close_stage(self, stage_run_id: str, *, reason: str) -> None:
+        del reason
+        self.runtime.close_stage_output(stage_run_id)
+
     def execute(self, request: StageExecutionRequest) -> None:
         stage_run = request.stage_run
         expected_worktree = GitRepository(

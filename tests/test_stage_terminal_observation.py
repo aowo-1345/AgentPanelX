@@ -44,3 +44,18 @@ def test_observer_has_no_cross_stage_output() -> None:
 
     assert [chunk.data for chunk in first] == ["one"]
     assert [chunk.data for chunk in second] == ["two"]
+
+
+def test_observer_cleanup_is_idempotent() -> None:
+    observer = StageOutputObserver()
+    observer.begin("stage-1")
+    observer.publish("stage-1", "output")
+
+    observer.close("stage-1")
+    observer.close("stage-1")
+    assert observer.read_since("stage-1") == ((), False)
+
+    observer.begin("stage-2")
+    observer.close_all()
+    observer.close_all()
+    assert observer.is_active("stage-2") is False

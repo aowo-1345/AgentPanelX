@@ -75,6 +75,15 @@ class StageOutputObserver:
             if session is not None:
                 session.active = False
 
+    def close(self, stage_run_id: str) -> None:
+        """Drop one finished session; repeated cleanup is intentionally safe."""
+        with self._lock:
+            self._sessions.pop(stage_run_id, None)
+
+    def close_all(self) -> None:
+        with self._lock:
+            self._sessions.clear()
+
     def is_active(self, stage_run_id: str) -> bool:
         with self._lock:
             session = self._sessions.get(stage_run_id)

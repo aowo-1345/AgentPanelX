@@ -107,6 +107,10 @@ class ExternalAgentRuntime:
                 "External Agent Definitions and registered Operations disagree"
             )
 
+    def close_stage_output(self, stage_run_id: str) -> None:
+        if self.stage_output_observer is not None:
+            self.stage_output_observer.close(stage_run_id)
+
     def invoke(
         self,
         request: ExternalAgentRequest[InputT],
