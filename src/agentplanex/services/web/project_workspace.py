@@ -459,14 +459,23 @@ def _visible_messages(
                             _plan_decision_text(content),
                         )
                     )
-        if activation is not None and activation.failure is not None:
-            visible.append(
-                VisibleMessage(
-                    f"{activation.activation_id}:failure",
-                    "status",
-                    f"Project Owner failed: {activation.failure}",
+        if activation is not None:
+            if activation.status is OwnerActivationStatus.INTERRUPTED:
+                visible.append(
+                    VisibleMessage(
+                        f"{activation.activation_id}:interrupted",
+                        "status",
+                        "Owner 已被用户中断",
+                    )
                 )
-            )
+            elif activation.failure is not None:
+                visible.append(
+                    VisibleMessage(
+                        f"{activation.activation_id}:failure",
+                        "status",
+                        f"Project Owner failed: {activation.failure}",
+                    )
+                )
     return tuple(visible)
 
 

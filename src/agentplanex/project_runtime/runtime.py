@@ -27,6 +27,9 @@ class ProjectRuntime:
     def submit_message(self, content: str) -> OwnerActivation:
         return self._service.submit_user_message(content)
 
+    def interrupt_owner(self, triage_id: str) -> OwnerActivation | None:
+        return self._service.request_owner_interrupt(triage_id)
+
     def approve_plan(self) -> PlanDecision:
         return self._service.approve_plan()
 

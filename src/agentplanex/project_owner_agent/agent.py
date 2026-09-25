@@ -1,15 +1,18 @@
 """Minimal Agent control loop adapted from Mini-SWE-Agent."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Never
 
 from agentplanex.project_owner_agent.context.manager import OwnerContextManager
 from agentplanex.project_owner_agent.contracts import (
+    AgentExitStatus,
     AgentToolExecutor,
     Message,
     ToolExecutionResult,
 )
 from agentplanex.project_owner_agent.exception import (
+    AgentFlowExit,
     FormatError,
     RepeatedFormatError,
     ReplyToHuman,
@@ -39,11 +42,13 @@ class DefaultAgent:
         *,
         owner_context: OwnerContextManager,
         config: AgentConfig,
+        should_interrupt: Callable[[], bool] | None = None,
     ) -> None:
         self.model = model
         self.execute_tool = execute_tool
         self.owner_context = owner_context
         self.config = config
+        self.should_interrupt = should_interrupt or (lambda: False)
         self.n_calls = 0
         self.n_consecutive_format_errors = 0
 
@@ -55,6 +60,11 @@ class DefaultAgent:
         self.n_consecutive_format_errors = 0
 
         while True:
+            if self.should_interrupt():
+                raise AgentFlowExit(
+                    status=AgentExitStatus.USER_INTERRUPTED,
+                    content="Owner was interrupted by the user.",
+                )
             try:
                 self.step()
                 self.n_consecutive_format_errors = 0

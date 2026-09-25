@@ -1,5 +1,7 @@
 """Interactive confirmation layered on the default Agent."""
 
+from collections.abc import Callable
+
 from agentplanex.project_owner_agent.agent import (
     AgentConfig,
     DefaultAgent,
@@ -24,12 +26,14 @@ class InteractiveAgent(DefaultAgent):
         owner_context: OwnerContextManager,
         approval: Approval,
         config: AgentConfig,
+        should_interrupt: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__(
             model,
             execute_tool,
             owner_context=owner_context,
             config=config,
+            should_interrupt=should_interrupt,
         )
         self.approval = approval
 

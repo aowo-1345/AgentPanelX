@@ -77,6 +77,7 @@ def test_normal_runtime_exposes_only_the_feature_command_facade(
         "state",
         "begin_feature",
         "submit_message",
+        "interrupt_owner",
         "approve_plan",
         "reject_plan",
             "start_first_run",

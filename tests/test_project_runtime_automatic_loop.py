@@ -28,6 +28,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectOwnerAgentRepository,
     SQLiteStageRunRepository,
 )
+from agentplanex.project_owner_agent.contracts import AgentExit, AgentExitStatus
 from agentplanex.project_owner_agent.exception import ModelGatewayError
 from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
@@ -38,6 +39,7 @@ from agentplanex.services.delivery._stage_executor import StageExecutionRequest
 from agentplanex.services.delivery.contracts import DeliveryError
 from agentplanex.services.delivery.models import delivery_candidate_ref
 from agentplanex.services.project_control import ProjectControlQuery
+from agentplanex.services.project_runtime_context._activation import _OwnerActivationLifecycle
 from agentplanex.services.project_runtime_context.models import (
     OwnerActivation,
     OwnerActivationMode,
@@ -101,6 +103,30 @@ class _BlockingOwner(ResponsesTransport):
         if not self.release.wait(timeout=5):
             raise TimeoutError("test did not release the blocked Owner")
         raise RuntimeError("Owner process continued after simulated interruption")
+
+
+class _InterruptThenReplyOwner(ResponsesTransport):
+    """Block the first model call, then expose the next request for inspection."""
+
+    def __init__(self) -> None:
+        self.entered = Event()
+        self.release = Event()
+        self.requests: list[ResponsesRequest] = []
+
+    def create(self, request: ResponsesRequest) -> object:
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            self.entered.set()
+            if not self.release.wait(timeout=5):
+                raise TimeoutError("test did not release the blocked Owner")
+            return {
+                "object": "response",
+                "output": [{
+                    "type": "function_call", "name": "bash", "call_id": "saved-work",
+                    "arguments": json.dumps({"command": "printf saved > owner-work.txt"}),
+                }],
+            }
+        return _text_response("Owner resumed after interruption.")
 
 
 class _SuccessfulStageExecutor:
@@ -1362,6 +1388,158 @@ def test_running_activation_rejects_concurrent_interruption_recovery(
         finally:
             owner.release.set()
         assert future.result(timeout=5).status == "BLOCKED"
+
+
+def test_user_interrupt_finishes_at_react_boundary_without_blocking_feature(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    owner = _InterruptThenReplyOwner()
+    runtime = compose_test_runtime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=owner,
+    )
+    state = runtime.runtime.initialize()
+    runtime.runtime.begin_feature()
+    pending = runtime.runtime.submit_message("Stop this Owner turn.")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        driving = executor.submit(runtime.runtime.drive_until_waiting)
+        assert owner.entered.wait(timeout=5)
+        requested = runtime.runtime.interrupt_owner(state.triage_id)
+        assert requested is not None
+        assert requested.activation_id == pending.activation_id
+        assert requested.interrupt_requested is True
+        assert runtime.runtime.interrupt_owner(state.triage_id) == requested
+        with pytest.raises(FeatureBusyError):
+            runtime.runtime.submit_message("Cannot queue this message")
+        owner.release.set()
+        assert driving.result(timeout=5).status == "TODO"
+
+    assert len(owner.requests) == 1  # No second model request in the interrupted loop.
+    assert (project_path / "owner-work.txt").read_text() == "saved"
+    terminal = runtime.runtime.interrupt_owner(state.triage_id)
+    assert terminal is not None and not terminal.interrupt_requested
+    control = create_project_control_query(project_path=project_path).get_current()
+    assert control.state.status == "TODO"
+    assert control.owner_activation is None
+    with SQLiteDatabase.for_project(project_path).connection() as connection:
+        finalized = SQLiteOwnerActivationRepository().get(
+            connection,
+            pending.activation_id,
+        )
+    assert finalized is not None
+    assert finalized.status.value == "INTERRUPTED"
+    assert any(
+        event.event_type is ExecutionEventType.USER_INTERRUPTED
+        for event in control.timeline
+    )
+
+
+def test_user_interrupted_exit_status_finishes_as_interrupted(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = compose_test_runtime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_UnexpectedOwner(),
+    )
+    state = runtime.runtime.initialize()
+    runtime.runtime.begin_feature()
+    pending = runtime.runtime.submit_message("Finish as interrupted.")
+    database = SQLiteDatabase.for_project(project_path)
+    lifecycle = _OwnerActivationLifecycle()
+    with database.transaction() as connection:
+        activation = SQLiteOwnerActivationRepository().claim_next(
+            connection,
+            state.triage_id,
+            datetime.now(UTC),
+            OwnerActivationMode.MODEL,
+        )
+        assert activation is not None
+        finalized = lifecycle.finish(
+            connection,
+            activation,
+            AgentExit(
+                status=AgentExitStatus.USER_INTERRUPTED,
+                content="Owner was interrupted by the user.",
+            ),
+            finished_at=datetime.now(UTC),
+        )
+    assert finalized.activation_id == pending.activation_id
+    assert finalized.status.value == "INTERRUPTED"
+
+
+def test_next_message_restores_interrupted_context_and_injects_notice(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    owner = _InterruptThenReplyOwner()
+    runtime = compose_test_runtime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=owner,
+    )
+    state = runtime.runtime.initialize()
+    runtime.runtime.begin_feature()
+    first = runtime.runtime.submit_message("Start work, then stop.")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        driving = executor.submit(runtime.runtime.drive_until_waiting)
+        assert owner.entered.wait(timeout=5)
+        assert runtime.runtime.interrupt_owner(state.triage_id) is not None
+        owner.release.set()
+        assert driving.result(timeout=5).status == "TODO"
+
+    # A fresh Runtime must restore DB facts, not reuse the first Agent's memory.
+    runtime = compose_test_runtime(
+        project_path=project_path, settings=_settings(), approval_mode="yolo",
+        responses_transport=owner,
+    )
+    second = runtime.runtime.submit_message("Continue from the saved context.")
+    assert second.previous_interrupted_activation_id == first.activation_id
+    assert runtime.runtime.drive_until_waiting().status == "TODO"
+    assert len(owner.requests) == 2
+    assert any(
+        message.get("role") == "developer"
+        and "上一轮 Owner 执行被用户主动中断" in str(message.get("content"))
+        for message in owner.requests[1].input
+    )
+    assert any(message.get("type") == "function_call_output" for message in owner.requests[1].input)
+    assert "Start work, then stop." in json.dumps(owner.requests[1].input)
+    visible = create_project_workspace_query(project_path=project_path).get(state.triage_id)
+    assert not any("上一轮 Owner" in item.content for item in visible.conversation)
+
+
+@pytest.mark.parametrize("requested", [False, True])
+def test_real_owner_failure_is_not_hidden_by_interrupt(
+    initialize_git_project: Callable[[], Path], requested: bool,
+) -> None:
+    project_path = initialize_git_project()
+    owner = _BlockingOwner()
+    runtime = compose_test_runtime(
+        project_path=project_path, settings=_settings(), approval_mode="yolo",
+        responses_transport=owner,
+    )
+    state = runtime.runtime.initialize()
+    pending = runtime.runtime.submit_message("A real model failure")
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        driving = executor.submit(runtime.runtime.drive_until_waiting)
+        assert owner.entered.wait(timeout=5)
+        if requested:
+            runtime.runtime.interrupt_owner(state.triage_id)
+        owner.release.set()
+        assert driving.result(timeout=5).status == "BLOCKED"
+    with SQLiteDatabase.for_project(project_path).read_only_connection() as connection:
+        activation = SQLiteOwnerActivationRepository().get(connection, pending.activation_id)
+        assert activation is not None and activation.status.value == "FAILED"
+    timeline = create_project_control_query(project_path=project_path).get_current().timeline
+    assert all(event.event_type is not ExecutionEventType.USER_INTERRUPTED for event in timeline)
 
 
 def test_running_stage_rejects_concurrent_interruption_recovery(

@@ -138,6 +138,7 @@ class OwnerContextManager:
         policy: OwnerContextPolicy,
         tools: ToolCatalog,
         summary_model: SummaryModel,
+        runtime_notice: str | None = None,
     ) -> None:
         self._runtime = runtime
         self._runtime_context = runtime_context
@@ -148,6 +149,7 @@ class OwnerContextManager:
         self._tools = tools
         self._summary_model = summary_model
         self._has_source_summary = has_source_summary
+        self._runtime_notice = runtime_notice
 
     @classmethod
     def restore(
@@ -159,6 +161,7 @@ class OwnerContextManager:
         policy: OwnerContextPolicy,
         tools: ToolCatalog,
         summary_model: SummaryModel,
+        runtime_notice: str | None = None,
     ) -> "OwnerContextManager":
         """Load raw checkpoint facts and render the initial model view."""
 
@@ -188,6 +191,7 @@ class OwnerContextManager:
             policy=policy,
             tools=tools,
             summary_model=summary_model,
+            runtime_notice=runtime_notice,
         )
 
     def prepare_query(self, query_index: int) -> tuple[Message, ...]:
@@ -207,7 +211,7 @@ class OwnerContextManager:
             estimate / self._policy.capacity_tokens
             < self._policy.compaction_threshold
         ):
-            return persisted
+            return self._with_runtime_notice(persisted)
 
         attempt = ContextCompactionAttempt(
             compaction_id=uuid4().hex,
@@ -244,7 +248,7 @@ class OwnerContextManager:
                 ),
                 revision=attempt_revision,
             )
-            return persisted
+            return self._with_runtime_notice(persisted)
 
         summary = committed.summary
         self._revision = committed.revision
@@ -260,7 +264,16 @@ class OwnerContextManager:
             ),
             revision=attempt_revision,
         )
-        return tuple(dict(message) for message in self._messages)
+        return self._with_runtime_notice(tuple(dict(message) for message in self._messages))
+
+    def _with_runtime_notice(self, messages: tuple[Message, ...]) -> tuple[Message, ...]:
+        if self._runtime_notice is None:
+            return messages
+        return (
+            messages[0],
+            {"role": "developer", "content": self._runtime_notice},
+            *messages[1:],
+        )
 
     def append(self, messages: Sequence[Message]) -> tuple[Message, ...]:
         """Persist messages, then advance the in-memory view and revision."""

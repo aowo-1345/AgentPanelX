@@ -5,6 +5,7 @@ import type {
   CreatedIssue,
   CreatedFeature,
   FeatureAction,
+  InterruptReceipt,
   Project,
   Workspace,
 } from './types';
@@ -110,6 +111,11 @@ export const api = {
     request<ActivationReceipt>(`${featurePath(projectId, triageId)}/messages`, {
       method: 'POST',
       body: JSON.stringify({ content }),
+    }),
+
+  interruptOwner: (projectId: string, triageId: string) =>
+    request<InterruptReceipt>(`${featurePath(projectId, triageId)}/interrupt`, {
+      method: 'POST',
     }),
 
   performAction: (

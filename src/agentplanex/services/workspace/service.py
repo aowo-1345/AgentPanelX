@@ -179,6 +179,16 @@ class WorkspaceService:
             after_release=lambda: self._after_drive_released(binding, watermark),
         )
 
+    def interrupt_feature_owner(
+        self,
+        *,
+        project_id: str,
+        triage_id: str,
+    ) -> OwnerActivation | None:
+        binding = self._require_feature_binding(project_id, triage_id)
+        runtime = self.runtime_factory(binding.worktree_path)
+        return runtime.interrupt_owner(binding.triage_id)
+
     def project_board(self, project_id: str) -> ProjectBoard:
         return self.queries.project_board(_required_text("Project ID", project_id))
 
