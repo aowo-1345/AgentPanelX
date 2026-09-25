@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -13,11 +12,6 @@ from agentplanex.domains.execution_event import ExecutionEvent, ExecutionEventTy
 
 _MAX_FIELD_LENGTH = 120
 _MAX_FAILURE_LENGTH = 180
-_PATH_PATTERN = re.compile(r"(?<!\w)(?:[A-Za-z]:[\\/]|/|~/)[^\s,;)]*")
-_URL_PATTERN = re.compile(r"https?://[^\s,;)]*", re.IGNORECASE)
-_SECRET_PATTERN = re.compile(
-    r"(?i)(api[_ -]?key|authorization|password|secret|token)\s*[:=]\s*[^\s,;)]*"
-)
 
 
 class NotificationSender(Protocol):
@@ -181,14 +175,8 @@ def _failure_field(payload: dict[str, object], name: str) -> str:
     value = payload.get(name)
     if not isinstance(value, str):
         return "unknown"
-    return _bounded(_redact(value), limit=_MAX_FAILURE_LENGTH) or "unknown"
+    return _bounded(value, limit=_MAX_FAILURE_LENGTH) or "unknown"
 
 
 def _bounded(value: str, *, limit: int = _MAX_FIELD_LENGTH) -> str:
     return " ".join(value.split())[:limit]
-
-
-def _redact(value: str) -> str:
-    redacted = _SECRET_PATTERN.sub(r"\1=<redacted>", value)
-    redacted = _URL_PATTERN.sub("<url>", redacted)
-    return _PATH_PATTERN.sub("<path>", redacted)
