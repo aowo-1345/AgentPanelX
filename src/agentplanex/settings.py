@@ -114,6 +114,21 @@ class AutoTakeoverSettings(_SettingsModel):
     budget_seconds: float = Field(default=1800.0, gt=0, le=1800.0)
 
 
+class NotificationSettings(_SettingsModel):
+    """Best-effort outbound notification settings."""
+
+    enabled: bool = False
+    webhook_url_env: str = Field(default="AGENTPLANEX_FEISHU_WEBHOOK", min_length=1)
+    timeout_seconds: float = Field(default=5.0, gt=0, le=60.0)
+
+    @field_validator("webhook_url_env")
+    @classmethod
+    def _webhook_url_env_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Notification webhook environment variable must not be blank")
+        return value
+
+
 class ExternalAgentDefinitionSettings(_SettingsModel):
     """Stable configuration for one Owner-external Agent."""
 
@@ -202,6 +217,7 @@ class RuntimeSettings(_SettingsModel):
     bash: BashSettings = BashSettings()
     codex: CodexSettings = CodexSettings()
     auto_takeover: AutoTakeoverSettings = AutoTakeoverSettings()
+    notifications: NotificationSettings = NotificationSettings()
     external_agents: dict[str, ExternalAgentDefinitionSettings] = Field(min_length=1)
     prompts: PromptSettings
 

@@ -163,6 +163,10 @@ uv run agentplanex-web
 
 FastAPI 在同一个端口提供 React 页面和同源 `/api`。只有真实 Project Owner Activation 需要模型凭据；凭据从 [`config/settings.yaml`](config/settings.yaml) 声明的环境变量读取。
 
+可选的单向飞书通知默认关闭。启用时，将 `runtime.notifications.enabled` 设为 `true`，并在
+环境变量 `runtime.notifications.webhook_url_env` 指定的变量中提供 HTTPS Webhook URL（默认变量名为
+`AGENTPLANEX_FEISHU_WEBHOOK`）。Webhook 请求默认超时为 5 秒且有上限。系统只发送人工审批等待、选定的失败或阻塞以及 Feature 最终完成通知；飞书不接收回调，发送失败不会改变 Runtime 状态。
+
 ## 架构
 
 ```text

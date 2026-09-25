@@ -1,11 +1,15 @@
 """Composition root for one complete Feature Runtime command graph."""
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
+from loguru import logger
+
 from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.codex import CodexTurnTransport
+from agentplanex.infrastructure.feishu import FeishuWebhookClient
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.sqlite import SQLiteDatabase, initialize_schema
 from agentplanex.infrastructure.sqlite.repositories import SQLiteAutoTakeoverRepository
@@ -34,11 +38,12 @@ from agentplanex.services.delivery._stage_executor import (
     StageExecutor,
     _StageOperation,
 )
-from agentplanex.services.event_bus import EventBus
+from agentplanex.services.event_bus import EventBus, EventHandler
 from agentplanex.services.external_agent_runtime import ExternalAgentRuntime
 from agentplanex.services.external_agent_runtime._definitions import (
     build_agent_definition,
 )
+from agentplanex.services.notifications import NotificationService
 from agentplanex.services.planning._plan_hard_gate import PlanHardGate
 from agentplanex.services.planning._service import PlanningService
 from agentplanex.services.project_runtime import ProjectRuntimeService
@@ -168,8 +173,31 @@ def _compose_command_graph(
     database = SQLiteDatabase.for_project(project_path)
     initialize_schema(database)
     takeover_runs = SQLiteAutoTakeoverRepository()
-    event_bus = EventBus((SQLiteTimelineRecorder(database),))
     runtime_settings = settings.runtime
+    handlers: list[EventHandler] = [SQLiteTimelineRecorder(database)]
+    notification_settings = runtime_settings.notifications
+    if notification_settings.enabled:
+        webhook_url = os.environ.get(notification_settings.webhook_url_env, "").strip()
+        if webhook_url:
+            try:
+                handlers.append(
+                    NotificationService(
+                        FeishuWebhookClient(
+                            webhook_url=webhook_url,
+                            timeout_seconds=notification_settings.timeout_seconds,
+                        )
+                    )
+                )
+            except ValueError:
+                logger.warning(
+                    "Feishu notifications disabled because webhook URL configuration is invalid"
+                )
+        else:
+            logger.warning(
+                "Feishu notifications enabled but webhook environment variable is unset: {}",
+                notification_settings.webhook_url_env,
+            )
+    event_bus = EventBus(tuple(handlers))
     catalog = AgentCatalog(runtime_settings)
     external_agents = compose_external_agent_runtime(
         project_path=project_path,

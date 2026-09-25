@@ -163,6 +163,13 @@ Open `http://127.0.0.1:13475`.
 
 The FastAPI process serves the React application and the same-origin `/api` from one port. Model credentials are only required for real Project Owner activations; they are read from environment variables declared in [`config/settings.yaml`](config/settings.yaml).
 
+Optional one-way Feishu notifications are disabled by default. To enable them, set
+`runtime.notifications.enabled: true` and export the HTTPS webhook URL in the environment
+variable named by `runtime.notifications.webhook_url_env` (the default is
+`AGENTPLANEX_FEISHU_WEBHOOK`). The bounded webhook timeout defaults to five seconds. Only
+human-approval waits, selected failures or blocks, and final Feature completion are sent;
+notifications do not accept Feishu callbacks, and delivery failures do not change Runtime state.
+
 ## Architecture
 
 ```text
