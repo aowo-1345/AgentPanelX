@@ -313,14 +313,26 @@ def _human_actions(
     active_stage: StageRun | None,
     runtime_error: str | None,
 ) -> tuple[FeatureAction, ...]:
-    if runtime_error is not None or activation is not None or active_stage is not None:
+    if runtime_error is not None or active_stage is not None:
+        return ()
+    if activation is not None:
+        if (
+            state.pending_action == "FIRST_RUN_APPROVAL"
+            and activation.status is OwnerActivationStatus.PENDING
+        ):
+            return (FeatureAction.REJECT_FIRST_RUN,)
+        if (
+            state.pending_action == "BLOCKED_RUN_APPROVAL"
+            and activation.status is OwnerActivationStatus.PENDING
+        ):
+            return (FeatureAction.REJECT_BLOCKED_RUN,)
         return ()
     if state.status == "TRIAGE":
         return (FeatureAction.BEGIN,)
     if state.pending_action == "PLAN_APPROVAL":
         return (FeatureAction.APPROVE_PLAN, FeatureAction.REJECT_PLAN)
     if state.pending_action == "FIRST_RUN_APPROVAL":
-        return (FeatureAction.START_DELIVERY,)
+        return (FeatureAction.START_DELIVERY, FeatureAction.REJECT_FIRST_RUN)
     if state.pending_action == "BLOCKED_RUN_APPROVAL":
         return (
             FeatureAction.APPROVE_BLOCKED_RUN,

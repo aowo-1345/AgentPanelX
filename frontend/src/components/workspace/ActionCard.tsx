@@ -7,6 +7,7 @@ const ACTION_LABELS: Record<FeatureAction, string> = {
   'approve-plan': 'Approve plan',
   'reject-plan': 'Request changes',
   'start-delivery': 'Start delivery',
+  'reject-first-run': 'Request milestone changes',
   'approve-blocked-run': 'Retry delivery',
   'reject-blocked-run': 'Keep blocked',
 };
@@ -20,7 +21,10 @@ interface ActionCardProps {
 export function ActionCard({ actions, pendingAction, onAction }: ActionCardProps) {
   const [feedback, setFeedback] = useState('');
   const needsFeedback = actions.some(
-    (action) => action === 'reject-plan' || action === 'reject-blocked-run',
+    (action) =>
+      action === 'reject-plan' ||
+      action === 'reject-first-run' ||
+      action === 'reject-blocked-run',
   );
 
   if (actions.length === 0) return null;
@@ -52,7 +56,10 @@ export function ActionCard({ actions, pendingAction, onAction }: ActionCardProps
       <div className="flex flex-wrap gap-2">
         {actions.map((action) => {
           const waiting = action === pendingAction;
-          const rejects = action === 'reject-plan' || action === 'reject-blocked-run';
+          const rejects =
+            action === 'reject-plan' ||
+            action === 'reject-first-run' ||
+            action === 'reject-blocked-run';
           const rejectDisabled = rejects && !feedback.trim();
           const variant = rejects ? 'btn-danger' : 'btn-secondary';
           return (

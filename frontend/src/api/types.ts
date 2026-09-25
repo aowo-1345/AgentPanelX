@@ -23,6 +23,7 @@ export const FEATURE_ACTIONS = [
   'approve-plan',
   'reject-plan',
   'start-delivery',
+  'reject-first-run',
   'approve-blocked-run',
   'reject-blocked-run',
 ] as const;

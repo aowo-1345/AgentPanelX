@@ -538,6 +538,31 @@ def test_first_run_rejects_git_identity_changed_after_plan_approval(
     assert control.stage_runs == ()
 
 
+def test_first_run_rejection_returns_to_todo_and_records_feedback(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = compose_test_runtime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=_SuccessfulStageExecutor(),
+    )
+    runtime.runtime.initialize()
+    runtime.runtime.begin_feature()
+    _request_first_run(runtime, project_path)
+
+    rejected = runtime.runtime.reject_first_run("The initial milestone view is too broad.")
+
+    assert rejected.status == "TODO"
+    assert rejected.pending_action is None
+    assert runtime.runtime.state().current_snapshot_id is not None
+    events = create_project_control_query(project_path=project_path).get_current().timeline
+    assert events[-1].event_type.value == "FIRST_RUN_APPROVAL_REJECTED"
+    assert events[-1].payload["feedback"] == "The initial milestone view is too broad."
+
+
 def test_feature_runs_from_user_message_through_owner_tools_to_done(
     initialize_git_project: Callable[[], Path],
 ) -> None:

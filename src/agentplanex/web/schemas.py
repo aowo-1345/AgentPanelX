@@ -91,6 +91,7 @@ class ActionRequest(Schema):
             self.action
             in {
                 FeatureAction.REJECT_PLAN,
+                FeatureAction.REJECT_FIRST_RUN,
                 FeatureAction.REJECT_BLOCKED_RUN,
             }
             and not (self.feedback or "").strip()

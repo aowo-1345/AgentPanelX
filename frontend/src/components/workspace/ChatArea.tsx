@@ -199,6 +199,9 @@ export function ChatArea({
   );
   const attributionState = attribution?.data?.state ?? 'idle';
   const proposalCount = attribution?.data?.reports.length ?? 0;
+  const requiresDecision = actions.length > 0;
+  const inputDisabled =
+    activationStatus !== null || requiresDecision || sending || pendingAction !== null;
 
   useEffect(() => {
     if (readOnly) return;
@@ -328,12 +331,12 @@ export function ChatArea({
                 onChange={(event) => setText(event.target.value)}
                 onKeyDown={keyDown}
                 placeholder="Message Project Owner…"
-                disabled={sending || pendingAction !== null}
+                disabled={inputDisabled}
               />
               <button
                 className="btn btn-primary h-9 w-9 p-0"
                 onClick={() => void send()}
-                disabled={!text.trim() || sending || pendingAction !== null}
+                disabled={!text.trim() || inputDisabled}
                 aria-label="Send message"
               >
                 {sending ? (
@@ -344,7 +347,9 @@ export function ChatArea({
               </button>
             </div>
             <p className="mt-1.5 text-[10px] text-muted-foreground/50">
-              Enter to send · Shift+Enter for a new line. Refresh to retrieve later Owner updates.
+              {requiresDecision
+                ? 'Choose the available decision above before sending another message.'
+                : 'Enter to send · Shift+Enter for a new line. Refresh to retrieve later Owner updates.'}
             </p>
           </>
         )}

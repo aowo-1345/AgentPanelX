@@ -12,6 +12,7 @@ class FeatureAction(StrEnum):
     APPROVE_PLAN = "approve-plan"
     REJECT_PLAN = "reject-plan"
     START_DELIVERY = "start-delivery"
+    REJECT_FIRST_RUN = "reject-first-run"
     APPROVE_BLOCKED_RUN = "approve-blocked-run"
     REJECT_BLOCKED_RUN = "reject-blocked-run"
 

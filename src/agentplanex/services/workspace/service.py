@@ -238,6 +238,7 @@ class WorkspaceService:
             action
             in {
                 FeatureAction.REJECT_PLAN,
+                FeatureAction.REJECT_FIRST_RUN,
                 FeatureAction.REJECT_BLOCKED_RUN,
             }
             and not feedback.strip()
@@ -247,6 +248,7 @@ class WorkspaceService:
             FeatureAction.APPROVE_PLAN,
             FeatureAction.REJECT_PLAN,
             FeatureAction.START_DELIVERY,
+            FeatureAction.REJECT_FIRST_RUN,
             FeatureAction.APPROVE_BLOCKED_RUN,
             FeatureAction.REJECT_BLOCKED_RUN,
         }:
@@ -310,6 +312,8 @@ class WorkspaceService:
             runtime.reject_plan(feedback)
         elif action is FeatureAction.START_DELIVERY:
             runtime.start_first_run()
+        elif action is FeatureAction.REJECT_FIRST_RUN:
+            runtime.reject_first_run(feedback)
         elif action is FeatureAction.APPROVE_BLOCKED_RUN:
             runtime.approve_blocked_run()
         elif action is FeatureAction.REJECT_BLOCKED_RUN:
