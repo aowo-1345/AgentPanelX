@@ -146,7 +146,7 @@ def _install_routes(
         triage_id: str,
         stage_run_id: str,
     ) -> None:
-        """Expose the current Stage's Codex notifications as a read-only stream."""
+        """Expose the current Stage's official Codex TUI bytes read-only."""
         await websocket.accept()
         try:
             binding = workspace.registry.get_feature(project_id, triage_id)

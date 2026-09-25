@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import codecs
+import os
+import pty
+import shutil
+import socket
+import subprocess
+import sys
+import termios
+import time
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Thread
 from typing import Any
+from urllib.error import URLError
+from urllib.request import urlopen
 
 from openai_codex import (
     ApprovalMode,
@@ -20,7 +31,6 @@ from openai_codex import (
     SkillInput,
     TextInput,
 )
-from openai_codex.api import _collect_turn_result  # type: ignore[attr-defined]
 
 
 class CodexTransportError(RuntimeError):
@@ -59,6 +69,190 @@ class CodexTurnResult:
     final_response: str
 
 
+class _NativeCodexStageTerminal:
+    """Run the official Codex TUI against the Stage's shared app-server."""
+
+    def __init__(
+        self,
+        *,
+        executable: str | None,
+        workspace: Path,
+        stage_run_id: str,
+        output_sink: Callable[[str, str], None],
+    ) -> None:
+        self._executable = executable or shutil.which("codex")
+        self._workspace = workspace
+        self._stage_run_id = stage_run_id
+        self._output_sink = output_sink
+        self._server: subprocess.Popen[str] | None = None
+        self._server_stderr: Thread | None = None
+        self._tui: subprocess.Popen[bytes] | None = None
+        self._pty_master: int | None = None
+        self._reader: Thread | None = None
+        self._url: str | None = None
+
+    @property
+    def sdk_launch_args(self) -> tuple[str, ...]:
+        """Return the SDK launch command that proxies to the shared server."""
+        if self._url is None:
+            raise CodexTransportError("Native Codex app-server has not started")
+        return (
+            sys.executable,
+            "-m",
+            "agentplanex.infrastructure.codex_ws_bridge",
+            self._url,
+        )
+
+    def start(self, *, network_access: bool) -> None:
+        """Start one local WebSocket app-server for the SDK and TUI."""
+        if not self._executable:
+            raise CodexTransportError("The codex executable is not available")
+        port = _free_tcp_port()
+        self._url = f"ws://127.0.0.1:{port}"
+        self._server = subprocess.Popen(
+            [
+                self._executable,
+                "--config",
+                f"sandbox_workspace_write.network_access={str(network_access).lower()}",
+                "app-server",
+                "--listen",
+                self._url,
+            ],
+            cwd=self._workspace,
+            env=os.environ.copy(),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self._server_stderr = Thread(
+            target=_drain_process_stderr,
+            args=(self._server.stderr,),
+            daemon=True,
+            name="agentplanex-codex-app-server-stderr",
+        )
+        self._server_stderr.start()
+        ready_url = f"http://127.0.0.1:{port}/readyz"
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if self._server.poll() is not None:
+                raise CodexTransportError("Codex app-server exited before becoming ready")
+            try:
+                with urlopen(ready_url, timeout=0.25) as response:
+                    if response.status == 200:
+                        return
+            except (OSError, URLError):
+                time.sleep(0.05)
+        raise CodexTransportError("Codex app-server did not become ready")
+
+    def attach(self, thread_id: str) -> None:
+        """Attach the official read-only TUI to the current SDK thread."""
+        if self._executable is None or self._url is None:
+            raise CodexTransportError("Native Codex app-server is not available")
+        master, slave = pty.openpty()
+        termios.tcsetwinsize(slave, (30, 100))
+        try:
+            self._tui = subprocess.Popen(
+                [
+                    self._executable,
+                    "resume",
+                    thread_id,
+                    "--remote",
+                    self._url,
+                    "--no-alt-screen",
+                    "--ask-for-approval",
+                    "never",
+                ],
+                cwd=self._workspace,
+                env={**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"},
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                close_fds=True,
+            )
+            self._pty_master = master
+            os.close(slave)
+        except OSError:
+            os.close(master)
+            os.close(slave)
+            raise
+        self._reader = Thread(
+            target=self._read_tui_output,
+            daemon=True,
+            name="agentplanex-codex-native-terminal",
+        )
+        self._reader.start()
+
+    def close(self) -> None:
+        """Stop the observer TUI and its dedicated app-server."""
+        tui = self._tui
+        if tui is not None and tui.poll() is None:
+            tui.terminate()
+            try:
+                tui.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                tui.kill()
+                tui.wait()
+        master = self._pty_master
+        if master is not None:
+            with suppress(OSError):
+                os.close(master)
+            self._pty_master = None
+        server = self._server
+        if server is not None and server.poll() is None:
+            server.terminate()
+            try:
+                server.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()
+
+    def _read_tui_output(self) -> None:
+        master = self._pty_master
+        if master is None:
+            return
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        query_buffer = b""
+        while True:
+            try:
+                data = os.read(master, 16_384)
+            except OSError:
+                return
+            if not data:
+                return
+            # Only terminal capability replies are written; browser input is never forwarded.
+            query_buffer += data
+            for query, reply in (
+                (b"\x1b[6n", b"\x1b[1;1R"),
+                (b"\x1b[c", b"\x1b[?1;2c"),
+                (b"\x1b[?u", b"\x1b[?0u"),
+                (b"\x1b]10;?\x1b\\", b"\x1b]10;rgb:d4d4/d4d4/d8d8\x1b\\"),
+                (b"\x1b]11;?\x1b\\", b"\x1b]11;rgb:0707/0808/0b0b\x1b\\"),
+            ):
+                if query in query_buffer:
+                    with suppress(OSError):
+                        os.write(master, reply)
+                    query_buffer = query_buffer.replace(query, b"")
+            query_buffer = query_buffer[-32:]
+            self._output_sink(
+                self._stage_run_id,
+                decoder.decode(data),
+            )
+
+
+def _free_tcp_port() -> int:
+    """Reserve an ephemeral local port for one app-server session."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _drain_process_stderr(stream: Any) -> None:
+    """Prevent a long-running app-server stderr pipe from filling."""
+    if stream is not None:
+        for _line in stream:
+            pass
+
+
 @dataclass(frozen=True, slots=True)
 class CodexTurnTransport:
     """Start/resume Codex threads without knowing any Agent business Contract."""
@@ -68,7 +262,7 @@ class CodexTurnTransport:
     timeout_seconds: float
     response_limit: int
     network_access: bool = True
-    event_sink: Callable[[str, Any], None] | None = None
+    event_sink: Callable[[str, str], None] | None = None
 
     def run(
         self,
@@ -78,10 +272,22 @@ class CodexTurnTransport:
     ) -> CodexTurnResult:
         """Run one turn in a writable Agent workspace and always close the SDK client."""
         client: Codex | None = None
+        native_terminal: _NativeCodexStageTerminal | None = None
         try:
+            if self.event_sink is not None and request.observer_key is not None:
+                native_terminal = _NativeCodexStageTerminal(
+                    executable=self.executable,
+                    workspace=request.workspace,
+                    stage_run_id=request.observer_key,
+                    output_sink=self.event_sink,
+                )
+                native_terminal.start(network_access=self.network_access)
             client = Codex(
                 CodexConfig(
                     codex_bin=self.executable,
+                    launch_args_override=(
+                        native_terminal.sdk_launch_args if native_terminal is not None else None
+                    ),
                     client_name="agentplanex",
                     client_title="AgentPlaneX",
                     config_overrides=(
@@ -113,6 +319,8 @@ class CodexTurnTransport:
 
             if on_thread_opened is not None:
                 on_thread_opened(thread.id)
+            if native_terminal is not None:
+                native_terminal.attach(thread.id)
 
             input_items: list[InputItem] = [TextInput(request.message)]
             input_items.extend(
@@ -130,15 +338,7 @@ class CodexTurnTransport:
                 model=self.model,
                 output_schema=request.output_schema,
             )
-            sink = self.event_sink
-            on_event: Callable[[Any], None] | None = None
-            if sink is not None and request.observer_key is not None:
-                observer_key = request.observer_key
-
-                def on_event(event: Any) -> None:
-                    sink(observer_key, event)
-
-            result = self._run_with_timeout(turn, on_event=on_event)
+            result = self._run_with_timeout(turn)
             status = getattr(result.status, "value", None)
             if status != "completed":
                 raise CodexTransportError(
@@ -162,30 +362,19 @@ class CodexTurnTransport:
         finally:
             if client is not None:
                 client.close()
+            if native_terminal is not None:
+                native_terminal.close()
 
     def _run_with_timeout(
         self,
         handle: Any,
-        *,
-        on_event: Callable[[Any], None] | None = None,
     ) -> Any:
         result_box: list[Any] = []
         error_box: list[BaseException] = []
 
         def consume() -> None:
             try:
-                if on_event is None:
-                    result_box.append(handle.run())
-                    return
-                events = []
-                stream = handle.stream()
-                try:
-                    for event in stream:
-                        on_event(event)
-                        events.append(event)
-                finally:
-                    stream.close()
-                result_box.append(_collect_turn_result(iter(events), turn_id=handle.id))
+                result_box.append(handle.run())
             except BaseException as error:  # delivered to the caller below
                 error_box.append(error)
 

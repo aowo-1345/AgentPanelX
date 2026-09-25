@@ -25,7 +25,9 @@ export function useStageTerminal(
     }
 
     const terminal = new Terminal({
-      convertEol: true,
+      cols: 100,
+      rows: 30,
+      convertEol: false,
       cursorBlink: false,
       disableStdin: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -38,7 +40,6 @@ export function useStageTerminal(
       },
     });
     terminal.open(containerRef.current);
-    terminal.writeln('\x1b[90mConnecting to the active Stage…\x1b[0m');
 
     let disposed = false;
     let retryTimer: number | undefined;
@@ -49,6 +50,7 @@ export function useStageTerminal(
       setStatus('connecting');
       socket = new WebSocket(terminalUrl(projectId, triageId, stageRunId));
       socket.onopen = () => {
+        terminal.reset();
         setStatus('connected');
         setError(null);
       };
@@ -72,7 +74,11 @@ export function useStageTerminal(
         setError('The active Stage terminal could not be reached. Retrying…');
       };
       socket.onclose = (event) => {
-        if (disposed || event.code === 1000) return;
+        if (disposed) return;
+        if (event.code === 1000) {
+          setStatus('finished');
+          return;
+        }
         if (event.code === 4404 || event.code === 4409) {
           setStatus('error');
           setError(event.reason || 'The active Stage terminal is no longer available.');

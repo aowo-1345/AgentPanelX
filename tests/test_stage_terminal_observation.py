@@ -59,3 +59,14 @@ def test_observer_cleanup_is_idempotent() -> None:
     observer.close_all()
     observer.close_all()
     assert observer.is_active("stage-2") is False
+
+
+def test_observer_preserves_native_terminal_bytes() -> None:
+    observer = StageOutputObserver()
+    observer.begin("stage-1")
+    native_output = "\x1b[2J\x1b[Hcodex\x1b[0m"
+
+    observer.publish_event("stage-1", native_output)
+
+    chunks, _ = observer.read_since("stage-1")
+    assert [chunk.data for chunk in chunks] == [native_output]

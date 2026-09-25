@@ -39,6 +39,9 @@ class StageOutputObserver:
                 self._sessions[stage_run_id] = _StageOutputSession()
 
     def publish_event(self, stage_run_id: str, event: Any) -> None:
+        if isinstance(event, str):
+            self.publish(stage_run_id, event)
+            return
         method = getattr(event, "method", "codex/event")
         payload = getattr(event, "payload", None)
         for attribute in ("delta", "text", "message"):
