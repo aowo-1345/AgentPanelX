@@ -23,6 +23,7 @@ export const FEATURE_ACTIONS = [
   'approve-plan',
   'reject-plan',
   'start-delivery',
+  'reject-first-run',
   'approve-blocked-run',
   'reject-blocked-run',
 ] as const;
@@ -93,6 +94,11 @@ export interface RuntimeData {
   current_stage_key: string | null;
   blocked_reason: string | null;
   blocked_capability: string | null;
+}
+
+export interface ActiveExecutionData {
+  stage_run_id: string;
+  status: 'QUEUED' | 'RUNNING';
 }
 
 export type ToolActivityStatus = 'running' | 'completed' | 'failed';
@@ -171,6 +177,7 @@ export interface Workspace {
   feature: WorkspaceFeature;
   available_actions: FeatureAction[];
   runtime: Panel<RuntimeData>;
+  active_execution?: Panel<ActiveExecutionData>;
   conversation: Panel<ConversationMessage[]>;
   plan: Panel<PlanData>;
   milestones: Panel<MilestonesData>;

@@ -45,6 +45,9 @@ class ProjectRuntimeControl:
     def start_first_run(self) -> MilestoneRunQueued:
         return self._fenced(self._service.start_first_run)
 
+    def reject_first_run(self, feedback: str) -> ProjectRuntimeState:
+        return self._fenced(lambda: self._service.reject_first_run(feedback))
+
     def approve_blocked_run(self) -> MilestoneRunQueued:
         return self._fenced(self._service.approve_blocked_run)
 

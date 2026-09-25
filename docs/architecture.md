@@ -287,6 +287,13 @@ sequenceDiagram
     Runtime-->>Business: typed static-contract result
 ```
 
+StageRun 的执行与终端观察共享同一个 Stage 专属 Codex App Server。SDK 通过本地
+stdio-to-WebSocket bridge 驱动 Stage turn；用户打开终端时，Runtime 在受管 PTY 中启动官方
+`codex resume <thread_id> --remote <app-server> --no-alt-screen`，把原始 ANSI 终端字节转发给
+Web Console。浏览器只负责 xterm 兼容渲染和断线重连，不重新实现 Codex TUI，也不创建第二个
+Thread 或 Turn。Stage 结束、租约过期、Workspace 关闭或启动恢复时，Runtime 同时关闭 TUI、
+App Server 和内存输出缓冲。
+
 稳定 Definition 由 `resources/external_agents/common.md` 与对应角色 Markdown 组合，并由
 `runtime.external_agents` 配置绑定；Common 说明 AgentPanelX 工作流、事实优先级与共同实践，
 角色文件说明稳定职责、工作方法、判断标准和权限边界。每次 Activation 只包含本轮任务、

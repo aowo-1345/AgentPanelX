@@ -287,6 +287,31 @@ class DeliveryService:
             raise DeliveryError("Project is not waiting for its first Run approval")
         return self._driver.queue_run(current, snapshot, milestone, first_run=True)
 
+    def reject_first_run(self, feedback: str) -> ProjectRuntimeState:
+        """Return a published first Run to planning so its View can be revised."""
+        normalized = " ".join(feedback.split())
+        if not normalized:
+            raise DeliveryError("First Run rejection feedback must not be empty")
+        current = self.context.state()
+        if current.status != "READY" or current.pending_action != "FIRST_RUN_APPROVAL":
+            raise DeliveryError("Project is not waiting for its first Run approval")
+        updated = self.context.transition(
+            reason=RuntimeContextChangeReason.FIRST_RUN_APPROVAL_REJECTED,
+            mutate=lambda latest: replace(
+                latest,
+                status="TODO",
+                pending_action=None,
+            ),
+        )
+        self.event_bus.publish(
+            ExecutionEvent(
+                triage_id=updated.triage_id,
+                event_type=ExecutionEventType.FIRST_RUN_APPROVAL_REJECTED,
+                payload={"feedback": normalized},
+            )
+        )
+        return updated
+
     def active_work(self) -> DeliveryWorkState:
         """Return only whether Delivery is idle, runnable, or currently running."""
         return self._driver.active_work()

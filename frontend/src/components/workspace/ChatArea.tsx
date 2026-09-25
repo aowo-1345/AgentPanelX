@@ -206,10 +206,9 @@ export function ChatArea({
   );
   const attributionState = attribution?.data?.state ?? 'idle';
   const proposalCount = attribution?.data?.reports.length ?? 0;
-  const ownerBusy =
-    activationStatus === 'RUNNING' ||
-    activationStatus === 'PENDING' ||
-    interrupting;
+  const requiresDecision = actions.length > 0;
+  const inputDisabled =
+    activationStatus !== null || requiresDecision || sending || pendingAction !== null || interrupting;
 
   useEffect(() => {
     if (readOnly || proposalsOpen || !canInterrupt || interrupting) return;
@@ -229,7 +228,7 @@ export function ChatArea({
 
   async function send() {
     const content = text.trim();
-    if (!content || sending || pendingAction || ownerBusy) return;
+    if (!content || inputDisabled) return;
     if (await onSend(content)) {
       setText('');
     }
@@ -378,12 +377,12 @@ export function ChatArea({
                 onChange={(event) => setText(event.target.value)}
                 onKeyDown={keyDown}
                 placeholder="Message Project Owner…"
-                disabled={sending || pendingAction !== null || ownerBusy}
+                disabled={inputDisabled}
               />
               <button
                 className="btn btn-primary h-9 w-9 p-0"
                 onClick={() => void send()}
-                disabled={!text.trim() || sending || pendingAction !== null || ownerBusy}
+                disabled={!text.trim() || inputDisabled}
                 aria-label="Send message"
               >
                 {sending ? (
@@ -394,7 +393,10 @@ export function ChatArea({
               </button>
             </div>
             <p className="mt-1.5 text-[10px] text-muted-foreground/50">
-              {canInterrupt ? 'Esc to stop Owner · ' : ''}Enter to send · Shift+Enter for a new line. Refresh to retrieve later Owner updates.
+              {canInterrupt ? 'Esc to stop Owner · ' : ''}
+              {requiresDecision
+                ? 'Choose the available decision above before sending another message.'
+                : 'Enter to send · Shift+Enter for a new line. Refresh to retrieve later Owner updates.'}
             </p>
           </>
         )}

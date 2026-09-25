@@ -32,6 +32,7 @@ from agentplanex.services.external_agent_runtime.models import (
     PreparedAgentTurn,
     SessionPolicy,
 )
+from agentplanex.services.external_agent_runtime.observation import StageOutputObserver
 
 InputT = TypeVar("InputT", bound=BaseModel)
 
@@ -93,6 +94,7 @@ class ExternalAgentRuntime:
     transport: Any
     definitions: Mapping[str, AgentDefinition]
     operations: Mapping[tuple[str, str], object]
+    stage_output_observer: StageOutputObserver | None = None
 
     def __post_init__(self) -> None:
         expected = {
@@ -104,6 +106,10 @@ class ExternalAgentRuntime:
             raise ExternalAgentRuntimeError(
                 "External Agent Definitions and registered Operations disagree"
             )
+
+    def close_stage_output(self, stage_run_id: str) -> None:
+        if self.stage_output_observer is not None:
+            self.stage_output_observer.close(stage_run_id)
 
     def invoke(
         self,
@@ -191,6 +197,9 @@ class ExternalAgentRuntime:
             prepared.execution_workspace,
         )
         thread_id = self.workspaces.load_managed_thread(workspace)
+        stage_run_id = request.scope.stage_run_id
+        if self.stage_output_observer is not None and stage_run_id is not None:
+            self.stage_output_observer.begin(stage_run_id)
         try:
             turn = self.transport.run(
                 CodexTurnRequest(
@@ -209,6 +218,7 @@ class ExternalAgentRuntime:
                     ),
                     skills=tuple((skill.name, skill.path) for skill in definition.bound_skills),
                     output_schema=operation.output_schema,
+                    observer_key=stage_run_id,
                 ),
                 on_thread_opened=lambda opened: self.workspaces.save_managed_thread(
                     workspace,
@@ -218,6 +228,9 @@ class ExternalAgentRuntime:
         except CodexTransportUnsafeTimeout as error:
             self.workspaces.quarantine_session(workspace, str(error))
             raise
+        finally:
+            if self.stage_output_observer is not None and stage_run_id is not None:
+                self.stage_output_observer.finish(stage_run_id)
         output = operation.validate(request.payload, context, turn)
         dumped = operation.dump_result(output)
         self.workspaces.publish_managed_result(

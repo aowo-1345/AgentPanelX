@@ -13,6 +13,7 @@ import { BrandMark } from '@/components/common/BrandMark';
 import { BoardPage } from '@/pages/BoardPage';
 import { LandingPage } from '@/pages/LandingPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { StageTerminalPage } from '@/pages/StageTerminalPage';
 import { ShowcasePage } from '@/pages/ShowcasePage';
 import { WorkspacePage } from '@/pages/WorkspacePage';
 import { consoleSnapshot, consoleWorkspace, workspacePath } from '@/showcase/consoleSnapshot';
@@ -116,6 +117,10 @@ function AppShell() {
             <Route
               path="/projects/:projectId/features/:triageId"
               element={staticSite ? <Navigate to="/console" replace /> : <WorkspacePage />}
+            />
+            <Route
+              path="/projects/:projectId/features/:triageId/stages/:stageRunId/terminal"
+              element={staticSite ? <Navigate to="/console" replace /> : <StageTerminalPage />}
             />
             <Route
               path="/settings"

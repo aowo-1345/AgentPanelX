@@ -2,7 +2,7 @@
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
@@ -18,6 +18,7 @@ from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.services.auto_takeover import AutoTakeoverPort
+from agentplanex.services.external_agent_runtime.observation import StageOutputObserver
 from agentplanex.services.project_runtime_context.models import OwnerActivation
 from agentplanex.services.web.to_issue import CreatedIssue, ProposalToIssue
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
@@ -45,6 +46,7 @@ class WorkspaceService:
     runtime_factory: Callable[[Path], ProjectRuntime]
     proposal_to_issue: ProposalToIssue
     auto_takeover: AutoTakeoverPort | None = None
+    stage_output_observer: StageOutputObserver = field(default_factory=StageOutputObserver)
     close_resources: Callable[[], None] = _noop
 
     def start(self) -> int:
@@ -60,6 +62,7 @@ class WorkspaceService:
         if self.auto_takeover is not None:
             self.auto_takeover.stop_accepting()
         self.dispatcher.stop_accepting()
+        self.stage_output_observer.close_all()
         try:
             self.close_resources()
         finally:
@@ -242,6 +245,7 @@ class WorkspaceService:
             action
             in {
                 FeatureAction.REJECT_PLAN,
+                FeatureAction.REJECT_FIRST_RUN,
                 FeatureAction.REJECT_BLOCKED_RUN,
             }
             and not feedback.strip()
@@ -251,6 +255,7 @@ class WorkspaceService:
             FeatureAction.APPROVE_PLAN,
             FeatureAction.REJECT_PLAN,
             FeatureAction.START_DELIVERY,
+            FeatureAction.REJECT_FIRST_RUN,
             FeatureAction.APPROVE_BLOCKED_RUN,
             FeatureAction.REJECT_BLOCKED_RUN,
         }:
@@ -314,6 +319,8 @@ class WorkspaceService:
             runtime.reject_plan(feedback)
         elif action is FeatureAction.START_DELIVERY:
             runtime.start_first_run()
+        elif action is FeatureAction.REJECT_FIRST_RUN:
+            runtime.reject_first_run(feedback)
         elif action is FeatureAction.APPROVE_BLOCKED_RUN:
             runtime.approve_blocked_run()
         elif action is FeatureAction.REJECT_BLOCKED_RUN:

@@ -80,6 +80,7 @@ def test_normal_runtime_exposes_only_the_feature_command_facade(
         "interrupt_owner",
         "approve_plan",
         "reject_plan",
+        "reject_first_run",
             "start_first_run",
             "approve_blocked_run",
             "reject_blocked_run",

@@ -1,7 +1,7 @@
 """Typed HTTP contracts and mapping from existing application read models."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -97,6 +97,7 @@ class ActionRequest(Schema):
             self.action
             in {
                 FeatureAction.REJECT_PLAN,
+                FeatureAction.REJECT_FIRST_RUN,
                 FeatureAction.REJECT_BLOCKED_RUN,
             }
             and not (self.feedback or "").strip()
@@ -115,6 +116,11 @@ class RuntimeData(Schema):
     current_stage_key: str | None
     blocked_reason: str | None
     blocked_capability: str | None
+
+
+class ActiveExecutionData(Schema):
+    stage_run_id: str
+    status: Literal["QUEUED", "RUNNING"]
 
 
 class ToolActivityData(Schema):
@@ -191,6 +197,7 @@ class WorkspaceResponse(Schema):
     feature: WorkspaceFeatureResponse
     available_actions: list[FeatureAction]
     runtime: Panel[RuntimeData]
+    active_execution: Panel[ActiveExecutionData]
     conversation: Panel[list[ConversationMessage]]
     plan: Panel[PlanData]
     milestones: Panel[MilestonesData]
@@ -300,6 +307,21 @@ def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
                     blocked_capability=context.blocked_capability,
                 )
                 if runtime_view.runtime_error is None
+                else None
+            ),
+            error=runtime_view.runtime_error,
+        ),
+        active_execution=Panel(
+            data=(
+                ActiveExecutionData(
+                    stage_run_id=runtime_view.active_stage_run_id,
+                    status=cast(
+                        Literal["QUEUED", "RUNNING"],
+                        runtime_view.active_stage_run_status.value,
+                    ),
+                )
+                if runtime_view.active_stage_run_id is not None
+                and runtime_view.active_stage_run_status is not None
                 else None
             ),
             error=runtime_view.runtime_error,

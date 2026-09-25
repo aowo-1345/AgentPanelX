@@ -29,7 +29,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.project_owner_agent.context.models import MessageHistory
 from agentplanex.project_owner_agent.contracts import Message
 from agentplanex.services.auto_takeover.models import TakeoverStatus
-from agentplanex.services.delivery.models import MilestoneSnapshot, StageRun
+from agentplanex.services.delivery.models import MilestoneSnapshot, StageRun, StageRunStatus
 from agentplanex.services.planning.models import PLAN_DOCUMENT_NAMES
 from agentplanex.services.project_runtime_context.models import (
     OwnerActivation,
@@ -108,6 +108,8 @@ class ProjectWorkspaceView:
     git_head: str | None
     git_error: str | None
     available_actions: tuple[FeatureAction, ...]
+    active_stage_run_id: str | None = None
+    active_stage_run_status: StageRunStatus | None = None
     attribution: AttributionData = field(
         default_factory=lambda: AttributionData(state="idle", reports=())
     )
@@ -156,6 +158,8 @@ class ProjectWorkspaceQuery:
         branch, head, git_error = _git_panel(self.git)
         return ProjectWorkspaceView(
             state=state,
+            active_stage_run_id=(active_stage.stage_run_id if active_stage is not None else None),
+            active_stage_run_status=(active_stage.status if active_stage is not None else None),
             owner_activation=activation,
             activation_has_reply=activation_has_reply,
             runtime_error=runtime_error,
@@ -309,14 +313,26 @@ def _human_actions(
     active_stage: StageRun | None,
     runtime_error: str | None,
 ) -> tuple[FeatureAction, ...]:
-    if runtime_error is not None or activation is not None or active_stage is not None:
+    if runtime_error is not None or active_stage is not None:
+        return ()
+    if activation is not None:
+        if (
+            state.pending_action == "FIRST_RUN_APPROVAL"
+            and activation.status is OwnerActivationStatus.PENDING
+        ):
+            return (FeatureAction.REJECT_FIRST_RUN,)
+        if (
+            state.pending_action == "BLOCKED_RUN_APPROVAL"
+            and activation.status is OwnerActivationStatus.PENDING
+        ):
+            return (FeatureAction.REJECT_BLOCKED_RUN,)
         return ()
     if state.status == "TRIAGE":
         return (FeatureAction.BEGIN,)
     if state.pending_action == "PLAN_APPROVAL":
         return (FeatureAction.APPROVE_PLAN, FeatureAction.REJECT_PLAN)
     if state.pending_action == "FIRST_RUN_APPROVAL":
-        return (FeatureAction.START_DELIVERY,)
+        return (FeatureAction.START_DELIVERY, FeatureAction.REJECT_FIRST_RUN)
     if state.pending_action == "BLOCKED_RUN_APPROVAL":
         return (
             FeatureAction.APPROVE_BLOCKED_RUN,
