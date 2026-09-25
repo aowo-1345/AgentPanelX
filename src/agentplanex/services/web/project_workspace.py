@@ -93,8 +93,6 @@ class ProjectWorkspaceView:
     """Panels derived from one required persisted Runtime State."""
 
     state: ProjectRuntimeState
-    active_stage_run_id: str | None
-    active_stage_run_status: StageRunStatus | None
     owner_activation: OwnerActivation | None
     activation_has_reply: bool
     runtime_error: str | None
@@ -110,6 +108,8 @@ class ProjectWorkspaceView:
     git_head: str | None
     git_error: str | None
     available_actions: tuple[FeatureAction, ...]
+    active_stage_run_id: str | None = None
+    active_stage_run_status: StageRunStatus | None = None
     attribution: AttributionData = field(
         default_factory=lambda: AttributionData(state="idle", reports=())
     )
@@ -475,14 +475,23 @@ def _visible_messages(
                             _plan_decision_text(content),
                         )
                     )
-        if activation is not None and activation.failure is not None:
-            visible.append(
-                VisibleMessage(
-                    f"{activation.activation_id}:failure",
-                    "status",
-                    f"Project Owner failed: {activation.failure}",
+        if activation is not None:
+            if activation.status is OwnerActivationStatus.INTERRUPTED:
+                visible.append(
+                    VisibleMessage(
+                        f"{activation.activation_id}:interrupted",
+                        "status",
+                        "Owner 已被用户中断",
+                    )
                 )
-            )
+            elif activation.failure is not None:
+                visible.append(
+                    VisibleMessage(
+                        f"{activation.activation_id}:failure",
+                        "status",
+                        f"Project Owner failed: {activation.failure}",
+                    )
+                )
     return tuple(visible)
 
 

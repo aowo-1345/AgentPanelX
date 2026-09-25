@@ -458,11 +458,14 @@ export function ShowcasePage() {
             conversation={conversation}
             actions={frame.workspace.available_actions}
             activationStatus={frame.workspace.runtime.data?.activation_status ?? null}
+            canInterrupt={false}
+            interrupting={false}
             activationHasReply={frame.workspace.runtime.data?.activation_has_reply ?? false}
             pendingAction={null}
             sending={false}
             notice={null}
             onSend={ignoreSend}
+            onInterrupt={async () => undefined}
             onAction={advanceFromAction}
             readOnly
             readOnlyLabel="Stable showcase snapshot · choose a chapter above to inspect the full delivery story."

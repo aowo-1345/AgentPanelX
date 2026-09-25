@@ -261,7 +261,7 @@ def test_git_project_fixture_initializes_project_database(
     with database.connection() as connection:
         schema_version = connection.execute("PRAGMA user_version").fetchone()
     assert schema_version is not None
-    assert schema_version[0] == 15
+    assert schema_version[0] == 16
 
     git_status = subprocess.run(
         ["git", "-C", str(fixture_project), "status", "--short"],
@@ -351,6 +351,8 @@ def test_schema_contains_current_control_plane_tables_and_columns(
             "task_type",
             "message_id",
             "summary_id",
+            "previous_interrupted_activation_id",
+            "interrupt_requested",
             "status",
             "driver_mode",
             "created_at",
@@ -442,6 +444,23 @@ def test_schema_migrates_version_14_issue_columns_without_losing_runs(
             """,
             (datetime(2026, 8, 25, tzinfo=UTC).isoformat(),),
         )
+        connection.execute(
+            """
+            CREATE TABLE owner_activation (
+                activation_id TEXT PRIMARY KEY,
+                triage_id TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                summary_id TEXT,
+                status TEXT NOT NULL,
+                driver_mode TEXT,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                failure TEXT
+            )
+            """
+        )
         connection.execute("PRAGMA user_version = 14")
 
     initialize_schema(database)
@@ -455,7 +474,7 @@ def test_schema_migrates_version_14_issue_columns_without_losing_runs(
             """
         ).fetchone()
     assert version is not None
-    assert version[0] == 15
+    assert version[0] == 16
     assert row is not None
     assert dict(row) == {
         "run_id": "run-existing",

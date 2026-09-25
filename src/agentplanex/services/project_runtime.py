@@ -72,6 +72,12 @@ class ProjectRuntimeService:
                 )
                 return transaction.submit_owner_input(task)
 
+    def request_owner_interrupt(self, triage_id: str) -> OwnerActivation | None:
+        """Set the current Owner activation's cooperative interrupt marker."""
+        if triage_id.strip() == "":
+            raise ValueError("Feature Triage ID must not be empty")
+        return self.context.request_owner_interrupt(triage_id)
+
     def approve_plan(self) -> PlanDecision:
         with self.context.operation():
             self._assert_plan_command_idle()

@@ -91,12 +91,20 @@ class _OwnerActivationLifecycle:
                 "Project Owner already has unfinished work: "
                 f"{unfinished.activation_id} ({unfinished.status.value})"
             )
+        previous = self._records.get_latest(connection, triage_id)
+        previous_interrupted_activation_id = (
+            previous.activation_id
+            if previous is not None
+            and previous.status is OwnerActivationStatus.INTERRUPTED
+            else None
+        )
         activation = OwnerActivation(
             activation_id=uuid4().hex,
             triage_id=triage_id,
             task_type=owner_input.type,
             message_id=message_id,
             summary_id=summary_id,
+            previous_interrupted_activation_id=previous_interrupted_activation_id,
         )
         self._records.insert(connection, activation)
         return activation
@@ -192,6 +200,20 @@ class _OwnerActivationLifecycle:
     ) -> OwnerActivation:
         return self._records.release_tool(connection, activation.activation_id)
 
+    def request_interrupt(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+    ) -> OwnerActivation | None:
+        return self._records.request_interrupt(connection, triage_id)
+
+    def latest(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+    ) -> OwnerActivation | None:
+        return self._records.get_latest(connection, triage_id)
+
     def finish(
         self,
         connection: sqlite3.Connection,
@@ -200,19 +222,22 @@ class _OwnerActivationLifecycle:
         *,
         finished_at: datetime,
     ) -> OwnerActivation:
-        return (
-            self._records.mark_failed(
+        if result.status in _FAILED_EXIT_STATUSES:
+            return self._records.mark_failed(
                 connection,
                 activation.activation_id,
                 finished_at,
                 result.content.strip() or result.status.value,
             )
-            if result.status in _FAILED_EXIT_STATUSES
-            else self._records.mark_completed(
-                connection,
-                activation.activation_id,
-                finished_at,
+        if (
+            result.status is AgentExitStatus.USER_INTERRUPTED
+            or self._records.is_interrupt_requested(connection, activation.activation_id)
+        ):
+            return self._records.mark_interrupted(
+                connection, activation.activation_id, finished_at,
             )
+        return self._records.mark_completed(
+            connection, activation.activation_id, finished_at,
         )
 
     def fail_interrupted(
@@ -276,10 +301,9 @@ class _OwnerActivationLifecycle:
 
     @staticmethod
     def interrupted_event(activation: OwnerActivation) -> ExecutionEvent:
-        if activation.status is not OwnerActivationStatus.FAILED:
-            raise ValueError("Interrupted event requires a failed Activation")
-        if activation.driver_mode is None or activation.failure is None:
-            raise ValueError("Failed Activation is missing its terminal facts")
+        """Record process recovery as a failure event."""
+        if activation.driver_mode is None:
+            raise ValueError("Interrupted Activation is missing its driver mode")
         return ExecutionEvent(
             triage_id=activation.triage_id,
             event_type=ExecutionEventType.OWNER_ACTIVATION_FAILED,
@@ -288,7 +312,26 @@ class _OwnerActivationLifecycle:
                 "activation_id": activation.activation_id,
                 "task_type": activation.task_type.value,
                 "driver_mode": activation.driver_mode.value,
+                "interrupted": True,
+                "started": activation.started_at is not None,
                 "failure": activation.failure,
+            },
+        )
+
+    @staticmethod
+    def user_interrupted_event(activation: OwnerActivation) -> ExecutionEvent:
+        if activation.status is not OwnerActivationStatus.INTERRUPTED:
+            raise ValueError("User interrupted event requires an interrupted Activation")
+        if activation.driver_mode is None:
+            raise ValueError("Interrupted Activation is missing its driver mode")
+        return ExecutionEvent(
+            triage_id=activation.triage_id,
+            event_type=ExecutionEventType.USER_INTERRUPTED,
+            react_loop_id=(activation.activation_id if activation.started_at is not None else None),
+            payload={
+                "activation_id": activation.activation_id,
+                "task_type": activation.task_type.value,
+                "driver_mode": activation.driver_mode.value,
                 "interrupted": True,
                 "started": activation.started_at is not None,
             },

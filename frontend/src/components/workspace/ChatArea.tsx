@@ -9,6 +9,7 @@ import {
   LockKeyhole,
   Loader2,
   Send,
+  Square,
   TerminalSquare,
   User,
 } from 'lucide-react';
@@ -36,11 +37,14 @@ interface ChatAreaProps {
   attribution?: Panel<AttributionData>;
   actions: FeatureAction[];
   activationStatus: string | null;
+  canInterrupt: boolean;
+  interrupting: boolean;
   activationHasReply: boolean;
   pendingAction: FeatureAction | null;
   sending: boolean;
   notice: CommandNotice | null;
   onSend: (content: string) => Promise<boolean>;
+  onInterrupt: () => Promise<void>;
   onAction: (action: FeatureAction, feedback?: string) => Promise<void>;
   onCreateProposalIssue?: (runId: string) => Promise<CreatedIssue>;
   readOnly?: boolean;
@@ -181,11 +185,14 @@ export function ChatArea({
   attribution,
   actions,
   activationStatus,
+  canInterrupt,
+  interrupting,
   activationHasReply,
   pendingAction,
   sending,
   notice,
   onSend,
+  onInterrupt,
   onAction,
   onCreateProposalIssue,
   readOnly = false,
@@ -201,7 +208,18 @@ export function ChatArea({
   const proposalCount = attribution?.data?.reports.length ?? 0;
   const requiresDecision = actions.length > 0;
   const inputDisabled =
-    activationStatus !== null || requiresDecision || sending || pendingAction !== null;
+    activationStatus !== null || requiresDecision || sending || pendingAction !== null || interrupting;
+
+  useEffect(() => {
+    if (readOnly || proposalsOpen || !canInterrupt || interrupting) return;
+    function handleEscape(event: globalThis.KeyboardEvent) {
+      if (event.key !== 'Escape' || event.isComposing) return;
+      event.preventDefault();
+      void onInterrupt();
+    }
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [canInterrupt, interrupting, onInterrupt, proposalsOpen, readOnly]);
 
   useEffect(() => {
     if (readOnly) return;
@@ -210,7 +228,7 @@ export function ChatArea({
 
   async function send() {
     const content = text.trim();
-    if (!content || sending || pendingAction) return;
+    if (!content || inputDisabled) return;
     if (await onSend(content)) {
       setText('');
     }
@@ -237,28 +255,47 @@ export function ChatArea({
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          className="btn btn-ghost h-8 shrink-0 px-2"
-          aria-haspopup="dialog"
-          onClick={() => setProposalsOpen(true)}
-        >
-          {attributionState === 'running' ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-300" />
-          ) : attributionState === 'failed' ? (
-            <CircleX className="h-3.5 w-3.5 text-red-300" />
-          ) : proposalCount > 0 ? (
-            <FileText className="h-3.5 w-3.5" />
-          ) : (
-            <History className="h-3.5 w-3.5" />
+        <div className="flex items-center gap-1">
+          {(canInterrupt || interrupting) && (
+            <button
+              type="button"
+              className="btn btn-ghost h-8 shrink-0 px-2 text-amber-300 hover:text-amber-200"
+              onClick={() => void onInterrupt()}
+              disabled={interrupting}
+              aria-label={interrupting ? 'Stopping Project Owner' : 'Stop Project Owner'}
+              title={interrupting ? '正在停止…' : '停止 Owner（Esc）'}
+            >
+              {interrupting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Square className="h-3.5 w-3.5" />
+              )}
+              {interrupting ? '正在停止…' : '停止 Owner'}
+            </button>
           )}
-          {attributionState === 'running'
-            ? '归因中'
-            : attributionState === 'failed'
-              ? '归因失败'
-              : 'Proposals'}
-          {proposalCount > 0 && <span className="text-[10px]">{proposalCount}</span>}
-        </button>
+          <button
+            type="button"
+            className="btn btn-ghost h-8 shrink-0 px-2"
+            aria-haspopup="dialog"
+            onClick={() => setProposalsOpen(true)}
+          >
+            {attributionState === 'running' ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-300" />
+            ) : attributionState === 'failed' ? (
+              <CircleX className="h-3.5 w-3.5 text-red-300" />
+            ) : proposalCount > 0 ? (
+              <FileText className="h-3.5 w-3.5" />
+            ) : (
+              <History className="h-3.5 w-3.5" />
+            )}
+            {attributionState === 'running'
+              ? '归因中'
+              : attributionState === 'failed'
+                ? '归因失败'
+                : 'Proposals'}
+            {proposalCount > 0 && <span className="text-[10px]">{proposalCount}</span>}
+          </button>
+        </div>
       </header>
 
       {proposalsOpen && (
@@ -289,7 +326,16 @@ export function ChatArea({
           ))
         )}
 
-        {activationStatus === 'RUNNING' && !hasRunningTool && !activationHasReply && (
+        {interrupting && (
+          <div className="flex justify-center">
+            <span className="flex max-w-[85%] items-center gap-2 rounded-full border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-300">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              正在停止 Owner…
+            </span>
+          </div>
+        )}
+
+        {activationStatus === 'RUNNING' && !hasRunningTool && !activationHasReply && !interrupting && (
           <div className="flex justify-center">
             <span className="flex max-w-[85%] items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-[11px] text-emerald-300">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -347,6 +393,7 @@ export function ChatArea({
               </button>
             </div>
             <p className="mt-1.5 text-[10px] text-muted-foreground/50">
+              {canInterrupt ? 'Esc to stop Owner · ' : ''}
               {requiresDecision
                 ? 'Choose the available decision above before sending another message.'
                 : 'Enter to send · Shift+Enter for a new line. Refresh to retrieve later Owner updates.'}
