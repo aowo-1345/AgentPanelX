@@ -23,6 +23,7 @@ export const FEATURE_ACTIONS = [
   'approve-plan',
   'reject-plan',
   'start-delivery',
+  'reject-first-run',
   'approve-blocked-run',
   'reject-blocked-run',
 ] as const;
@@ -67,6 +68,12 @@ export interface ActivationReceipt {
   created_at: string;
 }
 
+export interface InterruptReceipt {
+  activation_id: string | null;
+  status: string | null;
+  accepted: boolean;
+}
+
 export interface CreatedIssue {
   number: number;
   url: string;
@@ -82,6 +89,7 @@ export interface RuntimeData {
   pending_action: string | null;
   activation_status: string | null;
   activation_has_reply: boolean;
+  can_interrupt_owner: boolean;
   current_milestone_key: string | null;
   current_stage_key: string | null;
   blocked_reason: string | null;

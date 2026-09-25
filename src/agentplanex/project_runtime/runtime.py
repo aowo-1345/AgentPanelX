@@ -27,6 +27,9 @@ class ProjectRuntime:
     def submit_message(self, content: str) -> OwnerActivation:
         return self._service.submit_user_message(content)
 
+    def interrupt_owner(self, triage_id: str) -> OwnerActivation | None:
+        return self._service.request_owner_interrupt(triage_id)
+
     def approve_plan(self) -> PlanDecision:
         return self._service.approve_plan()
 
@@ -35,6 +38,9 @@ class ProjectRuntime:
 
     def start_first_run(self) -> MilestoneRunQueued:
         return self._service.start_first_run()
+
+    def reject_first_run(self, feedback: str) -> ProjectRuntimeState:
+        return self._service.reject_first_run(feedback)
 
     def approve_blocked_run(self) -> MilestoneRunQueued:
         return self._service.approve_blocked_run()

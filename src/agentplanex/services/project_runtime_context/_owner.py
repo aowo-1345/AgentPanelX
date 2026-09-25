@@ -17,6 +17,7 @@ from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMessageHistoryRepository,
+    SQLiteOwnerActivationRepository,
     SQLiteProjectOwnerAgentRepository,
     SQLiteSummaryHistoryRepository,
 )
@@ -181,6 +182,12 @@ class _OwnerRuntime:
             result = _unhandled_exit(RuntimeError("Project Owner Agent returned without an exit"))
         return result
 
+    def should_interrupt(self, activation_id: str) -> bool:
+        with self.database.read_only_connection() as connection:
+            return SQLiteOwnerActivationRepository().is_interrupt_requested(
+                connection, activation_id,
+            )
+
     def execute_activation_action(
         self,
         state: ProjectRuntimeState,
@@ -324,6 +331,13 @@ class _OwnerRuntime:
             ),
             tools=fixed_tools,
             summary_model=summary_responses,
+            runtime_notice=(
+                "上一轮 Owner 执行被用户主动中断。"
+                "只把已经持久化的消息、Tool 结果和文件变更视为已完成。"
+                "不要假设未完成的模型输出已经发生。"
+                if activation.previous_interrupted_activation_id is not None
+                else None
+            ),
         )
 
         return (
@@ -335,6 +349,7 @@ class _OwnerRuntime:
                 ),
                 owner_context=owner_context,
                 config=config,
+                should_interrupt=lambda: self.should_interrupt(activation.activation_id),
             )
             if self.approval_mode == "yolo"
             else InteractiveAgent(
@@ -348,6 +363,7 @@ class _OwnerRuntime:
                     require_tty=os.getenv("AGENTPLANEX_REQUIRE_INTERACTIVE_TERMINAL", "1") != "0"
                 ),
                 config=config,
+                should_interrupt=lambda: self.should_interrupt(activation.activation_id),
             )
         )
 

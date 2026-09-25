@@ -33,6 +33,7 @@ from agentplanex.services.delivery.models import MilestoneSnapshot, StageRun, St
 from agentplanex.services.planning.models import PLAN_DOCUMENT_NAMES
 from agentplanex.services.project_runtime_context.models import (
     OwnerActivation,
+    OwnerActivationStatus,
 )
 from agentplanex.services.web.to_issue import CreatedIssue
 
@@ -100,8 +101,6 @@ class ProjectWorkspaceView:
     """Panels derived from one required persisted Runtime State."""
 
     state: ProjectRuntimeState
-    active_stage_run_id: str | None
-    active_stage_run_status: StageRunStatus | None
     owner_activation: OwnerActivation | None
     activation_has_reply: bool
     runtime_error: str | None
@@ -109,7 +108,7 @@ class ProjectWorkspaceView:
     milestones_error: str | None
     timeline: tuple[ExecutionEvent, ...]
     timeline_error: str | None
-    conversation: tuple[VisibleMessage, ...]
+    conversation: tuple[VisibleMessage, ...] | None
     conversation_error: str | None
     plan_documents: tuple[PlanDocument, ...]
     plan_error: str | None
@@ -117,6 +116,8 @@ class ProjectWorkspaceView:
     git_head: str | None
     git_error: str | None
     available_actions: tuple[FeatureAction, ...]
+    active_stage_run_id: str | None = None
+    active_stage_run_status: StageRunStatus | None = None
     attribution: AttributionData = field(
         default_factory=lambda: AttributionData(state="idle", reports=())
     )
@@ -178,7 +179,7 @@ class ProjectWorkspaceQuery:
                 activation,
             )
         else:
-            conversation, conversation_error, activation_has_reply = (), None, False
+            conversation, conversation_error, activation_has_reply = None, None, False
         plan_documents, plan_error = _read_plan_documents(self.git)
         attribution, attribution_error = self._attribution(triage_id)
         branch, head, git_error = _git_panel(self.git)
@@ -339,14 +340,26 @@ def _human_actions(
     active_stage: StageRun | None,
     runtime_error: str | None,
 ) -> tuple[FeatureAction, ...]:
-    if runtime_error is not None or activation is not None or active_stage is not None:
+    if runtime_error is not None or active_stage is not None:
+        return ()
+    if activation is not None:
+        if (
+            state.pending_action == "FIRST_RUN_APPROVAL"
+            and activation.status is OwnerActivationStatus.PENDING
+        ):
+            return (FeatureAction.REJECT_FIRST_RUN,)
+        if (
+            state.pending_action == "BLOCKED_RUN_APPROVAL"
+            and activation.status is OwnerActivationStatus.PENDING
+        ):
+            return (FeatureAction.REJECT_BLOCKED_RUN,)
         return ()
     if state.status == "TRIAGE":
         return (FeatureAction.BEGIN,)
     if state.pending_action == "PLAN_APPROVAL":
         return (FeatureAction.APPROVE_PLAN, FeatureAction.REJECT_PLAN)
     if state.pending_action == "FIRST_RUN_APPROVAL":
-        return (FeatureAction.START_DELIVERY,)
+        return (FeatureAction.START_DELIVERY, FeatureAction.REJECT_FIRST_RUN)
     if state.pending_action == "BLOCKED_RUN_APPROVAL":
         return (
             FeatureAction.APPROVE_BLOCKED_RUN,

@@ -185,6 +185,16 @@ class ProjectRuntimeContext:
         with self.operation():
             return self._current_state()
 
+    def request_owner_interrupt(self, triage_id: str) -> OwnerActivation | None:
+        """Request cooperative interruption without taking the long Runtime lock."""
+        self._require_sealed()
+        with self.database.transaction() as connection:
+            if self._states.get(connection, triage_id) is None:
+                raise LookupError("Workspace Feature binding does not match its Runtime identity")
+            self.mutation_fence_guard(connection, self._mutation_fence.get())
+            requested = self._activation.request_interrupt(connection, triage_id)
+            return requested or self._activation.latest(connection, triage_id)
+
     @contextmanager
     def use_mutation_fence(self, token: str | None) -> Iterator[None]:
         """Bind the caller's mutation fence across nested Runtime transactions."""
@@ -414,8 +424,15 @@ class ProjectRuntimeContext:
                 reason=RuntimeContextChangeReason.OWNER_ACTIVATION_FAILED,
                 mutate=_block_after_owner_failure,
             )
+        if finalized.status is OwnerActivationStatus.INTERRUPTED:
+            result = AgentExit(
+                status=AgentExitStatus.USER_INTERRUPTED,
+                content="Owner was interrupted by the user.",
+            )
         transaction._stage_conversation_activation(finalized)
         transaction._stage_event(self._activation.exited_event(finalized, result))
+        if finalized.status is OwnerActivationStatus.INTERRUPTED:
+            transaction._stage_event(self._activation.user_interrupted_event(finalized))
         return finalized
 
     def _fail_tool_step(

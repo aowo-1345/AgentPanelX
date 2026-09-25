@@ -707,7 +707,7 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
             thread_id="fresh-stage-thread",
             turn_id="recorded-turn",
             status="completed",
-            final_response='{"summary":"Recorded stage."}',
+            final_response="Recorded stage.",
         )
 
     monkeypatch.setattr(CodexTurnTransport, "run", record)
@@ -779,10 +779,11 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
     assert "Current authoritative Runtime facts:" in request.message
     assert "Fixed StageRun contract:" in request.message
     assert "Activation output contract:" in request.message
+    assert "return only a JSON object" not in request.message
     assert '"stage_run_id": "stage-run-1"' in request.message
     assert '"input_commit_sha": "input-commit"' in request.message
     assert "Establish contracts." in request.message
     assert "Implement the fixed contract." in request.message
     assert request.workspace == worktree
     assert request.mentions == ()
-    assert request.output_schema is not None
+    assert request.output_schema is None

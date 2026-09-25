@@ -34,10 +34,12 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
     loadState,
     loadError,
     sending,
+    interrupting,
     pendingAction,
     deleting,
     load,
     sendMessage: sendWorkspaceMessage,
+    interruptOwner: interruptWorkspaceOwner,
     performAction: performWorkspaceAction,
     createProposalIssue,
     deleteFeature: deleteWorkspaceFeature,
@@ -89,6 +91,32 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
       const accepted = await performWorkspaceAction(action, feedback);
       if (accepted) {
         setNotice({ kind: 'success', text: `Action “${action}” was accepted by the backend.` });
+      }
+    } catch (caught) {
+      setNotice({ kind: 'error', text: readableError(caught) });
+    }
+  }
+
+  async function interruptOwner() {
+    if (snapshot) {
+      setNotice(READ_ONLY_NOTICE);
+      return;
+    }
+    setNotice(null);
+    try {
+      const { receipt, refreshError } = await interruptWorkspaceOwner();
+      if (!receipt.accepted) {
+        setNotice({
+          kind: 'warning',
+          text: receipt.status
+            ? `Owner is already ${receipt.status.toLowerCase()}. Refreshing workspace.`
+            : 'No running Owner activation was found. Refreshing workspace.',
+        });
+      } else if (refreshError) {
+        setNotice({
+          kind: 'warning',
+          text: `Owner interruption requested, but the immediate workspace refresh failed: ${readableError(refreshError)}`,
+        });
       }
     } catch (caught) {
       setNotice({ kind: 'error', text: readableError(caught) });
@@ -201,11 +229,14 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
                 attribution={workspace.attribution}
                 actions={workspace.available_actions}
                 activationStatus={activationStatus}
+                canInterrupt={workspace.runtime.data?.can_interrupt_owner ?? false}
+                interrupting={interrupting}
                 activationHasReply={workspace.runtime.data?.activation_has_reply ?? false}
                 pendingAction={pendingAction}
                 sending={sending}
                 notice={notice}
                 onSend={sendMessage}
+                onInterrupt={interruptOwner}
                 onAction={performAction}
                 onCreateProposalIssue={snapshot ? undefined : createProposalIssue}
               />

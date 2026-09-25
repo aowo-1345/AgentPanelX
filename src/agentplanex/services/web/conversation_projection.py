@@ -105,6 +105,14 @@ class ConversationProjection:
             self._append_message(history, index, message)
         if activation is not None and activation.failure is not None:
             self._append_failure(activation)
+        elif activation is not None and activation.status is OwnerActivationStatus.INTERRUPTED:
+            self._visible.append(
+                VisibleMessage(
+                    f"{activation.activation_id}:interrupted",
+                    "status",
+                    "Owner 已被用户中断",
+                )
+            )
 
     def _append_message(self, history: MessageHistory, index: int, message: Message) -> None:
         calls = tool_calls(message)
@@ -225,6 +233,14 @@ class ConversationProjection:
                 )
         if activation.failure is not None:
             self._append_failure(activation)
+        elif activation.status is OwnerActivationStatus.INTERRUPTED:
+            self._append_interrupted(activation)
+
+    def _append_interrupted(self, activation: OwnerActivation) -> None:
+        message_id = f"{activation.activation_id}:interrupted"
+        if any(item.message_id == message_id for item in self._visible):
+            return
+        self._visible.append(VisibleMessage(message_id, "status", "Owner 已被用户中断"))
 
     def _append_failure(self, activation: OwnerActivation) -> None:
         if activation.activation_id in self._failure_rows:

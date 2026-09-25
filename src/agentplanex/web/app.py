@@ -26,6 +26,7 @@ from agentplanex.web.schemas import (
     CreateFeatureRequest,
     CreateProjectRequest,
     FeatureResponse,
+    InterruptResponse,
     MessageRequest,
     ProjectResponse,
     WorkspaceResponse,
@@ -33,6 +34,7 @@ from agentplanex.web.schemas import (
     board_feature_response,
     conversation_message_response,
     feature_response,
+    interrupt_response,
     project_response,
     workspace_response,
 )
@@ -305,6 +307,24 @@ def _install_routes(
             content=request.content,
         )
         return activation_response(activation)
+
+    @app.post(
+        "/api/projects/{project_id}/features/{triage_id}/interrupt",
+        response_model=InterruptResponse,
+    )
+    def interrupt_owner(
+        project_id: str,
+        triage_id: str,
+        response: Response,
+    ) -> InterruptResponse:
+        activation = workspace.interrupt_feature_owner(
+            project_id=project_id,
+            triage_id=triage_id,
+        )
+        receipt = interrupt_response(activation)
+        if receipt.accepted:
+            response.status_code = status.HTTP_202_ACCEPTED
+        return receipt
 
     @app.post(
         "/api/projects/{project_id}/features/{triage_id}/actions",

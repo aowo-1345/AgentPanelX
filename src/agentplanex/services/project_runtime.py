@@ -54,6 +54,12 @@ class ProjectRuntimeService:
     def submit_user_message(self, content: str) -> OwnerActivation:
         """Persist a user message and its durable Owner activation atomically."""
         with self.context.operation():
+            state = self.context.state()
+            if state.pending_action is not None:
+                raise ValueError(
+                    "Project is waiting for human action "
+                    f"{state.pending_action}; choose the available decision first"
+                )
             task = ProjectOwnerTask(
                 type=ProjectOwnerTaskType.USER_INPUT,
                 content=content,
@@ -65,6 +71,12 @@ class ProjectRuntimeService:
                     mutate=_start_conversation,
                 )
                 return transaction.submit_owner_input(task)
+
+    def request_owner_interrupt(self, triage_id: str) -> OwnerActivation | None:
+        """Set the current Owner activation's cooperative interrupt marker."""
+        if triage_id.strip() == "":
+            raise ValueError("Feature Triage ID must not be empty")
+        return self.context.request_owner_interrupt(triage_id)
 
     def approve_plan(self) -> PlanDecision:
         with self.context.operation():
@@ -151,6 +163,13 @@ class ProjectRuntimeService:
             self._assert_delivery_idle()
             return self.delivery.start_first_run()
 
+    def reject_first_run(self, feedback: str) -> ProjectRuntimeState:
+        with self.context.operation():
+            self._assert_delivery_idle()
+            if self.context.owner_work() is OwnerWorkState.RUNNING:
+                raise ValueError("Project Owner already has a running activation")
+            return self.delivery.reject_first_run(feedback)
+
     def approve_blocked_run(self) -> MilestoneRunQueued:
         with self.context.operation():
             if self.context.owner_work() is not OwnerWorkState.IDLE:
@@ -160,7 +179,7 @@ class ProjectRuntimeService:
 
     def reject_blocked_run(self, feedback: str) -> ProjectRuntimeState:
         with self.context.operation():
-            if self.context.owner_work() is not OwnerWorkState.IDLE:
+            if self.context.owner_work() is OwnerWorkState.RUNNING:
                 raise ValueError("Project Owner already has unfinished work")
             self._assert_delivery_idle()
             return self.delivery.reject_blocked_run(feedback)

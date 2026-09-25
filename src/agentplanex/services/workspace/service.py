@@ -57,11 +57,8 @@ class WorkspaceService:
         failed_features = 0
         for project in self.registry.list_projects():
             for binding in self.registry.list_features(project.project_id):
-                active_stage = self.queries.active_stage_run(binding)
                 if self.runtime_factory(binding.worktree_path).fail_interrupted_work():
                     failed_features += 1
-                if active_stage is not None:
-                    self.stage_output_observer.close(active_stage.stage_run_id)
         return failed_features
 
     def close(self) -> None:
@@ -189,6 +186,16 @@ class WorkspaceService:
             after_release=lambda: self._after_drive_released(binding, watermark),
         )
 
+    def interrupt_feature_owner(
+        self,
+        *,
+        project_id: str,
+        triage_id: str,
+    ) -> OwnerActivation | None:
+        binding = self._require_feature_binding(project_id, triage_id)
+        runtime = self.runtime_factory(binding.worktree_path)
+        return runtime.interrupt_owner(binding.triage_id)
+
     def project_board(self, project_id: str) -> ProjectBoard:
         return self.queries.project_board(_required_text("Project ID", project_id))
 
@@ -255,6 +262,7 @@ class WorkspaceService:
             action
             in {
                 FeatureAction.REJECT_PLAN,
+                FeatureAction.REJECT_FIRST_RUN,
                 FeatureAction.REJECT_BLOCKED_RUN,
             }
             and not feedback.strip()
@@ -264,6 +272,7 @@ class WorkspaceService:
             FeatureAction.APPROVE_PLAN,
             FeatureAction.REJECT_PLAN,
             FeatureAction.START_DELIVERY,
+            FeatureAction.REJECT_FIRST_RUN,
             FeatureAction.APPROVE_BLOCKED_RUN,
             FeatureAction.REJECT_BLOCKED_RUN,
         }:
@@ -327,6 +336,8 @@ class WorkspaceService:
             runtime.reject_plan(feedback)
         elif action is FeatureAction.START_DELIVERY:
             runtime.start_first_run()
+        elif action is FeatureAction.REJECT_FIRST_RUN:
+            runtime.reject_first_run(feedback)
         elif action is FeatureAction.APPROVE_BLOCKED_RUN:
             runtime.approve_blocked_run()
         elif action is FeatureAction.REJECT_BLOCKED_RUN:

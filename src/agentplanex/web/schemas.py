@@ -77,6 +77,12 @@ class ActivationResponse(Schema):
     created_at: datetime
 
 
+class InterruptResponse(Schema):
+    activation_id: str | None
+    status: str | None
+    accepted: bool
+
+
 class CreatedIssueResponse(Schema):
     number: int
     url: str
@@ -92,6 +98,7 @@ class ActionRequest(Schema):
             self.action
             in {
                 FeatureAction.REJECT_PLAN,
+                FeatureAction.REJECT_FIRST_RUN,
                 FeatureAction.REJECT_BLOCKED_RUN,
             }
             and not (self.feedback or "").strip()
@@ -105,6 +112,7 @@ class RuntimeData(Schema):
     pending_action: str | None
     activation_status: str | None
     activation_has_reply: bool
+    can_interrupt_owner: bool
     current_milestone_key: str | None
     current_stage_key: str | None
     blocked_reason: str | None
@@ -248,6 +256,15 @@ def activation_response(activation: OwnerActivation) -> ActivationResponse:
     )
 
 
+def interrupt_response(activation: OwnerActivation | None) -> InterruptResponse:
+    accepted = activation is not None and activation.interrupt_requested
+    return InterruptResponse(
+        activation_id=activation.activation_id if activation is not None else None,
+        status=activation.status.value if activation is not None else None,
+        accepted=accepted,
+    )
+
+
 def conversation_message_response(message: VisibleMessage) -> ConversationMessage:
     return ConversationMessage(
         message_id=message.message_id,
@@ -297,6 +314,12 @@ def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
                         else None
                     ),
                     activation_has_reply=runtime_view.activation_has_reply,
+                    can_interrupt_owner=(
+                        runtime_view.owner_activation is not None
+                        and runtime_view.owner_activation.status.value == "RUNNING"
+                        and runtime_view.owner_activation.driver_mode is not None
+                        and runtime_view.owner_activation.driver_mode.value == "MODEL"
+                    ),
                     current_milestone_key=context.current_milestone_key,
                     current_stage_key=context.current_stage_key,
                     blocked_reason=context.blocked_reason,
@@ -324,10 +347,14 @@ def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
         ),
         conversation=Panel(
             data=(
-                [
-                    conversation_message_response(message)
-                    for message in runtime_view.conversation
-                ]
+                (
+                    [
+                        conversation_message_response(message)
+                        for message in runtime_view.conversation
+                    ]
+                    if runtime_view.conversation is not None
+                    else None
+                )
                 if runtime_view.conversation_error is None
                 else None
             ),

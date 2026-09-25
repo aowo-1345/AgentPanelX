@@ -14,7 +14,7 @@ class AgentOperation[InputT: BaseModel, OutputT](Protocol):
     """Role-owned static Contract and activation preparation."""
 
     operation_key: str
-    output_schema: dict[str, Any]
+    output_schema: dict[str, Any] | None
 
     def contract_fingerprint(self) -> object: ...
 

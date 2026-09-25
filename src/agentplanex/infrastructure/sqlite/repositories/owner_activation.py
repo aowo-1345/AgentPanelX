@@ -28,6 +28,8 @@ class SQLiteOwnerActivationRepository:
                 task_type,
                 message_id,
                 summary_id,
+                previous_interrupted_activation_id,
+                interrupt_requested,
                 status,
                 driver_mode,
                 created_at,
@@ -35,7 +37,7 @@ class SQLiteOwnerActivationRepository:
                 finished_at,
                 failure
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             self._values(activation),
         )
@@ -81,6 +83,60 @@ class SQLiteOwnerActivationRepository:
             ),
         ).fetchone()
         return self._from_row(row) if row is not None else None
+
+    def get_latest(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+    ) -> OwnerActivation | None:
+        row = connection.execute(
+            f"""
+            {self._SELECT}
+            WHERE triage_id = ?
+            ORDER BY created_at DESC, activation_id DESC
+            LIMIT 1
+            """,
+            (triage_id,),
+        ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def request_interrupt(
+        self,
+        connection: sqlite3.Connection,
+        triage_id: str,
+    ) -> OwnerActivation | None:
+        """Mark the current running Model activation for cooperative interruption."""
+        row = connection.execute(
+            f"""
+            UPDATE owner_activation
+            SET interrupt_requested = 1
+            WHERE triage_id = ?
+              AND status = ?
+              AND driver_mode = ?
+            RETURNING {self._COLUMNS}
+            """,
+            (
+                triage_id,
+                OwnerActivationStatus.RUNNING.value,
+                OwnerActivationMode.MODEL.value,
+            ),
+        ).fetchone()
+        return self._from_row(row) if row is not None else None
+
+    def is_interrupt_requested(
+        self,
+        connection: sqlite3.Connection,
+        activation_id: str,
+    ) -> bool:
+        row = connection.execute(
+            """
+            SELECT interrupt_requested
+            FROM owner_activation
+            WHERE activation_id = ?
+            """,
+            (activation_id,),
+        ).fetchone()
+        return bool(row[0]) if row is not None else False
 
     def claim_next(
         self,
@@ -153,6 +209,20 @@ class SQLiteOwnerActivationRepository:
             failure=None,
         )
 
+    def mark_interrupted(
+        self,
+        connection: sqlite3.Connection,
+        activation_id: str,
+        finished_at: datetime,
+    ) -> OwnerActivation:
+        return self._finish(
+            connection,
+            activation_id=activation_id,
+            status=OwnerActivationStatus.INTERRUPTED,
+            finished_at=finished_at,
+            failure=None,
+        )
+
     def set_initial_summary(
         self,
         connection: sqlite3.Connection,
@@ -212,7 +282,8 @@ class SQLiteOwnerActivationRepository:
                 status = ?,
                 driver_mode = COALESCE(driver_mode, ?),
                 finished_at = ?,
-                failure = ?
+                failure = ?,
+                interrupt_requested = 0
             WHERE triage_id = ? AND status IN (?, ?)
             RETURNING {self._COLUMNS}
             """,
@@ -240,7 +311,7 @@ class SQLiteOwnerActivationRepository:
         row = connection.execute(
             f"""
             UPDATE owner_activation
-            SET status = ?, finished_at = ?, failure = ?
+            SET status = ?, finished_at = ?, failure = ?, interrupt_requested = 0
             WHERE activation_id = ? AND status = ?
             RETURNING {self._COLUMNS}
             """,
@@ -293,6 +364,8 @@ class SQLiteOwnerActivationRepository:
         task_type,
         message_id,
         summary_id,
+        previous_interrupted_activation_id,
+        interrupt_requested,
         status,
         driver_mode,
         created_at,
@@ -310,6 +383,8 @@ class SQLiteOwnerActivationRepository:
             activation.task_type.value,
             activation.message_id,
             activation.summary_id,
+            activation.previous_interrupted_activation_id,
+            int(activation.interrupt_requested),
             activation.status.value,
             activation.driver_mode.value if activation.driver_mode is not None else None,
             _encode_datetime(activation.created_at),
@@ -326,6 +401,11 @@ class SQLiteOwnerActivationRepository:
             task_type=ProjectOwnerTaskType(cast(str, row["task_type"])),
             message_id=cast(str, row["message_id"]),
             summary_id=cast(str | None, row["summary_id"]),
+            previous_interrupted_activation_id=cast(
+                str | None,
+                row["previous_interrupted_activation_id"],
+            ),
+            interrupt_requested=bool(row["interrupt_requested"]),
             status=OwnerActivationStatus(cast(str, row["status"])),
             driver_mode=(
                 OwnerActivationMode(cast(str, row["driver_mode"]))

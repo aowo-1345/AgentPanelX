@@ -431,6 +431,7 @@ function workspaceFor(index: number): Workspace {
         pending_action: index === 1 ? 'PLAN_APPROVAL' : null,
         activation_status: index === 0 || index === 4 ? 'RUNNING' : null,
         activation_has_reply: index !== 0,
+        can_interrupt_owner: false,
         current_milestone_key: index >= 1 ? 'M1' : null,
         current_stage_key: index >= 2 && !complete ? 'S2-assistance-projection' : null,
         blocked_reason: blocked

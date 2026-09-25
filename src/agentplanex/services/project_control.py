@@ -108,6 +108,11 @@ def _allowed_actions(
         OwnerActivationStatus.PENDING,
         OwnerActivationStatus.RUNNING,
     }:
+        if activation.status is OwnerActivationStatus.PENDING:
+            if state.pending_action == "FIRST_RUN_APPROVAL":
+                return ("reject-first-run",)
+            if state.pending_action == "BLOCKED_RUN_APPROVAL":
+                return ("reject-blocked-run",)
         return ("drive",)
     if active_stage is not None and active_stage.status in {
         StageRunStatus.QUEUED,
@@ -118,7 +123,7 @@ def _allowed_actions(
     if state.pending_action == "PLAN_APPROVAL":
         actions.extend(("approve", "reject"))
     elif state.pending_action == "FIRST_RUN_APPROVAL":
-        actions.append("start")
+        actions.extend(("start", "reject-first-run"))
     elif state.pending_action == "BLOCKED_RUN_APPROVAL":
         actions.extend(("approve-blocked-run", "reject-blocked-run"))
     return tuple(actions)

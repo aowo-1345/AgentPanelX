@@ -28,6 +28,7 @@ class OwnerActivationStatus(StrEnum):
     RUNNING = "RUNNING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    INTERRUPTED = "INTERRUPTED"
 
 
 class OwnerActivationMode(StrEnum):
@@ -51,6 +52,8 @@ class OwnerActivation:
     task_type: ProjectOwnerTaskType
     message_id: str
     summary_id: str | None = None
+    previous_interrupted_activation_id: str | None = None
+    interrupt_requested: bool = False
     status: OwnerActivationStatus = OwnerActivationStatus.PENDING
     driver_mode: OwnerActivationMode | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -64,6 +67,13 @@ class OwnerActivation:
                 raise ValueError(f"{field_name} must not be empty")
         if self.summary_id is not None and not self.summary_id.strip():
             raise ValueError("summary_id must not be empty")
+        if (
+            self.previous_interrupted_activation_id is not None
+            and not self.previous_interrupted_activation_id.strip()
+        ):
+            raise ValueError("previous_interrupted_activation_id must not be empty")
+        if self.interrupt_requested and self.status is not OwnerActivationStatus.RUNNING:
+            raise ValueError("Only a running activation may have an interrupt request")
         if self.status is OwnerActivationStatus.PENDING:
             if self.driver_mode is None:
                 if any(

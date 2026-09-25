@@ -4,6 +4,7 @@ import type {
   ActivationReceipt,
   CreatedIssue,
   FeatureAction,
+  InterruptReceipt,
   Workspace,
 } from '@/api/types';
 import { useSilentPolling } from '@/hooks/useSilentPolling';
@@ -22,15 +23,22 @@ export interface SendMessageResult {
   refreshError: unknown | null;
 }
 
+export interface InterruptOwnerResult {
+  receipt: InterruptReceipt;
+  refreshError: unknown | null;
+}
+
 interface UseWorkspaceResult {
   workspace: Workspace | null;
   loadState: WorkspaceLoadState;
   loadError: string;
   sending: boolean;
+  interrupting: boolean;
   pendingAction: FeatureAction | null;
   deleting: boolean;
   load: (refresh?: boolean) => Promise<void>;
   sendMessage: (content: string) => Promise<SendMessageResult>;
+  interruptOwner: () => Promise<InterruptOwnerResult>;
   performAction: (action: FeatureAction, feedback?: string) => Promise<boolean>;
   createProposalIssue: (runId: string) => Promise<CreatedIssue>;
   deleteFeature: () => Promise<void>;
@@ -52,7 +60,10 @@ function mergeWorkspace(current: Workspace | null, next: Workspace): Workspace {
     available_actions: preserveEqual(current.available_actions, next.available_actions),
     runtime: preserveEqual(current.runtime, next.runtime),
     active_execution: preserveEqual(current.active_execution, next.active_execution),
-    conversation: preserveEqual(current.conversation, next.conversation),
+    conversation:
+      next.conversation.data === null && next.conversation.error === null
+        ? current.conversation
+        : preserveEqual(current.conversation, next.conversation),
     plan: preserveEqual(current.plan, next.plan),
     milestones: preserveEqual(current.milestones, next.milestones),
     timeline: preserveEqual(current.timeline, next.timeline),
@@ -74,6 +85,7 @@ export function useWorkspace({
   const [loadState, setLoadState] = useState<WorkspaceLoadState>(snapshot ? 'loaded' : 'loading');
   const [loadError, setLoadError] = useState('');
   const [sending, setSending] = useState(false);
+  const [interrupting, setInterrupting] = useState(false);
   const [pendingAction, setPendingAction] = useState<FeatureAction | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -134,11 +146,18 @@ export function useWorkspace({
   );
 
   const activationStatus = workspace?.runtime.data?.activation_status ?? null;
+  useEffect(() => {
+    if (activationStatus !== 'RUNNING') {
+      setInterrupting(false);
+    }
+  }, [activationStatus]);
+
   const workspaceBusy =
     activationStatus === 'PENDING' ||
     activationStatus === 'RUNNING' ||
     workspace?.feature.status === 'IN_PROGRESS' ||
     sending ||
+    interrupting ||
     pendingAction !== null;
 
   useSilentPolling({
@@ -197,6 +216,30 @@ export function useWorkspace({
     [applyWorkspace, pendingAction, projectId, snapshot, triageId],
   );
 
+  const interruptOwner = useCallback(async (): Promise<InterruptOwnerResult> => {
+    if (snapshot) throw new Error('This public Console is read-only.');
+    if (!projectId || !triageId) throw new Error('Workspace identity is missing');
+    if (interrupting) throw new Error('Owner interruption is already being requested');
+
+    setInterrupting(true);
+    try {
+      const receipt = await api.interruptOwner(projectId, triageId);
+      let refreshError: unknown | null = null;
+      try {
+        await refreshFromServer();
+      } catch (caught) {
+        refreshError = caught;
+      }
+      if (!receipt.accepted) {
+        setInterrupting(false);
+      }
+      return { receipt, refreshError };
+    } catch (caught) {
+      setInterrupting(false);
+      throw caught;
+    }
+  }, [interrupting, projectId, refreshFromServer, snapshot, triageId]);
+
   const createProposalIssue = useCallback(
     async (runId: string): Promise<CreatedIssue> => {
       if (snapshot) throw new Error('This public Console is read-only.');
@@ -254,10 +297,12 @@ export function useWorkspace({
     loadState,
     loadError,
     sending,
+    interrupting,
     pendingAction,
     deleting,
     load,
     sendMessage,
+    interruptOwner,
     performAction,
     createProposalIssue,
     deleteFeature,

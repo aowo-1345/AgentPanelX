@@ -117,7 +117,8 @@
           "current_milestone_key": null,
           "current_stage_key": null,
           "blocked_reason": null,
-          "blocked_capability": null
+          "blocked_capability": null,
+          "can_interrupt_owner": false
         },
         "error": null
       },
@@ -714,7 +715,8 @@
           "current_milestone_key": "M1",
           "current_stage_key": "M1-S1",
           "blocked_reason": null,
-          "blocked_capability": null
+          "blocked_capability": null,
+          "can_interrupt_owner": false
         },
         "error": null
       },
@@ -1348,7 +1350,8 @@
           "current_milestone_key": null,
           "current_stage_key": null,
           "blocked_reason": null,
-          "blocked_capability": null
+          "blocked_capability": null,
+          "can_interrupt_owner": false
         },
         "error": null
       },
@@ -1801,7 +1804,8 @@
           "current_milestone_key": null,
           "current_stage_key": null,
           "blocked_reason": null,
-          "blocked_capability": null
+          "blocked_capability": null,
+          "can_interrupt_owner": false
         },
         "error": null
       },
@@ -2000,7 +2004,8 @@
           "current_milestone_key": null,
           "current_stage_key": null,
           "blocked_reason": null,
-          "blocked_capability": null
+          "blocked_capability": null,
+          "can_interrupt_owner": false
         },
         "error": null
       },
