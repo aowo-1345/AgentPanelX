@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from agentplanex.infrastructure.codex import CodexTurnResult
 from agentplanex.infrastructure.git_repository import GitRepository
@@ -19,13 +19,6 @@ from agentplanex.services.external_agent_runtime import (
     ManagedAgentScope,
     PreparedAgentTurn,
 )
-
-_STAGE_OUTPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {"summary": {"type": "string"}},
-    "required": ["summary"],
-    "additionalProperties": False,
-}
 
 
 class StageExecutorError(RuntimeError):
@@ -72,7 +65,7 @@ class _StageOutput(BaseModel):
 @dataclass(frozen=True, slots=True)
 class _StageOperation:
     operation_key: str = "stage_execution_v1"
-    output_schema: ClassVar[dict[str, Any]] = _STAGE_OUTPUT_SCHEMA
+    output_schema: ClassVar[dict[str, Any] | None] = None
 
     def contract_fingerprint(self) -> object:
         return {"operation_key": self.operation_key, "result": "summary"}
@@ -118,8 +111,8 @@ class _StageOperation:
             ),
             control_text=(
                 "Activation output contract:\nLeave all Candidate changes uncommitted, write "
-                "the declared non-empty delivery document, and return only a JSON object "
-                "containing one non-empty short summary field."
+                "the declared non-empty delivery document. After completing the work, "
+                "provide a brief summary."
             ),
             execution_workspace=worktree,
         )
@@ -130,13 +123,7 @@ class _StageOperation:
         _context: AgentInvocationContext,
         turn: CodexTurnResult,
     ) -> _StageOutput:
-        try:
-            output = _StageOutput.model_validate_json(turn.final_response)
-        except ValidationError as error:
-            raise StageExecutorError(
-                "Stage Executor final response does not contain a valid summary"
-            ) from error
-        normalized = " ".join(output.summary.split())
+        normalized = " ".join(turn.final_response.split())
         if not normalized:
             raise StageExecutorError("Stage Executor returned an empty summary")
         return _StageOutput(summary=normalized)
