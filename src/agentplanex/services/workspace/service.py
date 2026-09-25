@@ -20,6 +20,8 @@ from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.services.auto_takeover import AutoTakeoverPort
 from agentplanex.services.external_agent_runtime.observation import StageOutputObserver
 from agentplanex.services.project_runtime_context.models import OwnerActivation
+from agentplanex.services.web import ConversationSnapshot
+from agentplanex.services.web.conversation_hub import ConversationHub
 from agentplanex.services.web.to_issue import CreatedIssue, ProposalToIssue
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.queries import (
@@ -47,6 +49,7 @@ class WorkspaceService:
     proposal_to_issue: ProposalToIssue
     auto_takeover: AutoTakeoverPort | None = None
     stage_output_observer: StageOutputObserver = field(default_factory=StageOutputObserver)
+    conversation_hub: ConversationHub = field(default_factory=ConversationHub)
     close_resources: Callable[[], None] = _noop
 
     def start(self) -> int:
@@ -66,6 +69,7 @@ class WorkspaceService:
             self.auto_takeover.stop_accepting()
         self.dispatcher.stop_accepting()
         self.stage_output_observer.close_all()
+        self.conversation_hub.close()
         try:
             self.close_resources()
         finally:
@@ -196,8 +200,21 @@ class WorkspaceService:
         *,
         project_id: str,
         triage_id: str,
+        include_conversation: bool = True,
     ) -> FeatureWorkspaceView:
         return self.queries.feature_workspace(
+            project_id=_required_text("Project ID", project_id),
+            triage_id=_required_text("Feature Triage ID", triage_id),
+            include_conversation=include_conversation,
+        )
+
+    def feature_conversation(
+        self,
+        *,
+        project_id: str,
+        triage_id: str,
+    ) -> ConversationSnapshot:
+        return self.queries.feature_conversation(
             project_id=_required_text("Project ID", project_id),
             triage_id=_required_text("Feature Triage ID", triage_id),
         )

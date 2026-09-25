@@ -12,6 +12,11 @@ from threading import RLock, get_ident
 from typing import BinaryIO
 from uuid import uuid4
 
+from agentplanex.domains.conversation_event import (
+    ConversationActivationUpdated,
+    ConversationEvent,
+    ConversationMessageAppended,
+)
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     RuntimeContextChangeReason,
@@ -21,6 +26,7 @@ from agentplanex.infrastructure.sqlite import SQLiteDatabase
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteProjectRuntimeStateRepository,
 )
+from agentplanex.project_owner_agent.context.models import MessageHistory
 from agentplanex.project_owner_agent.contracts import (
     Action,
     AgentExit,
@@ -241,6 +247,7 @@ class ProjectRuntimeContext:
                 )
                 if activation is not None:
                     transaction._stage_event(self._activation.entered_event(activation))
+                    transaction._stage_conversation_activation(activation)
             if activation is None:
                 return ActivationDriveResult(activation=None, exit=None)
 
@@ -266,6 +273,7 @@ class ProjectRuntimeContext:
                 )
                 if claim.started:
                     transaction._stage_event(self._activation.entered_event(claim.activation))
+                transaction._stage_conversation_activation(claim.activation)
             try:
                 tool_result = self._owner().execute_activation_action(
                     self._reload_state(),
@@ -293,6 +301,7 @@ class ProjectRuntimeContext:
                         transaction.connection,
                         claim.activation,
                     )
+                    transaction._stage_conversation_activation(activation)
             return ToolActivationDriveResult(
                 activation=activation,
                 started=claim.started,
@@ -312,9 +321,10 @@ class ProjectRuntimeContext:
                 )
                 if claim.started:
                     transaction._stage_event(self._activation.entered_event(claim.activation))
+                transaction._stage_conversation_activation(claim.activation)
             try:
                 with self.transaction() as transaction:
-                    result = self._owner().append_reply(
+                    result, history = self._owner().append_reply(
                         transaction.connection,
                         transaction.state(),
                         claim.activation,
@@ -325,6 +335,7 @@ class ProjectRuntimeContext:
                         claim.activation,
                         result,
                     )
+                    transaction._stage_conversation_message(history, activation)
             except Exception as error:
                 return self._fail_tool_step(claim.activation, claim.started, error)
             return ToolActivationDriveResult(
@@ -347,6 +358,7 @@ class ProjectRuntimeContext:
             )
             if claim.started:
                 transaction._stage_event(self._activation.entered_event(claim.activation))
+            transaction._stage_conversation_activation(claim.activation)
             activation = self._finish_owner_in_transaction(
                 transaction,
                 claim.activation,
@@ -402,6 +414,7 @@ class ProjectRuntimeContext:
                 reason=RuntimeContextChangeReason.OWNER_ACTIVATION_FAILED,
                 mutate=_block_after_owner_failure,
             )
+        transaction._stage_conversation_activation(finalized)
         transaction._stage_event(self._activation.exited_event(finalized, result))
         return finalized
 
@@ -497,6 +510,7 @@ class ProjectRuntimeTransaction:
     _connection: sqlite3.Connection | None = field(default=None, init=False)
     _state: ProjectRuntimeState | None = field(default=None, init=False)
     _events: list[ExecutionEvent] = field(default_factory=list, init=False)
+    _conversation_events: list[ConversationEvent] = field(default_factory=list, init=False)
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -549,18 +563,20 @@ class ProjectRuntimeTransaction:
             is not OwnerWorkState.IDLE
         ):
             raise ValueError("Project Owner already has an unfinished activation")
-        message_id, summary_id = self._context._owner().append_task(
+        message_id, summary_id, history = self._context._owner().append_task(
             self.connection,
             state,
             owner_input,
         )
-        return self._context._activation.submit_input(
+        activation = self._context._activation.submit_input(
             self.connection,
             triage_id=state.triage_id,
             owner_input=owner_input,
             message_id=message_id,
             summary_id=summary_id,
         )
+        self._stage_conversation_message(history, activation)
+        return activation
 
     def owner_work(self) -> OwnerWorkState:
         """Return the scheduling state of the Context-owned Owner mailbox."""
@@ -584,6 +600,7 @@ class ProjectRuntimeTransaction:
             failure=failure,
         )
         for activation in failed:
+            self._stage_conversation_activation(activation)
             if activation.started_at is not None:
                 self._stage_event(
                     self._context._activation.exited_event(
@@ -610,14 +627,39 @@ class ProjectRuntimeTransaction:
             self._context._cached_state = self._state
         for event in self._events:
             self._context.event_bus.publish(event)
+        for conversation_event in self._conversation_events:
+            self._context.event_bus.publish(conversation_event)
         self._events.clear()
+        self._conversation_events.clear()
 
     def _stage_event(self, event: ExecutionEvent) -> None:
         self._events.append(event)
 
+    def _stage_conversation_message(
+        self,
+        history: MessageHistory,
+        activation: OwnerActivation | None = None,
+    ) -> None:
+        self._conversation_events.append(
+            ConversationMessageAppended(
+                triage_id=self.state().triage_id,
+                history=history,
+                activation=activation,
+            )
+        )
+
+    def _stage_conversation_activation(self, activation: OwnerActivation) -> None:
+        self._conversation_events.append(
+            ConversationActivationUpdated(
+                triage_id=activation.triage_id,
+                activation=activation,
+            )
+        )
+
     def _discard(self) -> None:
         self._state = None
         self._events.clear()
+        self._conversation_events.clear()
 
 
 def _block_after_owner_failure(

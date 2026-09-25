@@ -538,7 +538,7 @@ sequenceDiagram
     end
 ```
 
-当前浏览器采用分层静默轮询：Board 使用较低频率，打开的 Workspace 在 Activation 或 Delivery 活跃时提高刷新频率。旧数据在请求期间保持可见，只有 payload 实际变化时才更新 React state，因此不会因轮询反复清空页面。未来若接入 SSE 或 WebSocket，稳定的推送边界仍应是 Workspace projection 或 event cursor，而不是让每个领域服务直接管理浏览器连接。
+当前浏览器采用分层静默轮询：Board 使用较低频率，打开的 Workspace 在 Activation 或 Delivery 活跃时提高刷新频率。旧数据在请求期间保持可见，只有 payload 实际变化时才更新 React state，因此不会因轮询反复清空页面。Workspace 的 Project Owner 会话另有一个 SSE 订阅：连接建立时发送一次完整快照，之后只发送已提交的可见行 patch；轮询只读取会话之外的 Workspace shell。SSE 的生命周期属于 Web Service，领域服务只向通用 EventBus 发布已提交事件，不直接管理浏览器连接。
 
 Workspace projection 一次组合以下信息：
 

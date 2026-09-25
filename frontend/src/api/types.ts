@@ -109,6 +109,18 @@ export interface ConversationMessage {
   tool_activity: ToolActivity | null;
 }
 
+export interface ConversationSnapshotEvent {
+  cursor: number;
+  messages: ConversationMessage[];
+  activation_has_reply: boolean;
+}
+
+export interface ConversationPatchEvent {
+  cursor: number;
+  messages: ConversationMessage[];
+  activation_has_reply: boolean;
+}
+
 export interface PlanDocument {
   name: string;
   content: string | null;

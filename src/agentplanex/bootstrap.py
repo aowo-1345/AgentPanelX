@@ -31,6 +31,7 @@ from agentplanex.services.auto_takeover import AutoTakeoverService
 from agentplanex.services.external_agent_runtime.observation import StageOutputObserver
 from agentplanex.services.project_control import ProjectControlQuery
 from agentplanex.services.web import ProjectWorkspaceQuery
+from agentplanex.services.web.conversation_hub import ConversationHub
 from agentplanex.services.web.to_issue import ProposalToIssue
 from agentplanex.services.workspace.dispatcher import WorkspaceDispatcher
 from agentplanex.services.workspace.queries import WorkspaceQueries
@@ -47,6 +48,7 @@ def create_project_runtime(
     settings: Settings | None = None,
     responses_transport: ResponsesTransport | None = None,
     stage_output_observer: StageOutputObserver | None = None,
+    conversation_hub: ConversationHub | None = None,
 ) -> ProjectRuntime:
     """Create a Runtime from explicit invocation inputs and loaded settings."""
     configure_logging()
@@ -61,6 +63,7 @@ def create_project_runtime(
             else create_responses_transport(configured)
         ),
         stage_output_observer=stage_output_observer,
+        conversation_hub=conversation_hub,
     )
 
 
@@ -125,6 +128,7 @@ def create_workspace(
     configure_logging()
     responses_transport = create_responses_transport(settings)
     stage_output_observer = StageOutputObserver()
+    conversation_hub = ConversationHub()
     registry = WorkspaceRegistry.at(settings.workspace.data_home / "registry.sqlite3")
     registry.initialize()
     git = WorkspaceGit()
@@ -137,6 +141,7 @@ def create_workspace(
             settings=settings,
             responses_transport=responses_transport,
             stage_output_observer=stage_output_observer,
+            conversation_hub=conversation_hub,
         )
 
     takeover: AutoTakeoverService | None = None
@@ -196,6 +201,7 @@ def create_workspace(
         ),
         auto_takeover=takeover,
         stage_output_observer=stage_output_observer,
+        conversation_hub=conversation_hub,
         close_resources=responses_transport.close,
     )
 

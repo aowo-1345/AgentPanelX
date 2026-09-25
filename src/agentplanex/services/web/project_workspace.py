@@ -33,8 +33,6 @@ from agentplanex.services.delivery.models import MilestoneSnapshot, StageRun, St
 from agentplanex.services.planning.models import PLAN_DOCUMENT_NAMES
 from agentplanex.services.project_runtime_context.models import (
     OwnerActivation,
-    OwnerActivationStatus,
-    ProjectOwnerTaskType,
 )
 from agentplanex.services.web.to_issue import CreatedIssue
 
@@ -63,6 +61,15 @@ class VisibleMessage:
     role: Literal["user", "assistant", "status", "tool"]
     content: str
     tool_activity: ToolActivity | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationSnapshot:
+    """One complete conversation read used to seed an SSE subscriber."""
+
+    histories: tuple[MessageHistory, ...]
+    activations: tuple[OwnerActivation, ...]
+    sequence: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,15 +151,34 @@ class ProjectWorkspaceQuery:
     history_limit: int = 50
     attribution_history_limit: int = 20
 
-    def get(self, triage_id: str) -> ProjectWorkspaceView:
+    def conversation_snapshot(self, triage_id: str) -> ConversationSnapshot:
+        with self.database.read_only_connection() as connection:
+            owner = self.owners.get_by_triage_id(connection, triage_id)
+            if owner is None:
+                return ConversationSnapshot((), (), 0)
+            histories = self.messages.list_by_session_id(
+                connection,
+                owner.project_owner_session_id,
+            )
+            activations = self.activations.list_by_triage_id(connection, triage_id)
+        return ConversationSnapshot(
+            histories=histories,
+            activations=activations,
+            sequence=max((item.sequence for item in histories), default=0),
+        )
+
+    def get(self, triage_id: str, *, include_conversation: bool = True) -> ProjectWorkspaceView:
         state = self._state(triage_id)
         activation, active_stage, runtime_error = self._runtime(triage_id)
         snapshot, milestones_error = self._milestones(state)
         timeline, timeline_error = self._timeline(triage_id)
-        conversation, conversation_error, activation_has_reply = self._conversation(
-            triage_id,
-            activation,
-        )
+        if include_conversation:
+            conversation, conversation_error, activation_has_reply = self._conversation(
+                triage_id,
+                activation,
+            )
+        else:
+            conversation, conversation_error, activation_has_reply = (), None, False
         plan_documents, plan_error = _read_plan_documents(self.git)
         attribution, attribution_error = self._attribution(triage_id)
         branch, head, git_error = _git_panel(self.git)
@@ -299,7 +325,7 @@ class ProjectWorkspaceQuery:
                 )
                 activations = self.activations.list_by_triage_id(connection, triage_id)
             return (
-                _visible_messages(histories, activations),
+                visible_messages(histories, activations),
                 None,
                 _activation_has_reply(histories, activation),
             )
@@ -361,120 +387,18 @@ def _read_optional_document(path: Path) -> str | None:
         return None
 
 
-def _visible_messages(
+def visible_messages(
     histories: tuple[MessageHistory, ...],
     activations: tuple[OwnerActivation, ...],
 ) -> tuple[VisibleMessage, ...]:
-    activation_by_message = {item.message_id: item for item in activations}
-    tool_index_by_call_id: dict[str, int] = {}
-    visible: list[VisibleMessage] = []
-    current_activation: OwnerActivation | None = None
-    for history in histories:
-        activation = activation_by_message.get(history.message_id)
-        if activation is not None:
-            current_activation = activation
-        for index, message in enumerate(history.message):
-            tool_calls = _tool_calls(message)
-            for call_id, tool_name, arguments in tool_calls:
-                tool_index_by_call_id[call_id] = len(visible)
-                visible.append(
-                    VisibleMessage(
-                        f"{history.message_id}:{index}:tool:{call_id}",
-                        "tool",
-                        tool_name,
-                        ToolActivity(
-                            name=tool_name,
-                            status=(
-                                "running"
-                                if current_activation is not None
-                                and current_activation.status is OwnerActivationStatus.RUNNING
-                                else "failed"
-                            ),
-                            input_preview=_tool_preview(arguments),
-                        ),
-                    )
-                )
-            response_text = _assistant_response_text(message)
-            if response_text:
-                visible.append(
-                    VisibleMessage(f"{history.message_id}:{index}", "assistant", response_text)
-                )
-                continue
-            if tool_calls:
-                continue
-            if message.get("type") == "function_call_output":
-                output_call_id = message.get("call_id")
-                output = _decoded_tool_output(message.get("output"))
-                output_preview = _tool_preview(output)
-                status: ToolActivityStatus = (
-                    "failed" if _tool_output_failed(output) else "completed"
-                )
-                tool_index = (
-                    tool_index_by_call_id.get(output_call_id)
-                    if isinstance(output_call_id, str)
-                    else None
-                )
-                if tool_index is not None:
-                    current = visible[tool_index]
-                    activity = current.tool_activity
-                    if activity is not None:
-                        visible[tool_index] = VisibleMessage(
-                            message_id=current.message_id,
-                            role="tool",
-                            content=current.content,
-                            tool_activity=ToolActivity(
-                                name=activity.name,
-                                status=status,
-                                input_preview=activity.input_preview,
-                                output_preview=output_preview,
-                            ),
-                        )
-                else:
-                    visible.append(
-                        VisibleMessage(
-                            f"{history.message_id}:{index}:tool:{output_call_id}",
-                            "tool",
-                            "tool",
-                            ToolActivity(
-                                name="tool",
-                                status=status,
-                                input_preview="{}",
-                                output_preview=output_preview,
-                            ),
-                        )
-                    )
-                continue
-            role = message.get("role")
-            content = message.get("content")
-            if not isinstance(content, str) or not content.strip():
-                continue
-            if role == "assistant":
-                visible.append(
-                    VisibleMessage(f"{history.message_id}:{index}", "assistant", content)
-                )
-            elif role == "user" and activation is not None:
-                if activation.task_type is ProjectOwnerTaskType.USER_INPUT:
-                    visible.append(VisibleMessage(f"{history.message_id}:{index}", "user", content))
-                elif activation.task_type is ProjectOwnerTaskType.PLAN_DECISION:
-                    visible.append(
-                        VisibleMessage(
-                            f"{history.message_id}:{index}",
-                            "status",
-                            _plan_decision_text(content),
-                        )
-                    )
-        if activation is not None and activation.failure is not None:
-            visible.append(
-                VisibleMessage(
-                    f"{activation.activation_id}:failure",
-                    "status",
-                    f"Project Owner failed: {activation.failure}",
-                )
-            )
-    return tuple(visible)
+    from agentplanex.services.web.conversation_projection import ConversationProjection
+
+    projection = ConversationProjection()
+    projection.seed(histories, activations, max((item.sequence for item in histories), default=0))
+    return projection.visible
 
 
-def _tool_calls(message: Message) -> tuple[tuple[str, str, object], ...]:
+def tool_calls(message: Message) -> tuple[tuple[str, str, object], ...]:
     candidates: list[object]
     if message.get("type") == "function_call":
         candidates = [message]
@@ -494,7 +418,7 @@ def _tool_calls(message: Message) -> tuple[tuple[str, str, object], ...]:
             and isinstance(tool_name, str)
             and tool_name.strip()
         ):
-            calls.append((call_id, tool_name, _decoded_tool_arguments(item.get("arguments"))))
+            calls.append((call_id, tool_name, decoded_tool_arguments(item.get("arguments"))))
     return tuple(calls)
 
 
@@ -530,7 +454,7 @@ _PRIVATE_KEY = re.compile(
 )
 
 
-def _decoded_tool_arguments(arguments: object) -> object:
+def decoded_tool_arguments(arguments: object) -> object:
     if not isinstance(arguments, str):
         return arguments if arguments is not None else {}
     try:
@@ -539,7 +463,7 @@ def _decoded_tool_arguments(arguments: object) -> object:
         return arguments
 
 
-def _decoded_tool_output(output: object) -> object:
+def decoded_tool_output(output: object) -> object:
     if not isinstance(output, str):
         return output if output is not None else {}
     try:
@@ -548,7 +472,7 @@ def _decoded_tool_output(output: object) -> object:
         return output
 
 
-def _tool_output_failed(output: object) -> bool:
+def tool_output_failed(output: object) -> bool:
     if not isinstance(output, dict):
         return False
     if output.get("ok") is False:
@@ -561,7 +485,7 @@ def _tool_output_failed(output: object) -> bool:
     )
 
 
-def _tool_preview(value: object) -> str:
+def tool_preview(value: object) -> str:
     sanitized = _sanitize_tool_value(value)
     if isinstance(sanitized, str):
         rendered = sanitized
@@ -607,12 +531,12 @@ def _activation_has_reply(
             content = message.get("content")
             if (
                 message.get("role") == "assistant" and isinstance(content, str) and content.strip()
-            ) or _assistant_response_text(message):
+            ) or assistant_response_text(message):
                 return True
     return False
 
 
-def _assistant_response_text(message: Message) -> str:
+def assistant_response_text(message: Message) -> str:
     if message.get("object") != "response":
         return ""
     output = message.get("output")
@@ -633,7 +557,7 @@ def _assistant_response_text(message: Message) -> str:
     return "\n".join(parts).strip()
 
 
-def _plan_decision_text(content: str) -> str:
+def plan_decision_text(content: str) -> str:
     try:
         decision = json.loads(content)
     except json.JSONDecodeError:

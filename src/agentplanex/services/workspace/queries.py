@@ -21,6 +21,7 @@ from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.services.delivery.models import StageRun
 from agentplanex.services.web import (
+    ConversationSnapshot,
     ProjectWorkspaceQuery,
     ProjectWorkspaceView,
 )
@@ -72,6 +73,7 @@ class WorkspaceQueries:
         *,
         project_id: str,
         triage_id: str,
+        include_conversation: bool = True,
     ) -> FeatureWorkspaceView:
         binding = self.registry.get_feature(project_id, triage_id)
         project = self.registry.get_project(binding.project_id)
@@ -83,12 +85,29 @@ class WorkspaceQueries:
                 response_limit=self.artifact_response_limit,
                 artifact_limit=self.artifact_limit,
             ),
-        ).get(binding.triage_id)
+        ).get(binding.triage_id, include_conversation=include_conversation)
         return FeatureWorkspaceView(
             project=project,
             binding=binding,
             runtime_view=runtime_view,
         )
+
+    def feature_conversation(
+        self,
+        *,
+        project_id: str,
+        triage_id: str,
+    ) -> ConversationSnapshot:
+        binding = self.registry.get_feature(project_id, triage_id)
+        return ProjectWorkspaceQuery(
+            database=SQLiteDatabase.for_project(binding.worktree_path),
+            git=GitRepository(binding.worktree_path),
+            artifacts=AgentWorkspaceStore(
+                project_path=binding.worktree_path,
+                response_limit=self.artifact_response_limit,
+                artifact_limit=self.artifact_limit,
+            ),
+        ).conversation_snapshot(binding.triage_id)
 
     def state(self, binding: FeatureBinding) -> ProjectRuntimeState:
         database = SQLiteDatabase.for_project(binding.worktree_path)

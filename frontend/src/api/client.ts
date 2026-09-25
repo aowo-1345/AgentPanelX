@@ -97,8 +97,19 @@ export const api = {
       method: 'DELETE',
     }),
 
-  getWorkspace: (projectId: string, triageId: string, signal?: AbortSignal) =>
-    request<Workspace>(`${featurePath(projectId, triageId)}/workspace`, { signal }),
+  getWorkspace: (
+    projectId: string,
+    triageId: string,
+    signal?: AbortSignal,
+    includeConversation = true,
+  ) =>
+    request<Workspace>(
+      `${featurePath(projectId, triageId)}/workspace?include_conversation=${includeConversation}`,
+      { signal },
+    ),
+
+  conversationStreamUrl: (projectId: string, triageId: string) =>
+    `${featurePath(projectId, triageId)}/conversation/stream`,
 
   createProposalIssue: (projectId: string, triageId: string, runId: string) =>
     request<CreatedIssue>(

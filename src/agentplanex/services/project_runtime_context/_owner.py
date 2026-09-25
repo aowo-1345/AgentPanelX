@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from uuid import uuid4
 
+from agentplanex.domains.conversation_event import ConversationMessageAppended
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
@@ -134,7 +135,7 @@ class _OwnerRuntime:
         connection: sqlite3.Connection,
         state: ProjectRuntimeState,
         task: ProjectOwnerTask,
-    ) -> tuple[str, str | None]:
+    ) -> tuple[str, str | None, MessageHistory]:
         """Persist external input and return its message and frozen Summary IDs."""
         content = task.content.strip()
         if not content:
@@ -147,8 +148,8 @@ class _OwnerRuntime:
         if owner.message_id is None:
             appended.append({"role": "system", "content": owner.system_prompt})
         appended.append({"role": "user", "content": content})
-        message_id = self._append_messages(connection, owner, tuple(appended))
-        return message_id, owner.summary_id
+        history = self._append_messages(connection, owner, tuple(appended))
+        return history.message_id, owner.summary_id, history
 
     def current_message_id(
         self,
@@ -222,7 +223,7 @@ class _OwnerRuntime:
         state: ProjectRuntimeState,
         activation: OwnerActivation,
         content: str,
-    ) -> AgentExit:
+    ) -> tuple[AgentExit, MessageHistory]:
         """Persist a manual reply inside the caller's terminalization transaction."""
 
         reply = content.strip()
@@ -234,12 +235,12 @@ class _OwnerRuntime:
             activation,
             allow_advanced_checkpoint=True,
         )
-        self._append_messages(
+        history = self._append_messages(
             connection,
             owner,
             ({"role": "assistant", "content": reply},),
         )
-        return AgentExit(status=AgentExitStatus.REPLY_TO_HUMAN, content=reply)
+        return AgentExit(status=AgentExitStatus.REPLY_TO_HUMAN, content=reply), history
 
     def _load_owner_for_activation(
         self,
@@ -376,6 +377,7 @@ class _OwnerRuntime:
             _require_owner_revision(expected_revision) if expected_revision is not None else None
         )
 
+        history: MessageHistory | None = None
         with self.database.transaction() as connection:
             persisted_owner = self.owners.get_by_triage_id(connection, context.triage_id)
             if persisted_owner is None:
@@ -383,15 +385,23 @@ class _OwnerRuntime:
             if expected is not None and persisted_owner.message_id != expected.message_id:
                 raise RuntimeError("Project Owner context changed before message append")
             if appended:
-                message_id = self._append_messages(
+                history = self._append_messages(
                     connection,
                     persisted_owner,
                     appended,
                 )
+                message_id = history.message_id
             elif persisted_owner.message_id is not None:
                 message_id = persisted_owner.message_id
             else:
                 raise RuntimeError("Project Owner has no persisted message checkpoint")
+        if history is not None:
+            self.event_bus.publish(
+                ConversationMessageAppended(
+                    triage_id=context.triage_id,
+                    history=history,
+                )
+            )
         return _ProjectOwnerRevision(
             message_id=message_id,
             summary_id=(
@@ -488,7 +498,7 @@ class _OwnerRuntime:
         connection: sqlite3.Connection,
         owner: ProjectOwnerAgent,
         appended: tuple[Message, ...],
-    ) -> str:
+    ) -> MessageHistory:
         history = MessageHistory(
             project_owner_session_id=owner.project_owner_session_id,
             message_id=uuid4().hex,
@@ -503,7 +513,7 @@ class _OwnerRuntime:
             connection,
             replace(owner, message_id=history.message_id),
         )
-        return history.message_id
+        return history
 
     def load_context(
         self,

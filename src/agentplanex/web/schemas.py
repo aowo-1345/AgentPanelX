@@ -12,6 +12,7 @@ from agentplanex.domains.workspace import (
     ManagedProject,
 )
 from agentplanex.services.project_runtime_context.models import OwnerActivation
+from agentplanex.services.web.project_workspace import VisibleMessage
 from agentplanex.services.workspace.queries import FeatureWorkspaceView
 
 
@@ -247,6 +248,24 @@ def activation_response(activation: OwnerActivation) -> ActivationResponse:
     )
 
 
+def conversation_message_response(message: VisibleMessage) -> ConversationMessage:
+    return ConversationMessage(
+        message_id=message.message_id,
+        role=message.role,
+        content=message.content,
+        tool_activity=(
+            ToolActivityData(
+                name=message.tool_activity.name,
+                status=message.tool_activity.status,
+                input_preview=message.tool_activity.input_preview,
+                output_preview=message.tool_activity.output_preview,
+            )
+            if message.tool_activity is not None
+            else None
+        ),
+    )
+
+
 def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
     runtime_view = workspace.runtime_view
     context = runtime_view.state
@@ -306,21 +325,7 @@ def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
         conversation=Panel(
             data=(
                 [
-                    ConversationMessage(
-                        message_id=message.message_id,
-                        role=message.role,
-                        content=message.content,
-                        tool_activity=(
-                            ToolActivityData(
-                                name=message.tool_activity.name,
-                                status=message.tool_activity.status,
-                                input_preview=message.tool_activity.input_preview,
-                                output_preview=message.tool_activity.output_preview,
-                            )
-                            if message.tool_activity is not None
-                            else None
-                        ),
-                    )
+                    conversation_message_response(message)
                     for message in runtime_view.conversation
                 ]
                 if runtime_view.conversation_error is None

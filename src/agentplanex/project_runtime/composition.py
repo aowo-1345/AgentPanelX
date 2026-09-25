@@ -7,6 +7,10 @@ from types import MappingProxyType
 
 from loguru import logger
 
+from agentplanex.domains.conversation_event import (
+    ConversationActivationUpdated,
+    ConversationMessageAppended,
+)
 from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.codex import CodexTurnTransport
 from agentplanex.infrastructure.feishu import FeishuWebhookClient
@@ -38,7 +42,7 @@ from agentplanex.services.delivery._stage_executor import (
     StageExecutor,
     _StageOperation,
 )
-from agentplanex.services.event_bus import EventBus, EventHandler
+from agentplanex.services.event_bus import EventBus, EventHandler, EventSubscription
 from agentplanex.services.external_agent_runtime import ExternalAgentRuntime
 from agentplanex.services.external_agent_runtime._definitions import (
     build_agent_definition,
@@ -52,6 +56,7 @@ from agentplanex.services.project_runtime_context._assembly import (
     prepare_project_runtime_context,
 )
 from agentplanex.services.project_runtime_context.context import ProjectRuntimeContext
+from agentplanex.services.web.conversation_hub import ConversationHub
 from agentplanex.settings import Settings
 
 
@@ -130,6 +135,7 @@ def compose_project_runtime(
     approval_mode: ApprovalMode,
     responses_transport: ResponsesTransport,
     stage_output_observer: StageOutputObserver | None = None,
+    conversation_hub: ConversationHub | None = None,
 ) -> ProjectRuntime:
     """Return the sealed normal Runtime rather than its internal object graph."""
     graph = _compose_command_graph(
@@ -139,6 +145,7 @@ def compose_project_runtime(
         responses_transport=responses_transport,
         stage_executor=None,
         stage_output_observer=stage_output_observer,
+        conversation_hub=conversation_hub,
     )
     return ProjectRuntime(_service=graph.service)
 
@@ -174,6 +181,7 @@ def _compose_command_graph(
     responses_transport: ResponsesTransport,
     stage_executor: StageExecutor | None,
     stage_output_observer: StageOutputObserver | None = None,
+    conversation_hub: ConversationHub | None = None,
 ) -> _ProjectCommandGraph:
     """Build the sole sealed command graph for one adapter instance."""
     project_path = project_path.resolve()
@@ -208,7 +216,15 @@ def _compose_command_graph(
                 "Feishu notifications enabled but webhook environment variable is unset: {}",
                 notification_settings.webhook_url_env,
             )
-    event_bus = EventBus(tuple(handlers))
+    subscriptions: list[EventSubscription] = []
+    if conversation_hub is not None:
+        subscriptions.extend(
+            (
+                EventSubscription(ConversationMessageAppended, conversation_hub.publish),
+                EventSubscription(ConversationActivationUpdated, conversation_hub.publish),
+            )
+        )
+    event_bus = EventBus(tuple(handlers), tuple(subscriptions))
     catalog = AgentCatalog(runtime_settings)
     external_agents = compose_external_agent_runtime(
         project_path=project_path,

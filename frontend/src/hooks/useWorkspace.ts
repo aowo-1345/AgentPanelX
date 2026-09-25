@@ -7,6 +7,7 @@ import type {
   Workspace,
 } from '@/api/types';
 import { useSilentPolling } from '@/hooks/useSilentPolling';
+import { useConversationStream } from '@/hooks/useConversationStream';
 
 export type WorkspaceLoadState = 'loading' | 'loaded' | 'refreshing' | 'error';
 
@@ -82,11 +83,11 @@ export function useWorkspace({
     setLoadError('');
   }, []);
 
-  const refreshFromServer = useCallback(async () => {
+  const refreshFromServer = useCallback(async (includeConversation = true) => {
     if (!projectId || !triageId) {
       throw new Error('The workspace URL is missing its project or feature identity.');
     }
-    applyWorkspace(await api.getWorkspace(projectId, triageId));
+    applyWorkspace(await api.getWorkspace(projectId, triageId, undefined, includeConversation));
   }, [applyWorkspace, projectId, triageId]);
 
   const load = useCallback(
@@ -106,7 +107,7 @@ export function useWorkspace({
       setLoadState(refresh ? 'refreshing' : 'loading');
       setLoadError('');
       try {
-        await refreshFromServer();
+        await refreshFromServer(false);
         setLoadState('loaded');
       } catch (caught) {
         setLoadError(readableCaught(caught));
@@ -127,7 +128,7 @@ export function useWorkspace({
       if (!projectId || !triageId) {
         return Promise.reject(new Error('Workspace identity is missing'));
       }
-      return api.getWorkspace(projectId, triageId, signal);
+      return api.getWorkspace(projectId, triageId, signal, false);
     },
     [projectId, snapshot, triageId],
   );
@@ -150,6 +151,12 @@ export function useWorkspace({
     onData: applyWorkspace,
   });
 
+  const streamedConversation = useConversationStream({
+    projectId,
+    triageId,
+    enabled: !snapshot,
+  });
+
   const sendMessage = useCallback(
     async (content: string): Promise<SendMessageResult> => {
       if (snapshot) throw new Error('This public Console is read-only.');
@@ -161,7 +168,7 @@ export function useWorkspace({
         const receipt = await api.sendMessage(projectId, triageId, content);
         let refreshError: unknown | null = null;
         try {
-          await refreshFromServer();
+          await refreshFromServer(false);
         } catch (caught) {
           refreshError = caught;
         }
@@ -231,7 +238,19 @@ export function useWorkspace({
   }, [deleting, projectId, snapshot, triageId]);
 
   return {
-    workspace,
+    workspace: workspace && !snapshot && streamedConversation
+      ? {
+          ...workspace,
+          conversation: { data: streamedConversation.messages, error: null },
+          runtime: {
+            ...workspace.runtime,
+            data: workspace.runtime.data && {
+              ...workspace.runtime.data,
+              activation_has_reply: streamedConversation.activation_has_reply,
+            },
+          },
+        }
+      : workspace,
     loadState,
     loadError,
     sending,

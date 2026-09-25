@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import json
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,10 +10,11 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from agentplanex.bootstrap import create_workspace
 from agentplanex.domains.workspace import FeatureAction, ManagedProject
+from agentplanex.services.web.conversation_projection import ConversationProjection
 from agentplanex.services.workspace.service import WorkspaceService
 from agentplanex.settings import Settings, load_settings, resolve_settings_path
 from agentplanex.web.errors import install_error_handlers
@@ -29,6 +31,7 @@ from agentplanex.web.schemas import (
     WorkspaceResponse,
     activation_response,
     board_feature_response,
+    conversation_message_response,
     feature_response,
     project_response,
     workspace_response,
@@ -63,6 +66,10 @@ def create_app(
     if frontend_dist is not None:
         _install_frontend(app, frontend_dist)
     return app
+
+
+def _sse(event: str, payload: dict[str, object]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 def _install_routes(
@@ -129,12 +136,77 @@ def _install_routes(
         "/api/projects/{project_id}/features/{triage_id}/workspace",
         response_model=WorkspaceResponse,
     )
-    def get_workspace(project_id: str, triage_id: str) -> WorkspaceResponse:
+    def get_workspace(
+        project_id: str,
+        triage_id: str,
+        include_conversation: bool = True,
+    ) -> WorkspaceResponse:
         return workspace_response(
             workspace.feature_workspace(
                 project_id=project_id,
                 triage_id=triage_id,
+                include_conversation=include_conversation,
             )
+        )
+
+    @app.get(
+        "/api/projects/{project_id}/features/{triage_id}/conversation/stream",
+    )
+    async def conversation_stream(project_id: str, triage_id: str) -> StreamingResponse:
+        subscriber = workspace.conversation_hub.subscribe(triage_id)
+        try:
+            snapshot = await asyncio.to_thread(
+                workspace.feature_conversation,
+                project_id=project_id,
+                triage_id=triage_id,
+            )
+        except (LookupError, ValueError) as error:
+            workspace.conversation_hub.unsubscribe(subscriber)
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except Exception:
+            workspace.conversation_hub.unsubscribe(subscriber)
+            raise
+
+        async def stream() -> AsyncIterator[str]:
+            projection = ConversationProjection()
+            projection.seed(snapshot.histories, snapshot.activations, snapshot.sequence)
+            try:
+                yield _sse(
+                    "snapshot",
+                    {
+                        "cursor": projection.cursor,
+                        "activation_has_reply": projection.activation_has_reply,
+                        "messages": [
+                            conversation_message_response(item).model_dump(mode="json")
+                            for item in projection.visible
+                        ],
+                    },
+                )
+                while True:
+                    event = await subscriber.next()
+                    if event is None:
+                        return
+                    had_reply = projection.activation_has_reply
+                    changed = projection.apply(event)
+                    if changed or had_reply != projection.activation_has_reply:
+                        yield _sse(
+                            "patch",
+                            {
+                                "cursor": projection.cursor,
+                                "activation_has_reply": projection.activation_has_reply,
+                                "messages": [
+                                    conversation_message_response(item).model_dump(mode="json")
+                                    for item in changed
+                                ],
+                            },
+                        )
+            finally:
+                workspace.conversation_hub.unsubscribe(subscriber)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
     @app.websocket(
