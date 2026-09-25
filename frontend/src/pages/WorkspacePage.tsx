@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, Loader2, RefreshCw, TerminalSquare, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { readableError } from '@/api/client';
@@ -139,6 +139,21 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
         </div>
 
         <div className="flex items-center gap-1">
+          {workspace && (
+            workspace.active_execution?.data && (
+              <button
+                className="btn btn-ghost h-8 gap-1.5 text-emerald-300 hover:text-emerald-200"
+                onClick={() =>
+                  navigate(
+                    `/projects/${encodeURIComponent(projectId ?? '')}/features/${encodeURIComponent(triageId ?? '')}/stages/${encodeURIComponent(workspace.active_execution?.data?.stage_run_id ?? '')}/terminal`,
+                  )
+                }
+              >
+                <TerminalSquare className="h-3.5 w-3.5" />
+                View terminal
+              </button>
+            )
+          )}
           {workspace && (
             <button
               className="btn btn-ghost h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-red-300"

@@ -1,12 +1,13 @@
 """FastAPI host over the existing Workspace and Project Runtime services."""
 
 import argparse
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Response, status
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
@@ -135,6 +136,69 @@ def _install_routes(
                 triage_id=triage_id,
             )
         )
+
+    @app.websocket(
+        "/api/projects/{project_id}/features/{triage_id}/stages/{stage_run_id}/terminal"
+    )
+    async def stage_terminal(
+        websocket: WebSocket,
+        project_id: str,
+        triage_id: str,
+        stage_run_id: str,
+    ) -> None:
+        """Expose the current Stage's Codex notifications as a read-only stream."""
+        await websocket.accept()
+        try:
+            binding = workspace.registry.get_feature(project_id, triage_id)
+            active = workspace.queries.active_stage_run(binding)
+        except (LookupError, ValueError) as error:
+            await websocket.close(code=4404, reason=str(error))
+            return
+        if active is None or active.stage_run_id != stage_run_id:
+            await websocket.close(code=4404, reason="StageRun is not active")
+            return
+        if not workspace.stage_output_observer.is_active(stage_run_id):
+            await websocket.close(code=4409, reason="Stage terminal is not available")
+            return
+
+        cursor = 0
+        try:
+            while True:
+                current = workspace.queries.active_stage_run(binding)
+                if current is None or current.stage_run_id != stage_run_id:
+                    await websocket.close(code=1000, reason="StageRun is no longer active")
+                    return
+                chunks, running = workspace.stage_output_observer.read_since(
+                    stage_run_id,
+                    cursor,
+                )
+                for chunk in chunks:
+                    await websocket.send_json(
+                        {
+                            "type": "output",
+                            "sequence": chunk.sequence,
+                            "data": chunk.data,
+                        }
+                    )
+                    cursor = chunk.sequence
+                if not running:
+                    await websocket.send_json({"type": "terminal_end"})
+                    await websocket.close(code=1000, reason="StageRun finished")
+                    return
+                try:
+                    message = await asyncio.wait_for(websocket.receive_text(), timeout=0.1)
+                except TimeoutError:
+                    continue
+                except WebSocketDisconnect:
+                    return
+                if message:
+                    await websocket.close(
+                        code=1008,
+                        reason="Stage terminal observation is read-only",
+                    )
+                    return
+        except WebSocketDisconnect:
+            return
 
     @app.post(
         "/api/projects/{project_id}/features/{triage_id}/proposals/{run_id}/issue",

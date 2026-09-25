@@ -88,6 +88,11 @@ export interface RuntimeData {
   blocked_capability: string | null;
 }
 
+export interface ActiveExecutionData {
+  stage_run_id: string;
+  status: 'QUEUED' | 'RUNNING';
+}
+
 export type ToolActivityStatus = 'running' | 'completed' | 'failed';
 
 export interface ToolActivity {
@@ -164,6 +169,7 @@ export interface Workspace {
   feature: WorkspaceFeature;
   available_actions: FeatureAction[];
   runtime: Panel<RuntimeData>;
+  active_execution?: Panel<ActiveExecutionData>;
   conversation: Panel<ConversationMessage[]>;
   plan: Panel<PlanData>;
   milestones: Panel<MilestonesData>;

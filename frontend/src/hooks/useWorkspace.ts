@@ -50,6 +50,7 @@ function mergeWorkspace(current: Workspace | null, next: Workspace): Workspace {
     feature: preserveEqual(current.feature, next.feature),
     available_actions: preserveEqual(current.available_actions, next.available_actions),
     runtime: preserveEqual(current.runtime, next.runtime),
+    active_execution: preserveEqual(current.active_execution, next.active_execution),
     conversation: preserveEqual(current.conversation, next.conversation),
     plan: preserveEqual(current.plan, next.plan),
     milestones: preserveEqual(current.milestones, next.milestones),

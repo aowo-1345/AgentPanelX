@@ -29,7 +29,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.project_owner_agent.context.models import MessageHistory
 from agentplanex.project_owner_agent.contracts import Message
 from agentplanex.services.auto_takeover.models import TakeoverStatus
-from agentplanex.services.delivery.models import MilestoneSnapshot, StageRun
+from agentplanex.services.delivery.models import MilestoneSnapshot, StageRun, StageRunStatus
 from agentplanex.services.planning.models import PLAN_DOCUMENT_NAMES
 from agentplanex.services.project_runtime_context.models import (
     OwnerActivation,
@@ -93,6 +93,8 @@ class ProjectWorkspaceView:
     """Panels derived from one required persisted Runtime State."""
 
     state: ProjectRuntimeState
+    active_stage_run_id: str | None
+    active_stage_run_status: StageRunStatus | None
     owner_activation: OwnerActivation | None
     activation_has_reply: bool
     runtime_error: str | None
@@ -156,6 +158,8 @@ class ProjectWorkspaceQuery:
         branch, head, git_error = _git_panel(self.git)
         return ProjectWorkspaceView(
             state=state,
+            active_stage_run_id=(active_stage.stage_run_id if active_stage is not None else None),
+            active_stage_run_status=(active_stage.status if active_stage is not None else None),
             owner_activation=activation,
             activation_has_reply=activation_has_reply,
             runtime_error=runtime_error,

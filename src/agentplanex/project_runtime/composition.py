@@ -43,6 +43,7 @@ from agentplanex.services.external_agent_runtime import ExternalAgentRuntime
 from agentplanex.services.external_agent_runtime._definitions import (
     build_agent_definition,
 )
+from agentplanex.services.external_agent_runtime.observation import StageOutputObserver
 from agentplanex.services.notifications import NotificationService
 from agentplanex.services.planning._plan_hard_gate import PlanHardGate
 from agentplanex.services.planning._service import PlanningService
@@ -65,6 +66,7 @@ def compose_external_agent_runtime(
     *,
     project_path: Path,
     settings: Settings,
+    stage_output_observer: StageOutputObserver | None = None,
 ) -> ExternalAgentRuntime:
     """Build the shared Owner-external Agent boundary for one Feature."""
     project_path = project_path.resolve()
@@ -82,6 +84,11 @@ def compose_external_agent_runtime(
         timeout_seconds=codex_settings.timeout_seconds,
         response_limit=codex_settings.response_limit,
         network_access=codex_settings.network_access,
+        event_sink=(
+            stage_output_observer.publish_event
+            if stage_output_observer is not None
+            else None
+        ),
     )
     definitions = {
         key: build_agent_definition(key, configured)
@@ -112,6 +119,7 @@ def compose_external_agent_runtime(
         operations=MappingProxyType(
             {key: operation for key, operation in operations.items() if key[0] in definitions}
         ),
+        stage_output_observer=stage_output_observer,
     )
 
 
@@ -121,6 +129,7 @@ def compose_project_runtime(
     settings: Settings,
     approval_mode: ApprovalMode,
     responses_transport: ResponsesTransport,
+    stage_output_observer: StageOutputObserver | None = None,
 ) -> ProjectRuntime:
     """Return the sealed normal Runtime rather than its internal object graph."""
     graph = _compose_command_graph(
@@ -129,6 +138,7 @@ def compose_project_runtime(
         approval_mode=approval_mode,
         responses_transport=responses_transport,
         stage_executor=None,
+        stage_output_observer=stage_output_observer,
     )
     return ProjectRuntime(_service=graph.service)
 
@@ -163,6 +173,7 @@ def _compose_command_graph(
     approval_mode: ApprovalMode,
     responses_transport: ResponsesTransport,
     stage_executor: StageExecutor | None,
+    stage_output_observer: StageOutputObserver | None = None,
 ) -> _ProjectCommandGraph:
     """Build the sole sealed command graph for one adapter instance."""
     project_path = project_path.resolve()
@@ -202,6 +213,7 @@ def _compose_command_graph(
     external_agents = compose_external_agent_runtime(
         project_path=project_path,
         settings=settings,
+        stage_output_observer=stage_output_observer,
     )
     prompts = AgentPromptCatalog(runtime_settings.prompts)
     collaboration = AgentCollaborationService(

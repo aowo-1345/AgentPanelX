@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from openai_codex import (
     SkillInput,
     TextInput,
 )
+from openai_codex.api import _collect_turn_result  # type: ignore[attr-defined]
 
 
 class CodexTransportError(RuntimeError):
@@ -44,6 +46,7 @@ class CodexTurnRequest:
     mentions: tuple[tuple[str, Path], ...]
     skills: tuple[tuple[str, Path], ...] = ()
     output_schema: dict[str, Any] | None = None
+    observer_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +68,7 @@ class CodexTurnTransport:
     timeout_seconds: float
     response_limit: int
     network_access: bool = True
+    event_sink: Callable[[str, Any], None] | None = None
 
     def run(
         self,
@@ -126,7 +130,15 @@ class CodexTurnTransport:
                 model=self.model,
                 output_schema=request.output_schema,
             )
-            result = self._run_with_timeout(turn)
+            sink = self.event_sink
+            on_event: Callable[[Any], None] | None = None
+            if sink is not None and request.observer_key is not None:
+                observer_key = request.observer_key
+
+                def on_event(event: Any) -> None:
+                    sink(observer_key, event)
+
+            result = self._run_with_timeout(turn, on_event=on_event)
             status = getattr(result.status, "value", None)
             if status != "completed":
                 raise CodexTransportError(
@@ -151,13 +163,29 @@ class CodexTurnTransport:
             if client is not None:
                 client.close()
 
-    def _run_with_timeout(self, handle: Any) -> Any:
+    def _run_with_timeout(
+        self,
+        handle: Any,
+        *,
+        on_event: Callable[[Any], None] | None = None,
+    ) -> Any:
         result_box: list[Any] = []
         error_box: list[BaseException] = []
 
         def consume() -> None:
             try:
-                result_box.append(handle.run())
+                if on_event is None:
+                    result_box.append(handle.run())
+                    return
+                events = []
+                stream = handle.stream()
+                try:
+                    for event in stream:
+                        on_event(event)
+                        events.append(event)
+                finally:
+                    stream.close()
+                result_box.append(_collect_turn_result(iter(events), turn_id=handle.id))
             except BaseException as error:  # delivered to the caller below
                 error_box.append(error)
 

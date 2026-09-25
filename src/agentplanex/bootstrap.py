@@ -28,6 +28,7 @@ from agentplanex.project_runtime.composition import (
 )
 from agentplanex.project_runtime.control import ProjectRuntimeControl
 from agentplanex.services.auto_takeover import AutoTakeoverService
+from agentplanex.services.external_agent_runtime.observation import StageOutputObserver
 from agentplanex.services.project_control import ProjectControlQuery
 from agentplanex.services.web import ProjectWorkspaceQuery
 from agentplanex.services.web.to_issue import ProposalToIssue
@@ -45,6 +46,7 @@ def create_project_runtime(
     approval_mode: ApprovalMode,
     settings: Settings | None = None,
     responses_transport: ResponsesTransport | None = None,
+    stage_output_observer: StageOutputObserver | None = None,
 ) -> ProjectRuntime:
     """Create a Runtime from explicit invocation inputs and loaded settings."""
     configure_logging()
@@ -58,6 +60,7 @@ def create_project_runtime(
             if responses_transport is not None
             else create_responses_transport(configured)
         ),
+        stage_output_observer=stage_output_observer,
     )
 
 
@@ -121,6 +124,7 @@ def create_workspace(
     """Compose the user-level Workspace over real Registry, Git, and Runtimes."""
     configure_logging()
     responses_transport = create_responses_transport(settings)
+    stage_output_observer = StageOutputObserver()
     registry = WorkspaceRegistry.at(settings.workspace.data_home / "registry.sqlite3")
     registry.initialize()
     git = WorkspaceGit()
@@ -132,6 +136,7 @@ def create_workspace(
             approval_mode="yolo",
             settings=settings,
             responses_transport=responses_transport,
+            stage_output_observer=stage_output_observer,
         )
 
     takeover: AutoTakeoverService | None = None
@@ -158,6 +163,7 @@ def create_workspace(
             external_runtime_factory=lambda project_path: compose_external_agent_runtime(
                 project_path=project_path,
                 settings=settings,
+                stage_output_observer=stage_output_observer,
             ),
             schedule_drive=schedule_drive,
             settings_path=settings_path,
@@ -189,6 +195,7 @@ def create_workspace(
             artifact_limit=settings.runtime.codex.artifact_limit,
         ),
         auto_takeover=takeover,
+        stage_output_observer=stage_output_observer,
         close_resources=responses_transport.close,
     )
 
