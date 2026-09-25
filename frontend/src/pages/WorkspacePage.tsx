@@ -1,39 +1,13 @@
 import { ArrowLeft, Loader2, RefreshCw, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api, readableError } from '@/api/client';
-import type { ActivationReceipt, CreatedIssue, FeatureAction, Workspace } from '@/api/types';
+import { readableError } from '@/api/client';
+import type { ActivationReceipt, FeatureAction, Workspace } from '@/api/types';
 import { SkeletonWorkspace } from '@/components/common/Skeletons';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { ChatArea, type CommandNotice } from '@/components/workspace/ChatArea';
 import { SidePanels } from '@/components/workspace/SidePanels';
-import { useSilentPolling } from '@/hooks/useSilentPolling';
-
-type LoadState = 'loading' | 'loaded' | 'refreshing' | 'error';
-
-const ACTIVE_WORKSPACE_POLL_MS = 500;
-const IDLE_WORKSPACE_POLL_MS = 5_000;
-
-function preserveEqual<T>(current: T, next: T): T {
-  return JSON.stringify(current) === JSON.stringify(next) ? current : next;
-}
-
-function mergeWorkspace(current: Workspace | null, next: Workspace): Workspace {
-  if (current === null || JSON.stringify(current) === JSON.stringify(next)) return current ?? next;
-  return {
-    ...next,
-    project: preserveEqual(current.project, next.project),
-    feature: preserveEqual(current.feature, next.feature),
-    available_actions: preserveEqual(current.available_actions, next.available_actions),
-    runtime: preserveEqual(current.runtime, next.runtime),
-    conversation: preserveEqual(current.conversation, next.conversation),
-    plan: preserveEqual(current.plan, next.plan),
-    milestones: preserveEqual(current.milestones, next.milestones),
-    timeline: preserveEqual(current.timeline, next.timeline),
-    git: preserveEqual(current.git, next.git),
-    attribution: preserveEqual(current.attribution, next.attribution),
-  };
-}
+import { useWorkspace } from '@/hooks/useWorkspace';
 
 function receiptNotice(receipt: ActivationReceipt): CommandNotice {
   return {
@@ -55,116 +29,53 @@ const READ_ONLY_NOTICE: CommandNotice = {
 export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
   const navigate = useNavigate();
   const { projectId, triageId } = useParams<{ projectId: string; triageId: string }>();
-  const [workspace, setWorkspace] = useState<Workspace | null>(snapshot ?? null);
-  const [loadState, setLoadState] = useState<LoadState>(snapshot ? 'loaded' : 'loading');
-  const [loadError, setLoadError] = useState('');
-  const [sending, setSending] = useState(false);
-  const [pendingAction, setPendingAction] = useState<FeatureAction | null>(null);
+  const {
+    workspace,
+    loadState,
+    loadError,
+    sending,
+    pendingAction,
+    deleting,
+    load,
+    sendMessage: sendWorkspaceMessage,
+    performAction: performWorkspaceAction,
+    createProposalIssue,
+    deleteFeature: deleteWorkspaceFeature,
+  } = useWorkspace({ projectId, triageId, snapshot });
   const [notice, setNotice] = useState<CommandNotice | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
 
-  const applyWorkspace = useCallback((next: Workspace) => {
-    setWorkspace((current) => mergeWorkspace(current, next));
-    setLoadState((current) => (current === 'error' ? 'loaded' : current));
-    setLoadError('');
-  }, []);
-
-  const load = useCallback(
-    async (refresh = false) => {
-      if (snapshot) {
-        setLoadState(refresh ? 'refreshing' : 'loading');
-        setLoadError('');
-        applyWorkspace(snapshot);
-        setLoadState('loaded');
-        return;
-      }
-      if (!projectId || !triageId) {
-        setLoadError('The workspace URL is missing its project or feature identity.');
-        setLoadState('error');
-        return;
-      }
-      setLoadState(refresh ? 'refreshing' : 'loading');
-      setLoadError('');
-      try {
-        applyWorkspace(await api.getWorkspace(projectId, triageId));
-        setLoadState('loaded');
-      } catch (caught) {
-        setLoadError(readableError(caught));
-        setLoadState('error');
-      }
-    },
-    [applyWorkspace, projectId, snapshot, triageId],
-  );
-
   useEffect(() => {
-    setWorkspace(snapshot ?? null);
     setNotice(null);
-    void load();
-  }, [load, snapshot]);
+  }, [projectId, triageId, snapshot]);
 
-  const pollWorkspace = useCallback(
-    (signal: AbortSignal) => {
-      if (snapshot) {
-        return Promise.resolve(snapshot);
-      }
-      if (!projectId || !triageId) {
-        return Promise.reject(new Error('Workspace identity is missing'));
-      }
-      return api.getWorkspace(projectId, triageId, signal);
-    },
-    [projectId, snapshot, triageId],
-  );
   const activationStatus = workspace?.runtime.data?.activation_status ?? null;
-
   useEffect(() => {
     if (sending || activationStatus !== null) return;
     setNotice((current) => (current?.activationId ? null : current));
   }, [activationStatus, sending]);
-
-  const workspaceBusy =
-    activationStatus === 'PENDING' ||
-    activationStatus === 'RUNNING' ||
-    workspace?.feature.status === 'IN_PROGRESS' ||
-    sending ||
-    pendingAction !== null;
-
-  useSilentPolling({
-    enabled:
-      !snapshot &&
-      workspace !== null &&
-      (loadState === 'loaded' || loadState === 'error'),
-    intervalMs: workspaceBusy ? ACTIVE_WORKSPACE_POLL_MS : IDLE_WORKSPACE_POLL_MS,
-    query: pollWorkspace,
-    onData: applyWorkspace,
-  });
 
   async function sendMessage(content: string) {
     if (snapshot) {
       setNotice(READ_ONLY_NOTICE);
       return false;
     }
-    if (!projectId || !triageId || sending) return false;
-    setSending(true);
     setNotice(null);
     try {
-      const receipt = await api.sendMessage(projectId, triageId, content);
-      setNotice(receiptNotice(receipt));
-      try {
-        applyWorkspace(await api.getWorkspace(projectId, triageId));
-      } catch (caught) {
+      const { receipt, refreshError } = await sendWorkspaceMessage(content);
+      if (refreshError) {
         setNotice({
           kind: 'warning',
-          text: `Message accepted by the backend (${receipt.status}), but the immediate workspace refresh failed: ${readableError(caught)} Automatic refresh will retry. Activation ${receipt.activation_id}.`,
+          text: `Message accepted by the backend (${receipt.status}), but the immediate workspace refresh failed: ${readableError(refreshError)} Automatic refresh will retry. Activation ${receipt.activation_id}.`,
         });
+      } else {
+        setNotice(receiptNotice(receipt));
       }
       return true;
     } catch (caught) {
       setNotice({ kind: 'error', text: readableError(caught) });
       return false;
-    } finally {
-      setSending(false);
     }
   }
 
@@ -173,41 +84,15 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
       setNotice(READ_ONLY_NOTICE);
       return;
     }
-    if (!projectId || !triageId || pendingAction) return;
-    setPendingAction(action);
     setNotice(null);
     try {
-      applyWorkspace(await api.performAction(projectId, triageId, action, feedback));
-      setNotice({ kind: 'success', text: `Action “${action}” was accepted by the backend.` });
+      const accepted = await performWorkspaceAction(action, feedback);
+      if (accepted) {
+        setNotice({ kind: 'success', text: `Action “${action}” was accepted by the backend.` });
+      }
     } catch (caught) {
       setNotice({ kind: 'error', text: readableError(caught) });
-    } finally {
-      setPendingAction(null);
     }
-  }
-
-  async function createProposalIssue(runId: string): Promise<CreatedIssue> {
-    if (snapshot) throw new Error(READ_ONLY_NOTICE.text);
-    if (!projectId || !triageId) throw new Error('Workspace identity is missing');
-    const issue = await api.createProposalIssue(projectId, triageId, runId);
-    setWorkspace((current) => {
-      const panel = current?.attribution;
-      const attribution = panel?.data;
-      if (!current || !panel || !attribution) return current;
-      return {
-        ...current,
-        attribution: {
-          ...panel,
-          data: {
-            ...attribution,
-            reports: attribution.reports.map((report) =>
-              report.run_id === runId ? { ...report, created_issue: issue } : report,
-            ),
-          },
-        },
-      };
-    });
-    return issue;
   }
 
   async function deleteFeature() {
@@ -215,16 +100,12 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
       setDeleteError(READ_ONLY_NOTICE.text);
       return;
     }
-    if (!projectId || !triageId || deleting) return;
-    setDeleting(true);
     setDeleteError('');
     try {
-      await api.deleteFeature(projectId, triageId);
+      await deleteWorkspaceFeature();
       navigate('/console', { replace: true });
     } catch (caught) {
       setDeleteError(readableError(caught));
-    } finally {
-      setDeleting(false);
     }
   }
 

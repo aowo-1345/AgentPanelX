@@ -1,18 +1,18 @@
 import { AlertCircle, CheckCircle2, Loader2, PlusCircle, Settings } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, readableError } from '@/api/client';
+import { readableError } from '@/api/client';
 import type { Project } from '@/api/types';
 
 interface NewFeaturePanelProps {
   projects: Project[];
-  onCreated: () => Promise<void>;
+  onCreateFeature: (projectId: string, name: string) => Promise<void>;
   readOnly?: boolean;
 }
 
 type SubmitState = 'idle' | 'submitting' | 'success' | 'error';
 
-export function NewFeaturePanel({ projects, onCreated, readOnly = false }: NewFeaturePanelProps) {
+export function NewFeaturePanel({ projects, onCreateFeature, readOnly = false }: NewFeaturePanelProps) {
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [projectId, setProjectId] = useState('');
@@ -32,10 +32,9 @@ export function NewFeaturePanel({ projects, onCreated, readOnly = false }: NewFe
     setSubmitState('submitting');
     setError('');
     try {
-      await api.createFeature(projectId, name.trim());
+      await onCreateFeature(projectId, name.trim());
       setName('');
       setSubmitState('success');
-      await onCreated();
     } catch (caught) {
       setError(readableError(caught));
       setSubmitState('error');

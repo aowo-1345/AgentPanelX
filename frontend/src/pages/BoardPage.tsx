@@ -1,89 +1,39 @@
 import { Filter, Loader2, RefreshCw, Search } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, readableError } from '@/api/client';
 import {
   FEATURE_STATUSES,
   FEATURE_STATUS_LABELS,
   type BoardFeature,
   type FeatureStatus,
-  type Project,
 } from '@/api/types';
 import { KanbanColumn } from '@/components/board/KanbanColumn';
 import { NewFeaturePanel } from '@/components/board/NewFeaturePanel';
-import { useSilentPolling } from '@/hooks/useSilentPolling';
+import { useBoard } from '@/hooks/useBoard';
+import type { BoardSnapshot } from '@/hooks/useBoard';
 
-type LoadState = 'loading' | 'loaded' | 'refreshing' | 'error';
-
-export interface BoardSnapshot {
-  projects: Project[];
-  features: BoardFeature[];
-}
+export type { BoardSnapshot } from '@/hooks/useBoard';
 
 interface BoardPageProps {
   snapshot?: BoardSnapshot;
   onOpenFeature?: (feature: BoardFeature) => void;
 }
 
-const ACTIVE_BOARD_POLL_MS = 1_000;
-const IDLE_BOARD_POLL_MS = 5_000;
-
-function sameFeatures(current: BoardFeature[], next: BoardFeature[]): boolean {
-  return JSON.stringify(current) === JSON.stringify(next);
-}
-
 export function BoardPage({ snapshot, onOpenFeature }: BoardPageProps = {}) {
   const navigate = useNavigate();
-  const [features, setFeatures] = useState<BoardFeature[]>(snapshot?.features ?? []);
-  const [projects, setProjects] = useState<Project[]>(snapshot?.projects ?? []);
-  const [loadState, setLoadState] = useState<LoadState>(snapshot ? 'loaded' : 'loading');
-  const [error, setError] = useState('');
+  const {
+    projects,
+    features,
+    loadState,
+    error,
+    isInitialLoading,
+    isRefreshing,
+    load,
+    createFeature,
+  } = useBoard({ snapshot });
   const [search, setSearch] = useState('');
   const [projectFilter, setProjectFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<FeatureStatus | 'all'>('all');
-
-  const applyFeatures = useCallback((next: BoardFeature[]) => {
-    setFeatures((current) => (sameFeatures(current, next) ? current : next));
-    setLoadState((current) => (current === 'error' ? 'loaded' : current));
-    setError('');
-  }, []);
-
-  const load = useCallback(async (refresh = false) => {
-    setLoadState(refresh ? 'refreshing' : 'loading');
-    setError('');
-    if (snapshot) {
-      setProjects(snapshot.projects);
-      applyFeatures(snapshot.features);
-      setLoadState('loaded');
-      return;
-    }
-    try {
-      const [nextProjects, nextFeatures] = await Promise.all([
-        api.listProjects(),
-        api.listFeatures(),
-      ]);
-      setProjects(nextProjects);
-      applyFeatures(nextFeatures);
-      setLoadState('loaded');
-    } catch (caught) {
-      setError(readableError(caught));
-      setLoadState('error');
-    }
-  }, [applyFeatures, snapshot]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const boardBusy = features.some((feature) => feature.status === 'IN_PROGRESS');
-  const pollFeatures = useCallback((signal: AbortSignal) => api.listFeatures(signal), []);
-
-  useSilentPolling({
-    enabled: !snapshot && (loadState === 'loaded' || loadState === 'error'),
-    intervalMs: boardBusy ? ACTIVE_BOARD_POLL_MS : IDLE_BOARD_POLL_MS,
-    query: pollFeatures,
-    onData: applyFeatures,
-  });
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -106,9 +56,6 @@ export function BoardPage({ snapshot, onOpenFeature }: BoardPageProps = {}) {
       );
     });
   }, [features, projectFilter, search, statusFilter]);
-
-  const isInitialLoading = loadState === 'loading' && features.length === 0;
-  const isRefreshing = loadState === 'refreshing';
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden bg-[#07080b]">
@@ -175,7 +122,11 @@ export function BoardPage({ snapshot, onOpenFeature }: BoardPageProps = {}) {
       </header>
 
       <div className="relative z-10 flex min-h-0 flex-1 overflow-hidden">
-        <NewFeaturePanel projects={projects} onCreated={() => load(true)} readOnly={Boolean(snapshot)} />
+        <NewFeaturePanel
+          projects={projects}
+          onCreateFeature={createFeature}
+          readOnly={Boolean(snapshot)}
+        />
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {loadState === 'error' && features.length === 0 ? (
