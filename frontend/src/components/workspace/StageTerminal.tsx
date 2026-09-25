@@ -1,4 +1,5 @@
 import { TerminalSquare } from 'lucide-react';
+import '@xterm/xterm/css/xterm.css';
 import { useStageTerminal } from '@/hooks/useStageTerminal';
 
 interface StageTerminalProps {
