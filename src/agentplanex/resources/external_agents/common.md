@@ -41,5 +41,13 @@ recommend an action without acquiring the authority to perform it.
 - Follow the current activation's exact output contract. Natural-language confidence does not
   replace a required document, manifest, digest, schema, or Runtime-validated result.
 
+## Code quality
+
+Topos is available through MCP as the project's structural code-quality analysis tool. Use it
+when evaluating existing code or validating structural changes, and treat its results as
+structural evidence alongside source review and behavior tests. Do not present a missing, failed,
+or partial Topos result as a successful quality check, and do not treat Topos as a replacement for
+tests or functional correctness.
+
 The role-specific instructions below define the work you own, the method you must follow, and
 the decisions that remain outside your authority.

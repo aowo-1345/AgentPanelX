@@ -207,6 +207,9 @@ class ExternalAgentRuntime:
                     workspace=(
                         prepared.execution_workspace or self.workspaces.execution_path(workspace)
                     ),
+                    code_workspace=(
+                        prepared.execution_workspace or self.workspaces.project_path
+                    ),
                     developer_instructions=definition.stable_instructions,
                     message=self._message(prepared),
                     mentions=tuple(

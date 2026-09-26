@@ -59,6 +59,8 @@ Stage → QA → Candidate → next Milestone
 
 A project-local Runtime preserves approvals, artifacts, delivery state, and the Timeline. Within the approved strategy, the Project Owner and Ultra Mode can optimize or recover delivery; strategic changes return to the human as an evidence-backed Proposal. AgentPanelX does not replace the human architect—it removes the need to supervise every implementation detail.
 
+Topos adds structural code-quality evidence to this rolling feedback loop. After implementation evidence is available, the Task Distributor can use it to decide whether a focused hardening Stage is needed. See [Code quality analysis](docs/code-quality.md) for details.
+
 ## Agent-native onboarding
 
 Already using Codex or Claude Code? Let your coding agent install, verify, and explain AgentPanelX for you.
@@ -145,6 +147,7 @@ See [Agent-native operations](docs/skills.md) for the complete workflow and perm
 - Node.js and npm
 - Git
 - Bubblewrap (`bwrap`) on Linux
+- Topos installed and registered as a Codex MCP server (`topos install`)
 - At least one supported CLI coding agent for real delivery runs
 
 ### Install and run
@@ -154,6 +157,7 @@ git clone https://github.com/aowo-1345/AgentPanelX.git
 cd AgentPanelX
 
 uv sync
+topos install
 cd frontend && npm ci && npm run build && cd ..
 
 uv run agentplanex-web
@@ -208,6 +212,7 @@ The default test suite does not call a model gateway. See [Contributing](CONTRIB
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Code quality analysis with Topos](docs/code-quality.md)
 - [Agent-native operations](docs/skills.md)
 - [ChatGPT subscription through a local proxy](docs/chatgpt-local-auth.md)
 - [Console walkthrough](docs/showcase.md)

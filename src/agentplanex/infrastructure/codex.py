@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import json
 import os
 import pty
 import shutil
@@ -57,6 +58,7 @@ class CodexTurnRequest:
     skills: tuple[tuple[str, Path], ...] = ()
     output_schema: dict[str, Any] | None = None
     observer_key: str | None = None
+    code_workspace: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,21 +105,22 @@ class _NativeCodexStageTerminal:
             self._url,
         )
 
-    def start(self, *, network_access: bool) -> None:
+    def start(
+        self,
+        *,
+        config_overrides: tuple[str, ...],
+    ) -> None:
         """Start one local WebSocket app-server for the SDK and TUI."""
         if not self._executable:
             raise CodexTransportError("The codex executable is not available")
         port = _free_tcp_port()
         self._url = f"ws://127.0.0.1:{port}"
+        args = [self._executable]
+        for override in config_overrides:
+            args.extend(("--config", override))
+        args.extend(("app-server", "--listen", self._url))
         self._server = subprocess.Popen(
-            [
-                self._executable,
-                "--config",
-                f"sandbox_workspace_write.network_access={str(network_access).lower()}",
-                "app-server",
-                "--listen",
-                self._url,
-            ],
+            args,
             cwd=self._workspace,
             env=os.environ.copy(),
             stdout=subprocess.DEVNULL,
@@ -264,6 +267,16 @@ class CodexTurnTransport:
     network_access: bool = True
     event_sink: Callable[[str, str], None] | None = None
 
+    def _config_overrides(self, workspace: Path) -> tuple[str, ...]:
+        """Bind the shared Topos MCP server to this turn's target worktree."""
+        workspace_text = json.dumps(str(workspace.resolve()), ensure_ascii=False)
+        return (
+            "sandbox_workspace_write.network_access="
+            f"{str(self.network_access).lower()}",
+            f"mcp_servers.topos.cwd={workspace_text}",
+            f"mcp_servers.topos.env.TOPOS_MCP_FILE_ROOT={workspace_text}",
+        )
+
     def run(
         self,
         request: CodexTurnRequest,
@@ -274,6 +287,9 @@ class CodexTurnTransport:
         client: Codex | None = None
         native_terminal: _NativeCodexStageTerminal | None = None
         try:
+            config_overrides = self._config_overrides(
+                request.code_workspace or request.workspace
+            )
             if self.event_sink is not None and request.observer_key is not None:
                 native_terminal = _NativeCodexStageTerminal(
                     executable=self.executable,
@@ -281,7 +297,7 @@ class CodexTurnTransport:
                     stage_run_id=request.observer_key,
                     output_sink=self.event_sink,
                 )
-                native_terminal.start(network_access=self.network_access)
+                native_terminal.start(config_overrides=config_overrides)
             client = Codex(
                 CodexConfig(
                     codex_bin=self.executable,
@@ -290,10 +306,7 @@ class CodexTurnTransport:
                     ),
                     client_name="agentplanex",
                     client_title="AgentPlaneX",
-                    config_overrides=(
-                        "sandbox_workspace_write.network_access="
-                        f"{str(self.network_access).lower()}",
-                    ),
+                    config_overrides=config_overrides,
                 )
             )
             if request.thread_id is None:

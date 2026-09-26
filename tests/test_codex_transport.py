@@ -77,7 +77,8 @@ def test_transport_keeps_workspace_write_and_sets_codex_network_policy(
 
     config = captured["config"]
     assert isinstance(config, codex_module.CodexConfig)
-    assert config.config_overrides == (expected_override,)
+    assert config.config_overrides[0] == expected_override
+    assert any(item.startswith("mcp_servers.topos.cwd=") for item in config.config_overrides)
     thread_start = captured["thread_start"]
     assert isinstance(thread_start, dict)
     assert thread_start["sandbox"] is Sandbox.workspace_write
@@ -92,3 +93,62 @@ def test_transport_keeps_workspace_write_and_sets_codex_network_policy(
     assert isinstance(input_items[1], codex_module.SkillInput)
     assert captured["closed"] is True
     assert result.thread_id == "thread-1"
+
+
+def test_transport_binds_topos_to_the_turn_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Turn:
+        def run(self) -> object:
+            return SimpleNamespace(
+                id="turn-1",
+                status=SimpleNamespace(value="completed"),
+                final_response='{"summary":"done"}',
+            )
+
+        def interrupt(self) -> None:
+            raise AssertionError("Completed turn must not be interrupted")
+
+    class _Thread:
+        id = "thread-1"
+
+        def turn(self, _input_items: object, **_kwargs: object) -> _Turn:
+            return _Turn()
+
+    class _Codex:
+        def __init__(self, config: object) -> None:
+            captured["config"] = config
+
+        def thread_start(self, **_kwargs: object) -> _Thread:
+            return _Thread()
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(codex_module, "Codex", _Codex)
+    CodexTurnTransport(
+        executable=None,
+        model=None,
+        timeout_seconds=5,
+        response_limit=1_024,
+    ).run(
+        CodexTurnRequest(
+            thread_id=None,
+            workspace=tmp_path,
+            developer_instructions="Implement the task.",
+            message="Run the required command.",
+            mentions=(),
+        )
+    )
+
+    config = captured["config"]
+    assert isinstance(config, codex_module.CodexConfig)
+    assert config.config_overrides[0] == "sandbox_workspace_write.network_access=true"
+    assert f'mcp_servers.topos.cwd="{tmp_path.resolve()}"' in config.config_overrides
+    assert (
+        f'mcp_servers.topos.env.TOPOS_MCP_FILE_ROOT="{tmp_path.resolve()}"'
+        in config.config_overrides
+    )

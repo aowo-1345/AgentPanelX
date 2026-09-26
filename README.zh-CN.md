@@ -59,6 +59,8 @@ Stage → QA → Candidate → 下一 Milestone
 
 项目本地 Runtime 持久化审批、Artifact、交付状态与 Timeline。在已批准的战略范围内，Project Owner 和 Ultra Mode 可以持续优化或恢复交付；战略变化则形成带有证据的 Proposal，重新交给人类决策。AgentPanelX 不取代人类架构师，而是让人类不再监督每一个实施细节。
 
+Topos 为这个滚动反馈循环提供代码结构质量证据。Task Distributor 可以在获得实现证据后，用它判断是否需要单独的质量加固 Stage。详细说明见[代码质量分析](docs/code-quality.md)。
+
 ## Agent-native 上手方式
 
 如果你已经在使用 Codex 或 Claude Code，可以直接让 Coding Agent 帮你安装、验证并讲解 AgentPanelX：
@@ -145,6 +147,7 @@ Web Console 面向人，三个仓库级 Skill 则把同一个 Project Runtime �
 - Node.js 与 npm
 - Git
 - Linux 上的 Bubblewrap（`bwrap`）
+- 已安装并注册为 Codex MCP Server 的 Topos（执行 `topos install`）
 - 真实交付时至少需要一个受支持的 CLI Coding Agent
 
 ### 安装并启动
@@ -154,6 +157,7 @@ git clone https://github.com/aowo-1345/AgentPanelX.git
 cd AgentPanelX
 
 uv sync
+topos install
 cd frontend && npm ci && npm run build && cd ..
 
 uv run agentplanex-web
@@ -205,6 +209,7 @@ npm run build
 ## 文档
 
 - [系统架构](docs/architecture.md)
+- [使用 Topos 做代码结构质量分析](docs/code-quality.md)
 - [Agent-native 操作说明](docs/skills.md)
 - [通过本地代理接入 ChatGPT 订阅](docs/chatgpt-local-auth.zh-CN.md)
 - [Console 使用说明](docs/showcase.md)
