@@ -1,6 +1,7 @@
 import { Check, Copy, ExternalLink, FileText, GitBranch, GitCommit } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import type {
+  CodeGraphData,
   GitData,
   MilestonesData,
   Panel,
@@ -295,6 +296,51 @@ function GitPanel({ panel }: { panel: Panel<GitData> }) {
   );
 }
 
+function codeGraphLabel(status: CodeGraphData['status']): string {
+  return {
+    pending: 'Pending',
+    disabled: 'Disabled',
+    waiting_clean: 'Waiting for commit',
+    analyzing: 'Analyzing',
+    current: 'Current',
+    unavailable: 'Unavailable',
+    failed: 'Failed',
+  }[status];
+}
+
+function CodeGraphPanel({ panel }: { panel: Panel<CodeGraphData> }) {
+  return (
+    <PanelState panel={panel}>
+      {(graph) => (
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <span className="text-muted-foreground">Status</span>
+            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
+              {codeGraphLabel(graph.status)}
+            </span>
+          </div>
+          <KeyValue label="Target commit" value={graph.target_commit} />
+          <KeyValue label="Indexed commit" value={graph.indexed_commit} />
+          {graph.message && (
+            <p className="text-xs leading-relaxed text-muted-foreground">{graph.message}</p>
+          )}
+          {graph.viewer_url && graph.status !== 'disabled' && (
+            <a
+              className="btn btn-secondary flex h-8 w-full items-center justify-center gap-1.5 text-xs"
+              href={graph.viewer_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Open GitNexus
+            </a>
+          )}
+        </div>
+      )}
+    </PanelState>
+  );
+}
+
 function TimelinePanel({ panel }: { panel: Panel<TimelineEvent[]> }) {
   return (
     <PanelState panel={panel}>
@@ -334,10 +380,11 @@ interface SidePanelsProps {
   plan: Panel<PlanData>;
   milestones: Panel<MilestonesData>;
   git: Panel<GitData>;
+  codeGraph?: Panel<CodeGraphData>;
   timeline: Panel<TimelineEvent[]>;
 }
 
-export function SidePanels({ runtime, plan, milestones, git, timeline }: SidePanelsProps) {
+export function SidePanels({ runtime, plan, milestones, git, codeGraph, timeline }: SidePanelsProps) {
   const panels: Array<[string, ReactNode]> = [
     ['Runtime', <RuntimePanel key="runtime" panel={runtime} />],
     ['Current plan', <PlanPanel key="plan" panel={plan} />],
@@ -346,8 +393,11 @@ export function SidePanels({ runtime, plan, milestones, git, timeline }: SidePan
       <MilestonesPanel key="milestones" panel={milestones} runtime={runtime.data} />,
     ],
     ['Git', <GitPanel key="git" panel={git} />],
-    ['Timeline', <TimelinePanel key="timeline" panel={timeline} />],
   ];
+  if (codeGraph) {
+    panels.push(['Code architecture', <CodeGraphPanel key="code-graph" panel={codeGraph} />]);
+  }
+  panels.push(['Timeline', <TimelinePanel key="timeline" panel={timeline} />]);
 
   return (
     <aside className="w-[340px] shrink-0 space-y-3 overflow-y-auto p-4">

@@ -247,6 +247,7 @@ export function WorkspacePage({ snapshot }: WorkspacePageProps = {}) {
             plan={workspace.plan}
             milestones={workspace.milestones}
             git={workspace.git}
+            codeGraph={workspace.code_graph}
             timeline={workspace.timeline}
           />
         </div>

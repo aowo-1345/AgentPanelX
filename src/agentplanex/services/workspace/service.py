@@ -18,6 +18,7 @@ from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.services.auto_takeover import AutoTakeoverPort
+from agentplanex.services.code_graph import CodeGraphService
 from agentplanex.services.external_agent_runtime.observation import StageOutputObserver
 from agentplanex.services.project_runtime_context.models import OwnerActivation
 from agentplanex.services.web import ConversationSnapshot
@@ -48,6 +49,7 @@ class WorkspaceService:
     runtime_factory: Callable[[Path], ProjectRuntime]
     proposal_to_issue: ProposalToIssue
     auto_takeover: AutoTakeoverPort | None = None
+    code_graph: CodeGraphService | None = None
     stage_output_observer: StageOutputObserver = field(default_factory=StageOutputObserver)
     conversation_hub: ConversationHub = field(default_factory=ConversationHub)
     close_resources: Callable[[], None] = _noop
@@ -59,6 +61,8 @@ class WorkspaceService:
             for binding in self.registry.list_features(project.project_id):
                 if self.runtime_factory(binding.worktree_path).fail_interrupted_work():
                     failed_features += 1
+        if self.code_graph is not None:
+            self.code_graph.start()
         return failed_features
 
     def close(self) -> None:
@@ -68,6 +72,8 @@ class WorkspaceService:
         self.stage_output_observer.close_all()
         self.conversation_hub.close()
         try:
+            if self.code_graph is not None:
+                self.code_graph.close()
             self.close_resources()
         finally:
             try:

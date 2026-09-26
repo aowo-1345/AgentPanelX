@@ -114,6 +114,16 @@ class AutoTakeoverSettings(_SettingsModel):
     budget_seconds: float = Field(default=1800.0, gt=0, le=1800.0)
 
 
+class CodeGraphSettings(_SettingsModel):
+    """External GitNexus service used by the Web Console architecture view."""
+
+    enabled: bool = True
+    base_url: str = Field(default="http://127.0.0.1:4747", min_length=1)
+    viewer_url: str | None = None
+    poll_interval_seconds: float = Field(default=5.0, gt=0)
+    analysis_timeout_seconds: float = Field(default=1800.0, gt=0)
+
+
 class NotificationSettings(_SettingsModel):
     """Best-effort outbound notification settings."""
 
@@ -216,6 +226,7 @@ class RuntimeSettings(_SettingsModel):
 
     bash: BashSettings = BashSettings()
     codex: CodexSettings = CodexSettings()
+    code_graph: CodeGraphSettings = CodeGraphSettings()
     auto_takeover: AutoTakeoverSettings = AutoTakeoverSettings()
     notifications: NotificationSettings = NotificationSettings()
     external_agents: dict[str, ExternalAgentDefinitionSettings] = Field(min_length=1)

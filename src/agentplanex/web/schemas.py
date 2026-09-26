@@ -11,6 +11,7 @@ from agentplanex.domains.workspace import (
     FeatureView,
     ManagedProject,
 )
+from agentplanex.services.code_graph.models import CodeGraphStatus
 from agentplanex.services.project_runtime_context.models import OwnerActivation
 from agentplanex.services.web.project_workspace import VisibleMessage
 from agentplanex.services.workspace.queries import FeatureWorkspaceView
@@ -178,6 +179,14 @@ class GitData(Schema):
     head: str
 
 
+class CodeGraphData(Schema):
+    status: CodeGraphStatus
+    target_commit: str | None
+    indexed_commit: str | None
+    viewer_url: str | None
+    message: str | None
+
+
 class AttributionReportData(Schema):
     run_id: str
     trigger_event_id: int
@@ -204,6 +213,7 @@ class WorkspaceResponse(Schema):
     milestones: Panel[MilestonesData]
     timeline: Panel[list[TimelineEventData]]
     git: Panel[GitData]
+    code_graph: Panel[CodeGraphData]
     attribution: Panel[AttributionPanelData]
 
 
@@ -453,5 +463,14 @@ def workspace_response(workspace: FeatureWorkspaceView) -> WorkspaceResponse:
                 else None
             ),
             error=runtime_view.git_error,
+        ),
+        code_graph=Panel(
+            data=CodeGraphData(
+                status=workspace.code_graph.status,
+                target_commit=workspace.code_graph.target_commit,
+                indexed_commit=workspace.code_graph.indexed_commit,
+                viewer_url=workspace.code_graph.viewer_url,
+                message=workspace.code_graph.message,
+            )
         ),
     )

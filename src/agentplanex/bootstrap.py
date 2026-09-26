@@ -9,6 +9,7 @@ from agentplanex.domains.workspace import FeatureBinding
 from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.git_repository import GitRepository
 from agentplanex.infrastructure.github_issue import GitHubIssuePublisher
+from agentplanex.infrastructure.gitnexus import GitNexusClient
 from agentplanex.infrastructure.logging import configure_logging
 from agentplanex.infrastructure.model_gateway import (
     ModelGateway,
@@ -28,6 +29,7 @@ from agentplanex.project_runtime.composition import (
 )
 from agentplanex.project_runtime.control import ProjectRuntimeControl
 from agentplanex.services.auto_takeover import AutoTakeoverService
+from agentplanex.services.code_graph import CodeGraphService
 from agentplanex.services.external_agent_runtime.observation import StageOutputObserver
 from agentplanex.services.project_control import ProjectControlQuery
 from agentplanex.services.web import ProjectWorkspaceQuery
@@ -134,6 +136,24 @@ def create_workspace(
     git = WorkspaceGit()
     dispatcher = WorkspaceDispatcher(max_parallel_features=settings.workspace.max_parallel_features)
 
+    def feature_bindings() -> tuple[FeatureBinding, ...]:
+        return tuple(
+            binding
+            for project in registry.list_projects()
+            for binding in registry.list_features(project.project_id)
+        )
+
+    code_graph = CodeGraphService(
+        client=GitNexusClient(
+            base_url=settings.runtime.code_graph.base_url,
+            viewer_url=settings.runtime.code_graph.viewer_url,
+            analysis_timeout_seconds=settings.runtime.code_graph.analysis_timeout_seconds,
+        ),
+        bindings=feature_bindings,
+        enabled=settings.runtime.code_graph.enabled,
+        poll_interval_seconds=settings.runtime.code_graph.poll_interval_seconds,
+    )
+
     def runtime_factory(project_path: Path) -> ProjectRuntime:
         return create_project_runtime(
             project_path=project_path,
@@ -184,6 +204,7 @@ def create_workspace(
             git=git,
             artifact_response_limit=settings.runtime.codex.response_limit,
             artifact_limit=settings.runtime.codex.artifact_limit,
+            code_graph=code_graph,
         ),
         dispatcher=dispatcher,
         runtime_factory=runtime_factory,
@@ -200,6 +221,7 @@ def create_workspace(
             artifact_limit=settings.runtime.codex.artifact_limit,
         ),
         auto_takeover=takeover,
+        code_graph=code_graph,
         stage_output_observer=stage_output_observer,
         conversation_hub=conversation_hub,
         close_resources=responses_transport.close,

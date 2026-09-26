@@ -1,6 +1,6 @@
-# Code quality analysis with Topos
+# Code quality analysis
 
-AgentPanelX uses [Topos](https://github.com/krv-ai/topos) as an additional structural code-quality signal for its external Agents. It complements tests, type checks, linters, and source review. Topos does not prove functional correctness, and a failed structural rule is not automatically a confirmed defect.
+AgentPanelX uses [Topos](https://github.com/krv-ai/topos) as an additional structural code-quality signal for its external Agents. The Web Console also links each Feature to its committed-code architecture view in [GitNexus](https://github.com/abhigyanpatwari/GitNexus). Topos supplies structural quality evidence; GitNexus supplies dependency and navigation context. Both are evidence for review and planning, not Runtime approval or Delivery gates. They complement tests, type checks, linters, and source review. Neither tool proves functional correctness, and a failed structural rule is not automatically a confirmed defect.
 
 ## Install and register Topos
 
@@ -64,3 +64,17 @@ Task Distributor remains responsible for deciding whether a quality-hardening St
 - A measurement is tied to its target worktree, scan scope, tool version, and source state. Do not compare results from different scopes or versions as if they were a single before/after change.
 
 For the complete tool contract and current command behavior, use the [Topos documentation](https://docs.krv.ai/topos/) and the [Topos source repository](https://github.com/krv-ai/topos).
+
+## GitNexus architecture view
+
+GitNexus is an optional external service. Configure `runtime.code_graph.base_url`
+in `config/settings.yaml`; set `viewer_url` if its native UI uses a different address
+(`null` reuses the API address). Set `enabled: false` to disable integration.
+AgentPanelX does not start or stop the service.
+
+The service must see canonical WorkTree paths and Git metadata read-only, with
+`GITNEXUS_STORAGE_ROOT` outside source trees for independent indexes. GitNexus
+1.6.12's HTTP analyzer can otherwise generate agent instruction files in the repository.
+Clean Feature HEAD commits are indexed automatically; dirty worktrees wait and
+service failures do not block Runtime operations. Open the native graph from the
+Workspace sidebar.

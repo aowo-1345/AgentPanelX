@@ -29,6 +29,12 @@ workspace:
   data_home: ".agentplanex"
   max_parallel_features: 4
 runtime:
+  code_graph:
+    enabled: true
+    base_url: "http://127.0.0.1:4747"
+    viewer_url: null
+    poll_interval_seconds: 5.0
+    analysis_timeout_seconds: 1800.0
   notifications:
     enabled: false
     webhook_url_env: "AGENTPLANEX_FEISHU_WEBHOOK"

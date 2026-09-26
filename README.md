@@ -59,7 +59,7 @@ Stage → QA → Candidate → next Milestone
 
 A project-local Runtime preserves approvals, artifacts, delivery state, and the Timeline. Within the approved strategy, the Project Owner and Ultra Mode can optimize or recover delivery; strategic changes return to the human as an evidence-backed Proposal. AgentPanelX does not replace the human architect—it removes the need to supervise every implementation detail.
 
-Topos adds structural code-quality evidence to this rolling feedback loop. After implementation evidence is available, the Task Distributor can use it to decide whether a focused hardening Stage is needed. See [Code quality analysis](docs/code-quality.md) for details.
+Topos adds structural code-quality evidence to this rolling feedback loop; GitNexus adds a browsable code-architecture view for each Feature. After implementation evidence is available, the Task Distributor can use it to decide whether a focused hardening Stage is needed. See [Code quality analysis](docs/code-quality.md) for details.
 
 ## Agent-native onboarding
 
@@ -75,6 +75,10 @@ report missing prerequisites instead of guessing.
 Open this repository in your coding agent, send the request above, and keep the agent in the repository root. The conventional installation steps are available in [Quick start](#quick-start).
 
 ![AgentPanelX Web Console](docs/assets/showcase/board.png)
+
+![AgentPanelX code architecture in GitNexus](docs/assets/gitnexus-architecture.png)
+
+*AgentPanelX code architecture in GitNexus*
 
 ## What AgentPanelX does
 

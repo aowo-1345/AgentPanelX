@@ -59,7 +59,7 @@ Stage → QA → Candidate → 下一 Milestone
 
 项目本地 Runtime 持久化审批、Artifact、交付状态与 Timeline。在已批准的战略范围内，Project Owner 和 Ultra Mode 可以持续优化或恢复交付；战略变化则形成带有证据的 Proposal，重新交给人类决策。AgentPanelX 不取代人类架构师，而是让人类不再监督每一个实施细节。
 
-Topos 为这个滚动反馈循环提供代码结构质量证据。Task Distributor 可以在获得实现证据后，用它判断是否需要单独的质量加固 Stage。详细说明见[代码质量分析](docs/code-quality.md)。
+Topos 为这个滚动反馈循环提供代码结构质量证据，GitNexus 则为每个 Feature 提供可浏览的代码架构视图。Task Distributor 可以在获得实现证据后，用它判断是否需要单独的质量加固 Stage。详细说明见[代码质量分析](docs/code-quality.md)。
 
 ## Agent-native 上手方式
 
@@ -75,6 +75,10 @@ Project Owner、Project Runtime、Git worktree，以及 Observe / Control / Attr
 在 Codex 或 Claude Code 中打开这个仓库，发送上面的请求，并让 Agent 始终在仓库根目录工作。不使用 Coding Agent 时，也可以按照[快速开始](#快速开始)手动安装。
 
 ![AgentPanelX Web Console](docs/assets/showcase/board.png)
+
+![GitNexus 展示 AgentPanelX 自身的代码架构](docs/assets/gitnexus-architecture.png)
+
+*GitNexus 展示 AgentPanelX 自身的代码架构*
 
 ## AgentPanelX 做什么
 

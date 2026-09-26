@@ -169,6 +169,23 @@ export interface GitData {
   head: string;
 }
 
+export type CodeGraphStatus =
+  | 'pending'
+  | 'disabled'
+  | 'waiting_clean'
+  | 'analyzing'
+  | 'current'
+  | 'unavailable'
+  | 'failed';
+
+export interface CodeGraphData {
+  status: CodeGraphStatus;
+  target_commit: string | null;
+  indexed_commit: string | null;
+  viewer_url: string | null;
+  message: string | null;
+}
+
 export interface AttributionReport {
   run_id: string;
   trigger_event_id?: number;
@@ -195,6 +212,7 @@ export interface Workspace {
   milestones: Panel<MilestonesData>;
   timeline: Panel<TimelineEvent[]>;
   git: Panel<GitData>;
+  code_graph?: Panel<CodeGraphData>;
   attribution?: Panel<AttributionData>;
 }
 

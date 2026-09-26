@@ -19,6 +19,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 )
 from agentplanex.infrastructure.workspace_git import WorkspaceGit
 from agentplanex.infrastructure.workspace_registry import WorkspaceRegistry
+from agentplanex.services.code_graph import CodeGraphService, CodeGraphView
 from agentplanex.services.delivery.models import StageRun
 from agentplanex.services.web import (
     ConversationSnapshot,
@@ -34,6 +35,12 @@ class FeatureWorkspaceView:
     project: ManagedProject
     binding: FeatureBinding
     runtime_view: ProjectWorkspaceView
+    code_graph: CodeGraphView = field(
+        default_factory=lambda: CodeGraphView(
+            status="disabled",
+            message="GitNexus analysis is not configured",
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +57,7 @@ class WorkspaceQueries:
     )
     artifact_response_limit: int = 65_536
     artifact_limit: int = 262_144
+    code_graph: CodeGraphService | None = None
 
     def project_board(self, project_id: str) -> ProjectBoard:
         project = self.registry.get_project(project_id)
@@ -90,6 +98,14 @@ class WorkspaceQueries:
             project=project,
             binding=binding,
             runtime_view=runtime_view,
+            code_graph=(
+                self.code_graph.view(binding)
+                if self.code_graph is not None
+                else CodeGraphView(
+                    status="disabled",
+                    message="GitNexus analysis is not configured",
+                )
+            ),
         )
 
     def feature_conversation(
