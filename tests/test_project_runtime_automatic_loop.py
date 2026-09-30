@@ -190,13 +190,11 @@ def _settings(
     max_consecutive_format_errors: int | None = None,
 ) -> Settings:
     configured = load_settings(DEFAULT_SETTINGS_PATH)
-    updates: dict[str, int] = {}
+    updates: dict[str, object] = {"response_mode": "non_stream"}
     if step_limit is not None:
         updates["step_limit"] = step_limit
     if max_consecutive_format_errors is not None:
         updates["max_consecutive_format_errors"] = max_consecutive_format_errors
-    if not updates:
-        return configured
     return configured.model_copy(
         update={"project_owner_agent": configured.project_owner_agent.model_copy(update=updates)}
     )

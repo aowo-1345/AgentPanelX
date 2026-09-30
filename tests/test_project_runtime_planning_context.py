@@ -23,7 +23,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.project_runtime.control import ProjectRuntimeControl
 from agentplanex.services.planning._service import PlanningService
-from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
+from agentplanex.settings import DEFAULT_SETTINGS_PATH, Settings, load_settings
 
 
 class _UnusedResponsesTransport:
@@ -50,10 +50,21 @@ class _ReplyingResponsesTransport:
         }
 
 
+def _test_settings() -> Settings:
+    configured = load_settings(DEFAULT_SETTINGS_PATH)
+    return configured.model_copy(
+        update={
+            "project_owner_agent": configured.project_owner_agent.model_copy(
+                update={"response_mode": "non_stream"}
+            )
+        }
+    )
+
+
 def _runtime(project_path: Path) -> ProjectRuntimeControl:
     return create_project_runtime_control(
         project_path=project_path,
-        settings=load_settings(DEFAULT_SETTINGS_PATH),
+        settings=_test_settings(),
         approval_mode="yolo",
         responses_transport=_UnusedResponsesTransport(),
     )
@@ -187,7 +198,7 @@ def test_plan_decision_does_not_clear_an_unrelated_runtime_failure(
     project_path = initialize_git_project()
     failing = create_project_runtime(
         project_path=project_path,
-        settings=load_settings(DEFAULT_SETTINGS_PATH),
+        settings=_test_settings(),
         approval_mode="yolo",
         responses_transport=_FailingResponsesTransport(),
     )
@@ -198,7 +209,7 @@ def test_plan_decision_does_not_clear_an_unrelated_runtime_failure(
     _write_specs(project_path)
     control = create_project_runtime_control(
         project_path=project_path,
-        settings=load_settings(DEFAULT_SETTINGS_PATH),
+        settings=_test_settings(),
         approval_mode="yolo",
         responses_transport=_UnusedResponsesTransport(),
     )
@@ -213,7 +224,7 @@ def test_plan_decision_does_not_clear_an_unrelated_runtime_failure(
 
     resumed = create_project_runtime(
         project_path=project_path,
-        settings=load_settings(DEFAULT_SETTINGS_PATH),
+        settings=_test_settings(),
         approval_mode="yolo",
         responses_transport=_ReplyingResponsesTransport(),
     )

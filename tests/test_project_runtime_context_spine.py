@@ -24,7 +24,7 @@ from agentplanex.infrastructure.sqlite.repositories import (
 from agentplanex.project_owner_agent.models.responses import ResponsesRequest
 from agentplanex.project_runtime import ProjectRuntime
 from agentplanex.project_runtime.errors import FeatureBusyError
-from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
+from agentplanex.settings import DEFAULT_SETTINGS_PATH, Settings, load_settings
 
 
 class _UnusedResponsesTransport:
@@ -53,10 +53,21 @@ class _BlockingResponsesTransport:
         }
 
 
+def _test_settings() -> Settings:
+    configured = load_settings(DEFAULT_SETTINGS_PATH)
+    return configured.model_copy(
+        update={
+            "project_owner_agent": configured.project_owner_agent.model_copy(
+                update={"response_mode": "non_stream"}
+            )
+        }
+    )
+
+
 def _runtime(project_path: Path) -> ProjectRuntime:
     return create_project_runtime(
         project_path=project_path,
-        settings=load_settings(DEFAULT_SETTINGS_PATH),
+        settings=_test_settings(),
         approval_mode="yolo",
         responses_transport=_UnusedResponsesTransport(),
     )
@@ -235,7 +246,7 @@ def test_second_runtime_fails_fast_while_feature_operation_is_running(
     blocking_transport = _BlockingResponsesTransport()
     first = create_project_runtime(
         project_path=project_path,
-        settings=load_settings(DEFAULT_SETTINGS_PATH),
+        settings=_test_settings(),
         approval_mode="yolo",
         responses_transport=blocking_transport,
     )
@@ -245,7 +256,7 @@ def test_second_runtime_fails_fast_while_feature_operation_is_running(
     second = _runtime(project_path)
     control = create_project_runtime_control(
         project_path=project_path,
-        settings=load_settings(DEFAULT_SETTINGS_PATH),
+        settings=_test_settings(),
         approval_mode="yolo",
         responses_transport=_UnusedResponsesTransport(),
     )

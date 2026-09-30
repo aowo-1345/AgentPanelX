@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -245,10 +246,38 @@ def test_project_owner_model_omits_tool_surface_for_historical_fork(
     monkeypatch.setenv("OPENAI_API_KEY", "test-secret")
     requests: list[dict[str, object]] = []
 
+    class _ResponseStream:
+        def __enter__(self) -> Iterator[object]:
+            return iter(
+                (
+                    SimpleNamespace(
+                        type="response.completed",
+                        response={
+                            "object": "response",
+                            "output": [
+                                {
+                                    "type": "message",
+                                    "role": "assistant",
+                                    "content": [
+                                        {
+                                            "type": "output_text",
+                                            "text": "checkpoint answer",
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                    ),
+                )
+            )
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
     class _Responses:
-        def create(self, **kwargs: object) -> dict[str, object]:
+        def create(self, **kwargs: object) -> object:
             requests.append(kwargs)
-            return {
+            response = {
                 "object": "response",
                 "output": [
                     {
@@ -260,9 +289,15 @@ def test_project_owner_model_omits_tool_surface_for_historical_fork(
                     }
                 ],
             }
+            if kwargs.get("stream"):
+                return _ResponseStream()
+            return response
 
     class _Client:
         responses = _Responses()
+
+        def with_options(self, **_kwargs: object) -> "_Client":
+            return self
 
     monkeypatch.setattr(
         gateway_adapters_module,

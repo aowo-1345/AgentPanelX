@@ -361,6 +361,7 @@ def test_model_tool_call_does_not_require_external_session_identity(
         responses=ResponsesClient(
             model="test-model",
             transport=InvalidToolCallTransport(),
+            response_mode="non_stream",
         ),
     )
 
@@ -418,6 +419,7 @@ def test_model_preserves_call_ids_for_multiple_tool_calls(
         responses=ResponsesClient(
             model="test-model",
             transport=MultipleToolCallTransport(),
+            response_mode="non_stream",
         ),
     )
 
@@ -454,7 +456,11 @@ def test_response_history_preserves_call_id_without_output_only_status() -> None
                 ],
             }
 
-    responses = ResponsesClient(model="test-model", transport=RecordingTransport())
+    responses = ResponsesClient(
+        model="test-model",
+        transport=RecordingTransport(),
+        response_mode="non_stream",
+    )
     responses.request(
         [
             {"role": "system", "content": "Test Owner."},

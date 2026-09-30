@@ -128,6 +128,7 @@ def _settings(capacity_tokens: int = 4_000) -> Settings:
         update={
             "project_owner_agent": configured.project_owner_agent.model_copy(
                 update={
+                    "response_mode": "non_stream",
                     "context_memory": ContextMemorySettings(
                         capacity_tokens=capacity_tokens,
                         compaction_threshold=0.8,

@@ -154,6 +154,7 @@ class A2AOperation:
             document_path = f"documents/{self.document_name}"
             manifest_contract = {
                 "result_path": str(context.outbox_result_path),
+                "manifest_schema": _TaskResultManifest.model_json_schema(),
                 "manifest": {
                     "version": 1,
                     "summary": "non-empty string",
