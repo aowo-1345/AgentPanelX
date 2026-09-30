@@ -13,7 +13,7 @@ project_owner_agent:
       timeout_seconds: 60.0
     codex:
       adapter: "openai"
-      name: "gpt-5.6-sol"
+      name: "gpt-6-sol"
       base_url: "http://127.0.0.1:8317/v1"
       api_key_env: "CLIPROXY_API_KEY"
       reasoning_effort: "high"
@@ -298,8 +298,8 @@ runtime:
     output_limit: 10000
   codex:
     executable: null
-    model: null
+    model: gpt-6.1-sol
     network_access: true
-    timeout_seconds: 3600.0
+    timeout_seconds: 7200.0
     response_limit: 65536
     artifact_limit: 262144
