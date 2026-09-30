@@ -50,6 +50,7 @@ def _prepare_case(model_base_url: str) -> tuple[Path, Path]:
     _git(repository_path, "commit", "-m", "Initial commit")
 
     settings = load_settings(DEFAULT_SETTINGS_PATH).model_dump(mode="json")
+    settings["project_owner_agent"]["response_mode"] = "non_stream"
     settings["workspace"] = {"data_home": str(case_path / "data-home")}
     active_model = settings["project_owner_agent"]["active_model"]
     model = settings["project_owner_agent"]["models"][active_model]

@@ -115,6 +115,8 @@ export interface ConversationMessage {
   role: 'user' | 'assistant' | 'status' | 'tool';
   content: string;
   tool_activity: ToolActivity | null;
+  streaming?: boolean;
+  error?: string | null;
 }
 
 export interface ConversationSnapshotEvent {

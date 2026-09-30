@@ -7,7 +7,10 @@ from dataclasses import dataclass, field, replace
 from hashlib import sha256
 from uuid import uuid4
 
-from agentplanex.domains.conversation_event import ConversationMessageAppended
+from agentplanex.domains.conversation_event import (
+    ConversationMessageAppended,
+    ConversationResponseUpdated,
+)
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     ExecutionEventType,
@@ -47,6 +50,7 @@ from agentplanex.project_owner_agent.exception import AgentFlowExit
 from agentplanex.project_owner_agent.interactive import InteractiveAgent
 from agentplanex.project_owner_agent.models.responses import (
     ProjectOwnerModel,
+    ResponseEvent,
     ResponsesClient,
     format_tool_call_message,
     format_tool_output_message,
@@ -300,7 +304,24 @@ class _OwnerRuntime:
     ) -> DefaultAgent:
         owner_settings = self.settings.project_owner_agent
         fixed_tools = self.tools.select(owner.tools)
-        owner_responses = self.responses.with_cache_affinity(
+
+        def publish_response(response_id: str, event: ResponseEvent) -> None:
+            if event.type not in {"text_delta", "tool_delta", "completed", "failed"}:
+                return
+            self.event_bus.publish(
+                ConversationResponseUpdated(
+                    triage_id=context.triage_id,
+                    activation_id=activation.activation_id,
+                    response_id=response_id,
+                    delta=event.delta,
+                    failure=event.error,
+                    call_id=event.call_id,
+                    tool_name=event.name,
+                    completed=event.type == "completed",
+                )
+            )
+
+        owner_responses = self.responses.with_stream_callback(publish_response).with_cache_affinity(
             _cache_affinity(owner.project_owner_session_id, purpose="owner")
         )
         summary_responses = self.responses.with_cache_affinity(

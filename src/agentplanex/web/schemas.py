@@ -137,6 +137,8 @@ class ConversationMessage(Schema):
     role: Literal["user", "assistant", "status", "tool"]
     content: str
     tool_activity: ToolActivityData | None
+    streaming: bool = False
+    error: str | None = None
 
 
 class PlanDocumentData(Schema):
@@ -290,6 +292,8 @@ def conversation_message_response(message: VisibleMessage) -> ConversationMessag
             if message.tool_activity is not None
             else None
         ),
+        streaming=message.streaming,
+        error=message.error,
     )
 
 

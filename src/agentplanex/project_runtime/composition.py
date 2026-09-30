@@ -10,6 +10,7 @@ from loguru import logger
 from agentplanex.domains.conversation_event import (
     ConversationActivationUpdated,
     ConversationMessageAppended,
+    ConversationResponseUpdated,
 )
 from agentplanex.infrastructure.agent_workspace import AgentWorkspaceStore
 from agentplanex.infrastructure.codex import CodexTurnTransport
@@ -222,6 +223,7 @@ def _compose_command_graph(
             (
                 EventSubscription(ConversationMessageAppended, conversation_hub.publish),
                 EventSubscription(ConversationActivationUpdated, conversation_hub.publish),
+                EventSubscription(ConversationResponseUpdated, conversation_hub.publish),
             )
         )
     event_bus = EventBus(tuple(handlers), tuple(subscriptions))
@@ -246,6 +248,7 @@ def _compose_command_graph(
         responses=ResponsesClient(
             model=model_settings.name,
             transport=responses_transport,
+            response_mode=settings.project_owner_agent.response_mode,
         ),
         prompts=prompts,
         mutation_fence_guard=takeover_runs.require_mutation_fence,

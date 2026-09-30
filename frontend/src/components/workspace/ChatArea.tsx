@@ -108,6 +108,9 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
         >
           {user ? message.content : <OwnerMessage content={message.content} />}
         </div>
+        {message.error && (
+          <p className="text-[10px] text-red-300">{message.error}</p>
+        )}
       </div>
       {user && (
         <div className="mt-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/15">

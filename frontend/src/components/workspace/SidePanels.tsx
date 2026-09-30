@@ -45,7 +45,11 @@ function KeyValue({ label, value }: { label: string; value: string | null }) {
   );
 }
 
-function RuntimePanel({ panel }: { panel: Panel<RuntimeData> }) {
+function RuntimePanel({
+  panel,
+}: {
+  panel: Panel<RuntimeData>;
+}) {
   return (
     <PanelState panel={panel}>
       {(runtime) => {
@@ -384,9 +388,22 @@ interface SidePanelsProps {
   timeline: Panel<TimelineEvent[]>;
 }
 
-export function SidePanels({ runtime, plan, milestones, git, codeGraph, timeline }: SidePanelsProps) {
+export function SidePanels({
+  runtime,
+  plan,
+  milestones,
+  git,
+  codeGraph,
+  timeline,
+}: SidePanelsProps) {
   const panels: Array<[string, ReactNode]> = [
-    ['Runtime', <RuntimePanel key="runtime" panel={runtime} />],
+    [
+      'Runtime',
+      <RuntimePanel
+        key="runtime"
+        panel={runtime}
+      />,
+    ],
     ['Current plan', <PlanPanel key="plan" panel={plan} />],
     [
       'Milestones',

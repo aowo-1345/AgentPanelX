@@ -58,6 +58,7 @@ class ProjectOwnerAgentSettings(_SettingsModel):
 
     active_model: str = Field(min_length=1)
     models: dict[str, ModelSettings] = Field(min_length=1)
+    response_mode: Literal["stream", "non_stream"] = "stream"
     step_limit: int = Field(default=20, gt=0)
     max_consecutive_format_errors: int = Field(default=3, gt=0)
     context_memory: ContextMemorySettings = Field(default_factory=ContextMemorySettings)

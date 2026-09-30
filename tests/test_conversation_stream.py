@@ -10,6 +10,7 @@ from starlette.types import Message, Scope
 
 import agentplanex.bootstrap as bootstrap
 import agentplanex.web.app as web_app
+from agentplanex.domains.conversation_event import ConversationResponseUpdated
 from agentplanex.services.web.conversation_hub import ConversationHub, ConversationSubscriber
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 from tests.test_conversation_hub import _UnusedResponsesTransport
@@ -101,6 +102,19 @@ def test_stream_snapshot_patch_reconnect_and_disconnect_cleanup(
             assert isinstance(rows, list)
             assert rows[0]["role"] == "user"
             assert rows[0]["content"] == "Visible via SSE"
+            workspace.conversation_hub.publish(
+                ConversationResponseUpdated(
+                    triage_id=feature.triage_id,
+                    activation_id="activation-live",
+                    response_id="response-live",
+                    delta="Live output",
+                )
+            )
+            event, live_patch = await frame()
+            assert event == "patch"
+            assert live_patch["cursor"] == 1
+            assert live_patch["messages"][0]["streaming"] is True
+            assert live_patch["messages"][0]["content"] == "Live output"
             await incoming.put({"type": "http.disconnect"})
             await asyncio.wait_for(stream, 2)
             assert len(released) == 1

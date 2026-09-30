@@ -10,6 +10,7 @@ from agentplanex.domains.conversation_event import (
     ConversationActivationUpdated,
     ConversationEvent,
     ConversationMessageAppended,
+    ConversationResponseUpdated,
 )
 
 
@@ -64,7 +65,14 @@ class ConversationHub:
                 del self._subscribers[subscriber.triage_id]
 
     def publish(self, event: object) -> None:
-        if not isinstance(event, (ConversationMessageAppended, ConversationActivationUpdated)):
+        if not isinstance(
+            event,
+            (
+                ConversationMessageAppended,
+                ConversationActivationUpdated,
+                ConversationResponseUpdated,
+            ),
+        ):
             return
         with self._lock:
             subscribers = tuple(self._subscribers.get(event.triage_id, ()))

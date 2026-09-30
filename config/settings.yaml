@@ -1,5 +1,6 @@
 project_owner_agent:
   active_model: "codex"
+  response_mode: "stream"
   models:
     qwen:
       adapter: "qwen"

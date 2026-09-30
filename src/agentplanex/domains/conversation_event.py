@@ -1,4 +1,4 @@
-"""Committed Project Owner conversation facts."""
+"""Committed conversation facts and transient model presentation events."""
 
 from __future__ import annotations
 
@@ -27,4 +27,22 @@ class ConversationActivationUpdated:
     activation: OwnerActivation
 
 
-type ConversationEvent = ConversationMessageAppended | ConversationActivationUpdated
+@dataclass(frozen=True, slots=True)
+class ConversationResponseUpdated:
+    """Transient model output for one Project Owner response turn."""
+
+    triage_id: str
+    activation_id: str
+    response_id: str
+    delta: str = ""
+    failure: str | None = None
+    call_id: str | None = None
+    tool_name: str | None = None
+    completed: bool = False
+
+
+type ConversationEvent = (
+    ConversationMessageAppended
+    | ConversationActivationUpdated
+    | ConversationResponseUpdated
+)

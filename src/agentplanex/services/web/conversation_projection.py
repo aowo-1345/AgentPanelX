@@ -8,6 +8,7 @@ from agentplanex.domains.conversation_event import (
     ConversationActivationUpdated,
     ConversationEvent,
     ConversationMessageAppended,
+    ConversationResponseUpdated,
 )
 from agentplanex.project_owner_agent.context.models import MessageHistory
 from agentplanex.project_owner_agent.contracts import Message
@@ -29,6 +30,14 @@ from agentplanex.services.web.project_workspace import (
 )
 
 
+def _response_id(message: Message) -> str | None:
+    extra = message.get("extra")
+    if not isinstance(extra, dict):
+        return None
+    response_id = extra.get("response_id")
+    return response_id if isinstance(response_id, str) and response_id else None
+
+
 class ConversationProjection:
     """Apply one committed event at a time without rebuilding message history."""
 
@@ -41,6 +50,10 @@ class ConversationProjection:
         self._has_reply = False
         self.cursor = 0
         self._current_activation: OwnerActivation | None = None
+        self._stream_message_ids: dict[str, str] = {}
+        self._stream_tool_ids: dict[tuple[str, str], str] = {}
+        self._stream_tool_arguments: dict[tuple[str, str], str] = {}
+        self._stream_response_tools: dict[tuple[str, str], set[str]] = {}
 
     @property
     def visible(self) -> tuple[VisibleMessage, ...]:
@@ -69,6 +82,10 @@ class ConversationProjection:
         self._failure_rows.clear()
         self._current_activation = None
         self._has_reply = False
+        self._stream_message_ids.clear()
+        self._stream_tool_ids.clear()
+        self._stream_tool_arguments.clear()
+        self._stream_response_tools.clear()
         for history in histories:
             self._append_history(history)
         self.cursor = sequence
@@ -85,9 +102,111 @@ class ConversationProjection:
         elif isinstance(event, ConversationActivationUpdated):
             self._activations[event.activation.activation_id] = event.activation
             self._update_activation(event.activation)
+        elif isinstance(event, ConversationResponseUpdated):
+            if event.call_id is not None:
+                self._apply_stream_tool(event)
+                return tuple(
+                    item for item in self._visible if before.get(item.message_id) != item
+                )
+            if event.failure is not None:
+                self._apply_stream_failure(event)
+                return tuple(
+                    item for item in self._visible if before.get(item.message_id) != item
+                )
+            message_id = f"stream:{event.activation_id}:{event.response_id}"
+            self._stream_message_ids[event.activation_id] = message_id
+            index = next(
+                (
+                    index
+                    for index, item in enumerate(self._visible)
+                    if item.message_id == message_id
+                ),
+                None,
+            )
+            if index is None and event.completed and not event.delta:
+                return ()
+            if index is None:
+                self._visible.append(
+                    VisibleMessage(
+                        message_id,
+                        "assistant",
+                        event.delta,
+                        streaming=event.failure is None and not event.completed,
+                        error=event.failure,
+                    )
+                )
+            else:
+                current = self._visible[index]
+                self._visible[index] = replace(
+                    current,
+                    content=current.content + event.delta,
+                    streaming=event.failure is None and not event.completed,
+                    error=event.failure,
+                )
         else:
             return ()
         return tuple(item for item in self._visible if before.get(item.message_id) != item)
+
+    def _apply_stream_tool(self, event: ConversationResponseUpdated) -> None:
+        assert event.call_id is not None
+        key = (event.activation_id, event.call_id)
+        self._stream_response_tools.setdefault(
+            (event.activation_id, event.response_id), set()
+        ).add(event.call_id)
+        message_id = self._stream_tool_ids.setdefault(
+            key, f"stream:{event.activation_id}:{event.response_id}:tool:{event.call_id}"
+        )
+        arguments = self._stream_tool_arguments.get(key, "") + event.delta
+        self._stream_tool_arguments[key] = arguments
+        index = next(
+            (index for index, item in enumerate(self._visible) if item.message_id == message_id),
+            None,
+        )
+        activity = ToolActivity(
+            name=event.tool_name or "tool",
+            status="failed" if event.failure is not None else "running",
+            input_preview=tool_preview(arguments),
+        )
+        row = VisibleMessage(message_id, "tool", event.tool_name or "tool", activity)
+        if index is None:
+            self._visible.append(row)
+        else:
+            self._visible[index] = row
+
+    def _apply_stream_failure(self, event: ConversationResponseUpdated) -> None:
+        for call_id in self._stream_response_tools.get(
+            (event.activation_id, event.response_id), ()
+        ):
+            message_id = self._stream_tool_ids[(event.activation_id, call_id)]
+            index = next(
+                (
+                    index
+                    for index, item in enumerate(self._visible)
+                    if item.message_id == message_id
+                ),
+                None,
+            )
+            if index is None:
+                continue
+            current = self._visible[index]
+            if current.tool_activity is not None:
+                self._visible[index] = replace(
+                    current,
+                    tool_activity=replace(current.tool_activity, status="failed"),
+                )
+        message_id = f"stream:{event.activation_id}:{event.response_id}"
+        index = next(
+            (
+                index
+                for index, item in enumerate(self._visible)
+                if item.message_id == message_id
+            ),
+            None,
+        )
+        if index is not None:
+            self._visible[index] = replace(
+                self._visible[index], streaming=False, error=event.failure
+            )
 
     def _append_history(self, history: MessageHistory) -> None:
         activation = next(
@@ -118,35 +237,72 @@ class ConversationProjection:
         calls = tool_calls(message)
         for call_id, tool_name, arguments in calls:
             message_id = f"{history.message_id}:{index}:tool:{call_id}"
-            self._tool_indices[call_id] = len(self._visible)
+            if self._current_activation is not None:
+                message_id = self._stream_tool_ids.get(
+                    (self._current_activation.activation_id, call_id),
+                    message_id,
+                )
             self._tool_activation_ids[call_id] = (
                 self._current_activation.activation_id
                 if self._current_activation is not None
                 else None
             )
-            self._visible.append(
-                VisibleMessage(
-                    message_id,
-                    "tool",
-                    tool_name,
-                    ToolActivity(
-                        name=tool_name,
-                        status=(
-                            "running"
-                            if self._current_activation is not None
-                            and self._current_activation.status is OwnerActivationStatus.RUNNING
-                            else "failed"
-                        ),
-                        input_preview=tool_preview(arguments),
+            row = VisibleMessage(
+                message_id,
+                "tool",
+                tool_name,
+                ToolActivity(
+                    name=tool_name,
+                    status=(
+                        "running"
+                        if self._current_activation is not None
+                        and self._current_activation.status is OwnerActivationStatus.RUNNING
+                        else "failed"
                     ),
-                )
+                    input_preview=tool_preview(arguments),
+                ),
             )
+            existing_index = next(
+                (
+                    index
+                    for index, item in enumerate(self._visible)
+                    if item.message_id == message_id
+                ),
+                None,
+            )
+            if existing_index is None:
+                self._visible.append(row)
+                self._tool_indices[call_id] = len(self._visible) - 1
+            else:
+                self._visible[existing_index] = row
+                self._tool_indices[call_id] = existing_index
         response_text = assistant_response_text(message)
         if response_text:
             self._has_reply = True
-            self._visible.append(
-                VisibleMessage(f"{history.message_id}:{index}", "assistant", response_text)
+            message_id = f"{history.message_id}:{index}"
+            if self._current_activation is not None:
+                response_id = _response_id(message)
+                message_id = (
+                    f"stream:{self._current_activation.activation_id}:{response_id}"
+                    if response_id is not None
+                    else self._stream_message_ids.get(
+                        self._current_activation.activation_id,
+                        message_id,
+                    )
+                )
+            replacement = VisibleMessage(message_id, "assistant", response_text)
+            existing_index = next(
+                (
+                    index
+                    for index, item in enumerate(self._visible)
+                    if item.message_id == message_id
+                ),
+                None,
             )
+            if existing_index is None:
+                self._visible.append(replacement)
+            else:
+                self._visible[existing_index] = replacement
             return
         if calls:
             return

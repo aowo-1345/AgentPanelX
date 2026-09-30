@@ -62,6 +62,8 @@ class VisibleMessage:
     role: Literal["user", "assistant", "status", "tool"]
     content: str
     tool_activity: ToolActivity | None = None
+    streaming: bool = False
+    error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

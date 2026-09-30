@@ -1,16 +1,16 @@
 """Observable transport boundary for logical model calls."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from threading import Lock
 from time import monotonic
-from typing import Protocol
+from typing import Protocol, cast
 
 from loguru import logger
 
 from agentplanex.project_owner_agent.exception import ModelGatewayError
-from agentplanex.project_owner_agent.models.responses import ResponsesRequest
+from agentplanex.project_owner_agent.models.responses import ResponseEvent, ResponsesRequest
 
 
 class ModelGatewayAdapter(Protocol):
@@ -54,6 +54,29 @@ class ModelGateway:
             response=response,
         )
         return response
+
+    def stream(self, request: ResponsesRequest) -> Iterable[ResponseEvent]:
+        """Yield one adapter's normalized stream while preserving gateway errors."""
+        with self._close_lock:
+            if self._closed:
+                raise ModelGatewayError("Responses gateway is closed")
+        stream = getattr(self.adapter, "stream", None)
+        if stream is None:
+            raise ModelGatewayError("Responses gateway adapter does not support streaming")
+        started = monotonic()
+        response: object | None = None
+        try:
+            for event in cast(Iterable[ResponseEvent], stream(request)):
+                if event.type == "completed":
+                    response = event.response
+                yield event
+        finally:
+            self._record_call(
+                request=request,
+                status="succeeded" if response is not None else "failed",
+                duration_ms=_duration_ms(started),
+                response=response,
+            )
 
     def close(self) -> None:
         """Release the shared Adapter exactly once."""

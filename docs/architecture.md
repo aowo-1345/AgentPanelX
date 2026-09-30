@@ -516,7 +516,7 @@ Kanban 状态只是 Project Runtime 的高层投影。`pending_action`、Activat
 
 ## 9. EventBus、Timeline 与前端投影
 
-EventBus 是同步的进程内事实分发器。领域服务完成状态转换后发布 `ExecutionEvent`，SQLite Timeline recorder 将其保存为可查询证据。Event handler 的失败会被记录，但不会反转已经成功提交的业务决策。
+EventBus 是同步的进程内事件分发器。领域服务完成状态转换后发布 `ExecutionEvent`，SQLite Timeline recorder 将其保存为可查询证据；Project Owner 的未提交模型增量发布为单独的 presentation event，只供会话实时展示。Event handler 的失败会被记录，但不会反转已经成功提交的业务决策。
 
 ```mermaid
 sequenceDiagram
@@ -538,7 +538,11 @@ sequenceDiagram
     end
 ```
 
-当前浏览器采用分层静默轮询：Board 使用较低频率，打开的 Workspace 在 Activation 或 Delivery 活跃时提高刷新频率。旧数据在请求期间保持可见，只有 payload 实际变化时才更新 React state，因此不会因轮询反复清空页面。Workspace 的 Project Owner 会话另有一个 SSE 订阅：连接建立时发送一次完整快照，之后只发送已提交的可见行 patch；轮询只读取会话之外的 Workspace shell。SSE 的生命周期属于 Web Service，领域服务只向通用 EventBus 发布已提交事件，不直接管理浏览器连接。
+当前浏览器采用分层静默轮询：Board 使用较低频率，打开的 Workspace 在 Activation 或 Delivery 活跃时提高刷新频率。旧数据在请求期间保持可见，只有 payload 实际变化时才更新 React state，因此不会因轮询反复清空页面。Workspace 的 Project Owner 会话另有一个 SSE 订阅：连接建立时发送一次完整快照，之后发送可见行 patch；轮询只读取会话之外的 Workspace shell。SSE 的生命周期属于 Web Service，领域服务不直接管理浏览器连接。
+
+SSE 中有两类消息。已提交的 `ConversationMessageAppended` 和 Activation 更新来自 Runtime 事实，刷新与重连以它们的 SQLite 序列为游标。流式模型响应使用同一进程内 EventBus 的独立 `ConversationResponseUpdated` presentation event；它只在内存中经 ConversationHub 转发，不写 SQLite、不写 Timeline，也不会推进持久化游标。响应完成后，现有消息历史提交的完整结果重新成为权威事实；因此流式失败可以保留已收到的临时文本，而刷新仍会收敛到最终历史。
+
+Project Owner 的响应传输由 Owner 响应组件内部的 `response_mode` 策略控制，配置默认为 `stream`。它在每次模型请求开始时固定，主回复、Summary 与 Context Compaction 使用相同策略，但内部维护内容不会发布到聊天区域。这个 HTTP 传输细节不属于 Workspace 或 Web API；消息行只增加 `streaming` 和 `error` 两个临时展示字段。
 
 Workspace projection 一次组合以下信息：
 

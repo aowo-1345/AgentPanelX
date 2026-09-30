@@ -1,9 +1,10 @@
 """Responses model contract and Project Owner response handling."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, Literal, NoReturn, Protocol, cast
+from uuid import uuid4
 
 from agentplanex.project_owner_agent.contracts import (
     Action,
@@ -14,11 +15,28 @@ from agentplanex.project_owner_agent.contracts import (
 from agentplanex.project_owner_agent.exception import (
     FormatError,
     ModelError,
+    ModelGatewayError,
     ReplyToHuman,
 )
 from agentplanex.project_owner_agent.tools.base import ToolCatalog
 
 type ToolChoice = Literal["auto", "none"]
+type ResponseMode = Literal["stream", "non_stream"]
+type ResponseEventType = Literal[
+    "started", "text_delta", "tool_delta", "completed", "failed"
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ResponseEvent:
+    """Provider-neutral progress around one model response."""
+
+    type: ResponseEventType
+    delta: str = ""
+    response: object | None = None
+    error: str | None = None
+    call_id: str | None = None
+    name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +55,10 @@ class ResponsesTransport(Protocol):
     def create(self, request: ResponsesRequest) -> object: ...
 
 
+class StreamingResponsesTransport(Protocol):
+    def stream(self, request: ResponsesRequest) -> Iterable[ResponseEvent]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ResponsesClient:
     """Serialize one shared Responses request and expose its raw output."""
@@ -44,11 +66,21 @@ class ResponsesClient:
     model: str
     transport: ResponsesTransport
     cache_affinity_key: str | None = None
+    response_mode: ResponseMode = "stream"
+    stream_callback: Callable[[str, ResponseEvent], None] | None = None
 
     def with_cache_affinity(self, key: str) -> "ResponsesClient":
         """Bind a provider-neutral affinity value to subsequent requests."""
 
         return replace(self, cache_affinity_key=key)
+
+    def with_stream_callback(
+        self,
+        callback: Callable[[str, ResponseEvent], None],
+    ) -> "ResponsesClient":
+        """Bind a best-effort live progress callback for one Owner response."""
+
+        return replace(self, stream_callback=callback)
 
     def request(
         self,
@@ -57,6 +89,7 @@ class ResponsesClient:
         tools: ToolCatalog | None,
         tool_choice: ToolChoice,
     ) -> tuple[Message, list[object]]:
+        mode = self._response_mode()
         instructions, response_input = _prepare_input(messages)
         request = ResponsesRequest(
             model=self.model,
@@ -66,9 +99,48 @@ class ResponsesClient:
             tool_choice=tool_choice,
             cache_affinity_key=self.cache_affinity_key,
         )
-        response = self.transport.create(request)
-        message = _serialize(response)
+        response_id = uuid4().hex
+        self._notify(response_id, ResponseEvent(type="started"))
+        try:
+            if mode == "stream":
+                response = self._stream(request, response_id)
+            else:
+                response = self.transport.create(request)
+            message = _serialize(response)
+        except Exception as error:
+            self._notify(response_id, ResponseEvent(type="failed", error=str(error)))
+            raise
+        self._notify(response_id, ResponseEvent(type="completed", response=response))
+        # Local correlation metadata survives final persistence but is never sent
+        # to the provider. Live and replayed projections use the same identity.
+        if self.stream_callback is not None:
+            message["extra"] = {"response_id": response_id}
         return message, _as_list(_get(response, "output"))
+
+    def _response_mode(self) -> ResponseMode:
+        return self.response_mode
+
+    def _stream(self, request: ResponsesRequest, response_id: str) -> object:
+        if getattr(self.transport, "stream", None) is None:
+            raise ModelGatewayError("Responses transport does not support streaming")
+        transport = cast(StreamingResponsesTransport, self.transport)
+        for event in transport.stream(request):
+            if event.type == "completed" and event.response is not None:
+                return event.response
+            if event.type == "failed":
+                raise ModelGatewayError(event.error or "Responses stream failed")
+            if event.type != "started":
+                self._notify(response_id, event)
+        raise ModelGatewayError("Responses stream ended without completion")
+
+    def _notify(self, response_id: str, event: ResponseEvent) -> None:
+        if self.stream_callback is None:
+            return
+        try:
+            self.stream_callback(response_id, event)
+        except Exception:
+            # UI progress must never change the model result.
+            return
 
     def text(
         self,
@@ -118,7 +190,7 @@ class ProjectOwnerModel:
             else []
         )
         if actions:
-            message["extra"] = {"actions": actions}
+            message["extra"] = {**message.get("extra", {}), "actions": actions}
             return message
 
         reply = _extract_reply(output)

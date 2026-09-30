@@ -1,7 +1,7 @@
 """Provider-specific adapters for Responses-compatible endpoints."""
 
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from threading import Lock
 from typing import Literal, cast
 
@@ -9,11 +9,12 @@ from openai import OpenAI, OpenAIError
 from openai.types.responses import FunctionToolParam, ResponseInputParam
 from openai.types.responses.response_create_params import (
     ResponseCreateParamsNonStreaming,
+    ResponseCreateParamsStreaming,
 )
 from openai.types.shared_params import Reasoning
 
 from agentplanex.project_owner_agent.exception import ModelGatewayError
-from agentplanex.project_owner_agent.models.responses import ResponsesRequest
+from agentplanex.project_owner_agent.models.responses import ResponseEvent, ResponsesRequest
 
 type ReasoningEffort = Literal[
     "none", "minimal", "low", "medium", "high", "xhigh", "max"
@@ -54,12 +55,64 @@ class _OpenAICompatibleResponsesAdapter:
 
     def create(self, request: ResponsesRequest) -> object:
         client = self._client()
-        params: ResponseCreateParamsNonStreaming = {
+        params = cast(ResponseCreateParamsNonStreaming, self._params(request, stream=False))
+        try:
+            return client.responses.create(**params)
+        except OpenAIError as error:
+            raise ModelGatewayError(f"Responses gateway request failed: {error}") from error
+
+    def stream(self, request: ResponsesRequest) -> Iterable[ResponseEvent]:
+        """Yield normalized Responses events without retrying after stream start."""
+        client = self._client()
+        params = cast(ResponseCreateParamsStreaming, self._params(request, stream=True))
+        try:
+            stream_client = client.with_options(max_retries=0)
+            calls: dict[str, tuple[str, str]] = {}
+            with stream_client.responses.create(**params) as response_stream:
+                for event in response_stream:
+                    event_type = _event_type(event)
+                    if event_type == "response.output_text.delta":
+                        yield ResponseEvent(
+                            type="text_delta", delta=str(getattr(event, "delta", ""))
+                        )
+                    elif event_type == "response.output_item.added":
+                        item = getattr(event, "item", None)
+                        if getattr(item, "type", None) == "function_call" and item is not None:
+                            item_id = str(getattr(item, "id", ""))
+                            call_id = str(getattr(item, "call_id", item_id))
+                            name = str(getattr(item, "name", "tool"))
+                            calls[item_id] = (call_id, name)
+                            yield ResponseEvent(
+                                type="tool_delta", call_id=call_id, name=name,
+                                delta=str(getattr(item, "arguments", "")),
+                            )
+                    elif event_type == "response.function_call_arguments.delta":
+                        item_id = str(getattr(event, "item_id", ""))
+                        call_id, name = calls.get(item_id, (item_id, "tool"))
+                        yield ResponseEvent(
+                            type="tool_delta", delta=str(getattr(event, "delta", "")),
+                            call_id=call_id, name=name,
+                        )
+                    elif event_type == "response.completed":
+                        yield ResponseEvent(
+                            type="completed", response=getattr(event, "response", None)
+                        )
+                        return
+                    elif event_type in {"response.failed", "response.incomplete", "error"}:
+                        raise ModelGatewayError(
+                            f"Responses gateway request failed: {_event_error(event)}"
+                        )
+            raise ModelGatewayError("Responses stream ended without completion")
+        except OpenAIError as error:
+            raise ModelGatewayError(f"Responses gateway request failed: {error}") from error
+
+    def _params(self, request: ResponsesRequest, *, stream: bool) -> dict[str, object]:
+        params: dict[str, object] = {
             "model": request.model,
             "instructions": request.instructions,
             "input": cast(ResponseInputParam, list(request.input)),
             "store": False,
-            "stream": False,
+            "stream": stream,
         }
         if self.reasoning_effort is not None:
             params["reasoning"] = cast(Reasoning, {"effort": self.reasoning_effort})
@@ -72,10 +125,7 @@ class _OpenAICompatibleResponsesAdapter:
         cache_key = request.cache_affinity_key if self.accepts_cache_affinity else None
         if cache_key is not None:
             params["prompt_cache_key"] = cache_key
-        try:
-            return client.responses.create(**params)
-        except OpenAIError as error:
-            raise ModelGatewayError(f"Responses gateway request failed: {error}") from error
+        return params
 
     def close(self) -> None:
         """Close the shared SDK client when the application shuts down."""
@@ -129,3 +179,24 @@ class OpenAIResponsesAdapter(_OpenAICompatibleResponsesAdapter):
     name = "openai"
     reports_cache_usage = True
     accepts_cache_affinity = True
+
+
+def _event_type(event: object) -> str:
+    return (
+        str(event.get("type", ""))
+        if isinstance(event, dict)
+        else str(getattr(event, "type", ""))
+    )
+
+
+def _event_error(event: object) -> str:
+    response = getattr(event, "response", None)
+    error = getattr(event, "error", None) or getattr(response, "error", None)
+    if isinstance(error, dict):
+        return str(error.get("message") or error)
+    return str(
+        getattr(error, "message", error)
+        or getattr(event, "message", None)
+        or getattr(response, "incomplete_details", None)
+        or "Responses stream failed"
+    )
