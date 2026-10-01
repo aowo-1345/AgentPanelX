@@ -25,8 +25,8 @@ export function useStageTerminal(
     }
 
     const terminal = new Terminal({
-      cols: 100,
-      rows: 30,
+      cols: 120,
+      rows: 40,
       convertEol: false,
       cursorBlink: false,
       disableStdin: true,

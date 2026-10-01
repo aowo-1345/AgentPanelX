@@ -152,7 +152,9 @@ class _NativeCodexStageTerminal:
         if self._executable is None or self._url is None:
             raise CodexTransportError("Native Codex app-server is not available")
         master, slave = pty.openpty()
-        termios.tcsetwinsize(slave, (30, 100))
+        # Give the mirrored TUI enough vertical and horizontal room to show the
+        # Stage Executor's current work without immediately truncating it.
+        termios.tcsetwinsize(slave, (40, 120))
         try:
             self._tui = subprocess.Popen(
                 [
@@ -162,8 +164,6 @@ class _NativeCodexStageTerminal:
                     "--remote",
                     self._url,
                     "--no-alt-screen",
-                    "--ask-for-approval",
-                    "never",
                 ],
                 cwd=self._workspace,
                 env={**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"},
