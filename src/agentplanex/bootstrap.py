@@ -53,8 +53,8 @@ def create_project_runtime(
     conversation_hub: ConversationHub | None = None,
 ) -> ProjectRuntime:
     """Create a Runtime from explicit invocation inputs and loaded settings."""
-    configure_logging()
     configured = settings or load_settings()
+    configure_logging(configured.workspace.data_home / "logs")
     return compose_project_runtime(
         project_path=project_path,
         settings=configured,
@@ -78,8 +78,8 @@ def create_project_runtime_control(
     mutation_fence_token: str | None = None,
 ) -> ProjectRuntimeControl:
     """Create the privileged intervention surface over the real command graph."""
-    configure_logging()
     configured = settings or load_settings()
+    configure_logging(configured.workspace.data_home / "logs")
     return compose_project_runtime_control(
         project_path=project_path,
         settings=configured,
@@ -127,7 +127,7 @@ def create_workspace(
     settings_path: Path | None = None,
 ) -> WorkspaceService:
     """Compose the user-level Workspace over real Registry, Git, and Runtimes."""
-    configure_logging()
+    configure_logging(settings.workspace.data_home / "logs")
     responses_transport = create_responses_transport(settings)
     stage_output_observer = StageOutputObserver()
     conversation_hub = ConversationHub()
