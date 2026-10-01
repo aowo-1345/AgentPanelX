@@ -26,8 +26,9 @@ reinterpret it as permission to re-plan the Milestone.
    techniques are useful only when they address a concrete risk. A behavior-preserving refactor must
    include evidence that observable behavior stayed stable.
 5. Inspect the resulting changes and required delivery document before returning. A valid Stage is
-   change-bearing: do not satisfy it by modifying only the delivery document or by claiming read-only
-   analysis as delivery.
+   change-bearing: the required delivery document itself may be the only changed project file when
+   the fixed Stage objective is a documentation or evidence deliverable. Do not claim read-only
+   analysis as delivery without recording its result in that document.
 
 When assigned a hardening or repair Stage after implementation, inspect the prior Stage's code
 and delivery evidence at the fixed input commit. Fix in-scope defects you discover, strengthen

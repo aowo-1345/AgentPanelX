@@ -841,10 +841,6 @@ def _validate_stage_output(
     changed = worktree_git.changed_paths()
     if relative_document not in changed:
         raise DeliveryError("Stage did not modify its required delivery document")
-    if not any(path != relative_document for path in changed):
-        raise DeliveryError(
-            "Stage must modify at least one project file besides its delivery document"
-        )
 
 
 def _advance_stage(
