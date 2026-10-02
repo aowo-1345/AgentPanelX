@@ -848,6 +848,7 @@ class DeliveryService:
             )
         return replace(
             context,
+            status=("IN_PROGRESS" if context.status == "BLOCKED" else context.status),
             current_snapshot_id=snapshot.snapshot_id,
             current_run_id=None,
             current_milestone_key=None,
