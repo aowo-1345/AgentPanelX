@@ -10,7 +10,6 @@ from agentplanex.project_owner_agent.contracts import (
     AgentExitStatus,
     ToolExecutionResult,
 )
-from agentplanex.project_owner_agent.exception import RepeatedCandidateRejection
 from agentplanex.project_owner_agent.tools import (
     NonBlankText,
     ToolArgumentsModel,
@@ -91,8 +90,22 @@ class DecideMilestoneCandidateExecution(
             "next_milestone_key": result.next_milestone_key,
             "completed": result.completed,
         }
+        if result.decision == "reject":
+            output["follow_up"] = (
+                "Review the rejection reason and adjust the Milestone tasks when "
+                "needed before retrying."
+            )
         if result.decision == "reject" and result.state.status == "BLOCKED":
-            raise RepeatedCandidateRejection
+            # Persist the provider-required observation before terminating the
+            # Owner loop.  Raising here would leave the model's function_call
+            # without a matching function_call_output in message history.
+            return ToolExecutionResult(
+                output=output,
+                exit=AgentExit(
+                    status=AgentExitStatus.REPEATED_CANDIDATE_REJECTION,
+                    content=AgentExitStatus.REPEATED_CANDIDATE_REJECTION.value,
+                ),
+            )
         if not result.completed:
             return ToolExecutionResult(output=output)
         return ToolExecutionResult(

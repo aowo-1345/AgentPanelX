@@ -912,7 +912,9 @@ def test_second_consecutive_candidate_rejection_fails_owner_and_blocks_runtime(
         }
     )
 
-    assert second.tool_result is None
+    assert second.tool_result is not None
+    assert second.tool_result.output["ok"] is True
+    assert second.tool_result.output["decision"] == "reject"
     assert second.exit is not None
     assert second.exit.status.value == "RepeatedCandidateRejection"
     assert second.activation.status.value == "FAILED"
@@ -926,6 +928,27 @@ def test_second_consecutive_candidate_rejection_fails_owner_and_blocks_runtime(
     assert sum(
         event.event_type is ExecutionEventType.CANDIDATE_REJECTED for event in events
     ) == 2
+    with SQLiteDatabase.for_project(project_path).read_only_connection() as connection:
+        owner = SQLiteProjectOwnerAgentRepository().get_by_triage_id(
+            connection,
+            state.triage_id,
+        )
+        assert owner is not None
+        messages = SQLiteMessageHistoryRepository().list_by_session_id(
+            connection,
+            owner.project_owner_session_id,
+        )
+    persisted = tuple(message for history in messages for message in history.message)
+    assert any(
+        message.get("type") == "function_call"
+        and message.get("call_id") == "reject-second-candidate"
+        for message in persisted
+    )
+    assert any(
+        message.get("type") == "function_call_output"
+        and message.get("call_id") == "reject-second-candidate"
+        for message in persisted
+    )
 
 
 def test_drive_until_waiting_returns_immediately_when_runtime_is_done(

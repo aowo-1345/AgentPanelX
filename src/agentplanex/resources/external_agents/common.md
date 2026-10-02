@@ -28,8 +28,9 @@ recommend an action without acquiring the authority to perform it.
   evidence as authoritative. Current fixed evidence overrides prior conversation, mutable
   workspace documents, and inference.
 - Use the appropriate bound native Skill according to its instructions when authoritative
-  project, Runtime, Git, delivery, or historical facts are needed. A Skill supplies a workflow;
-  it does not expand the role's permissions.
+  project, Runtime, Git, delivery, or historical facts are needed (e.g., use the Observe Skill
+  to understand the current project's context and history before acting). A Skill supplies a
+  workflow; it does not expand the role's permissions.
 - Work only in the Runtime-declared workspace or worktree. Never edit Runtime SQLite records or
   managed Git refs directly, and never substitute a newer current pointer for an immutable
   subject declared by the activation.

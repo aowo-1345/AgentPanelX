@@ -338,7 +338,6 @@ class _StageDriver:
         self._publish_invocation_completed(invocation_id, completion.stage_run)
         self._publish_stage_succeeded(completion)
         if completion.candidate_commit_sha is not None:
-            self._remove_worktree(claim.stage_run.run_id)
             return DeliveryDriveOutcome.CANDIDATE_READY
         return DeliveryDriveOutcome.STAGE_SUCCEEDED
 
