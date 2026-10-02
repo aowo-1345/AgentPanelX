@@ -23,9 +23,11 @@ UPDATE_MILESTONES_TOOL_NAME = "update_milestones"
 UPDATE_MILESTONES_DESCRIPTION = (
     "Replace the complete Milestone View derived from the approved canonical Plan. "
     "This is a full replacement, not a patch. Use it for the initial delivery "
-    "breakdown or when remaining objectives/order must change; Candidate acceptance "
-    "alone records completion. Runtime invokes the Milestone Hard Gate only while "
-    "rolling delivery is IN_PROGRESS."
+    "breakdown or when remaining objectives/order must change. Keep completed "
+    "Milestones in the replacement for history; omit a pending Milestone when it "
+    "no longer needs to run. Do not mark an omitted pending Milestone completed: "
+    "Candidate acceptance alone records completion. Runtime invokes the Milestone "
+    "Hard Gate only while rolling delivery is IN_PROGRESS."
 )
 
 
@@ -64,8 +66,10 @@ class UpdateMilestonesArguments(ToolArgumentsModel):
     milestones: list[MilestoneArguments] = Field(
         min_length=1,
         description=(
-            "The complete ordered Milestone View, including completed history and at "
-            "least one pending Milestone."
+            "The complete ordered replacement View: retain completed history, include "
+            "the pending Milestones that still need to run, and omit pending "
+            "Milestones that no longer need to run. Include at least one pending "
+            "Milestone."
         ),
     )
 
