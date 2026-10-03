@@ -12,7 +12,7 @@ from typing import ClassVar
 
 import pytest
 
-from agentplanex.bootstrap import create_project_runtime
+from agentplanex.bootstrap import create_project_control_query, create_project_runtime
 from agentplanex.domains.execution_event import (
     ExecutionEvent,
     RuntimeContextChangeReason,
@@ -1284,6 +1284,108 @@ def test_in_progress_milestone_replacement_runs_hard_gate(
     assert updated["result"]["snapshot"]["previous_snapshot_id"] is not None
 
 
+def test_pending_replan_inherits_completed_history_and_reorders_remaining(
+    initialize_git_project: Callable[[], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    project_path = initialize_git_project()
+    _initialize_runtime(project_path)
+    _approve_current_plan(project_path, monkeypatch, capfd)
+    initial = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "update_milestones",
+                    "arguments": {
+                        "reason": "Publish the initial rolling breakdown.",
+                        "milestones": [
+                            {
+                                "key": "m1",
+                                "objective": "Complete the first outcome.",
+                                "state": "pending",
+                                "stages": [{"key": "s1", "objective": "Build one."}],
+                            },
+                            {
+                                "key": "m2",
+                                "objective": "Complete the second outcome.",
+                                "state": "pending",
+                                "stages": [{"key": "s2", "objective": "Build two."}],
+                            },
+                        ],
+                    },
+                }
+            ),
+        ]
+    )
+    assert initial == 0
+    capfd.readouterr()
+    _request_and_start_first_run(project_path, capfd)
+    assert debug_tool_cli.main(
+        ["--cwd", str(project_path), "--print", "drive-delivery"]
+    ) == 0
+    capfd.readouterr()
+    debug_tool_cli.main(["--cwd", str(project_path), "--print", "drive"])
+    capfd.readouterr()
+    accepted = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                _candidate_decision_action(
+                    project_path,
+                    decision="accept",
+                    reason="The first Candidate is complete.",
+                )
+            ),
+        ]
+    )
+    assert accepted == 0
+    capfd.readouterr()
+
+    update = debug_tool_cli.main(
+        [
+            "--cwd",
+            str(project_path),
+            "--print",
+            json.dumps(
+                {
+                    "tool": "update_milestones",
+                    "arguments": {
+                        "reason": "Refine the remaining work.",
+                        "milestones": [
+                            {
+                                "key": "m2",
+                                "objective": "Complete the refined second outcome.",
+                                "state": "pending",
+                                "stages": [
+                                    {"key": "s2-refined", "objective": "Build two safely."}
+                                ],
+                            }
+                        ],
+                    },
+                }
+            ),
+        ]
+    )
+    updated = json.loads(capfd.readouterr().out)
+    assert update == 0
+    assert updated["result"]["accepted"] is True
+    snapshot = create_project_control_query(project_path=project_path).get_current().snapshot
+    assert snapshot is not None
+    assert [(item.key, item.state.value) for item in snapshot.milestones] == [
+        ("m1", "completed"),
+        ("m2", "pending"),
+    ]
+    assert snapshot.milestones[0].objective == "Complete the first outcome."
+    assert snapshot.milestones[1].objective == "Complete the refined second outcome."
+    assert snapshot.milestones[1].stages[0].key == "s2-refined"
+
+
 def test_first_milestone_hard_gate_rejection_blocks_delivery(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -1929,7 +2031,7 @@ def test_invalid_stage_output_becomes_failed_fact_and_block_without_activation(
     assert _load_context(project_path).status == "BLOCKED"
 
 
-def test_blocked_replanning_skips_plan_and_milestone_hard_gates(
+def test_blocked_replanning_publishes_without_milestone_hard_gate(
     initialize_git_project: Callable[[], Path],
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
@@ -1988,24 +2090,13 @@ def test_blocked_replanning_skips_plan_and_milestone_hard_gates(
     )
     updated = json.loads(capfd.readouterr().out)
     assert update_code == 0
-    assert updated["result"]["status"] == "BLOCKED"
+    # Publishing a replacement View is a valid replanning checkpoint and resumes
+    # rolling delivery; the failed Run cursor was cleared by the update.
+    assert updated["result"]["status"] == "IN_PROGRESS"
     assert updated["result"]["hard_gate_invoked"] is False
     assert updated["result"]["review"] is None
     assert _load_context(project_path).current_run_id is None
 
-    request_code = debug_tool_cli.main(
-        [
-            "--cwd",
-            str(project_path),
-            "--print",
-            '{"tool":"request_plan_approval","arguments":{}}',
-        ]
-    )
-    requested = json.loads(capfd.readouterr().out)
-    assert request_code == 0
-    assert requested["result"]["status"] == "BLOCKED"
-    assert requested["result"]["hard_gate_invoked"] is False
-    assert requested["result"]["review"] is None
     gate_starts = [
         event
         for event in _loaded_events(project_path)

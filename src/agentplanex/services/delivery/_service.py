@@ -81,30 +81,32 @@ class DeliveryService:
         reason: str,
         milestones: tuple[Milestone, ...],
     ) -> MilestonesUpdated:
-        """Publish a complete View after checks and the IN_PROGRESS Hard Gate."""
+        """Merge remaining pending Milestones into a complete published View."""
         normalized_reason = " ".join(reason.split())
         if not normalized_reason:
             raise DeliveryError("Milestone update reason must not be empty")
         current = self.context.state()
-        previous = self._assert_publishable(current, milestones)
+        previous, view = self._prepare_milestone_view(current, milestones)
         self._assert_approved_specs(current)
         plan_commit_sha = current.current_plan_commit_sha
         if plan_commit_sha is None:
             raise DeliveryError("Milestone publication requires an approved Plan")
-        subject_digest = milestone_view_digest(milestones)
+        subject_digest = milestone_view_digest(view)
         review = (
             self._run_milestone_hard_gate(
                 current,
                 plan_commit_sha,
-                milestones,
+                view,
                 subject_digest,
             )
             if current.status == "IN_PROGRESS"
             else None
         )
         current = self.context.state()
-        previous = self._assert_publishable(current, milestones)
+        previous, view = self._prepare_milestone_view(current, milestones)
         self._assert_approved_specs(current)
+        if milestone_view_digest(view) != subject_digest:
+            raise DeliveryError("Milestones changed while the Hard Gate was reviewing them")
         if review is not None and review.decision == "revise":
             blocked = self.context.transition(
                 reason=RuntimeContextChangeReason.MILESTONE_HARD_GATE_REJECTED,
@@ -120,12 +122,15 @@ class DeliveryService:
 
         with self.context.transaction() as transaction:
             latest = transaction.state()
+            expected_previous_snapshot_id = previous.snapshot_id if previous is not None else None
+            if latest.current_snapshot_id != expected_previous_snapshot_id:
+                raise DeliveryError("Milestones changed while publishing the update")
             snapshot = MilestoneSnapshot(
                 snapshot_id=uuid4().hex,
                 triage_id=latest.triage_id,
                 previous_snapshot_id=(previous.snapshot_id if previous is not None else None),
                 plan_commit_sha=latest.current_plan_commit_sha or "",
-                milestones=milestones,
+                milestones=view,
                 reason=normalized_reason,
                 message_id=transaction.owner_message_id(),
                 created_at=datetime.now(UTC),
@@ -659,10 +664,19 @@ class DeliveryService:
                 return True
         return False
 
+    def _prepare_milestone_view(
+        self,
+        context: ProjectRuntimeState,
+        pending_milestones: tuple[Milestone, ...],
+    ) -> tuple[MilestoneSnapshot | None, tuple[Milestone, ...]]:
+        previous = self._assert_publishable(context, pending_milestones)
+        view = self._merge_pending_milestones(previous, pending_milestones)
+        return previous, view
+
     def _assert_publishable(
         self,
         context: ProjectRuntimeState,
-        milestones: tuple[Milestone, ...],
+        pending_milestones: tuple[Milestone, ...],
     ) -> MilestoneSnapshot | None:
         if context.current_plan_commit_sha is None:
             raise DeliveryError("Milestones require an approved Plan commit")
@@ -678,13 +692,14 @@ class DeliveryService:
             self._driver.assert_retryable_blocked(context)
         if context.current_candidate_commit_sha is not None:
             raise DeliveryError("Milestones cannot be updated while a Candidate is pending")
-        if not milestones:
-            raise DeliveryError("Milestone View must not be empty")
-        if not any(milestone.state is MilestoneState.PENDING for milestone in milestones):
-            raise DeliveryError("Milestone View must contain a pending Milestone")
+        if not pending_milestones:
+            raise DeliveryError("Pending Milestone list must not be empty")
+        if any(
+            milestone.state is not MilestoneState.PENDING
+            for milestone in pending_milestones
+        ):
+            raise DeliveryError("Milestone updates accept pending Milestones only")
         if context.current_snapshot_id is None:
-            if any(milestone.state is MilestoneState.COMPLETED for milestone in milestones):
-                raise DeliveryError("Initial Milestone View cannot mark a Milestone completed")
             return None
         with self.context.transaction() as transaction:
             previous = self.snapshots.get(
@@ -695,17 +710,36 @@ class DeliveryService:
             raise LookupError(
                 f"Current Milestone Snapshot not found: {context.current_snapshot_id}"
             )
-        old_completed = tuple(
+        return previous
+
+    @staticmethod
+    def _merge_pending_milestones(
+        previous: MilestoneSnapshot | None,
+        pending_milestones: tuple[Milestone, ...],
+    ) -> tuple[Milestone, ...]:
+        keys = tuple(milestone.key for milestone in pending_milestones)
+        if len(keys) != len(set(keys)):
+            raise DeliveryError("Pending Milestone keys must be unique")
+        if previous is None:
+            return pending_milestones
+
+        completed = {
+            milestone.key
+            for milestone in previous.milestones
+            if milestone.state is MilestoneState.COMPLETED
+        }
+        redefined = completed.intersection(keys)
+        if redefined:
+            raise DeliveryError(
+                "Completed Milestones cannot be redefined: "
+                + ", ".join(sorted(redefined))
+            )
+        completed_milestones = tuple(
             milestone
             for milestone in previous.milestones
             if milestone.state is MilestoneState.COMPLETED
         )
-        new_completed = tuple(
-            milestone for milestone in milestones if milestone.state is MilestoneState.COMPLETED
-        )
-        if new_completed != old_completed:
-            raise DeliveryError("Milestone completion is only allowed by accepting its Candidate")
-        return previous
+        return completed_milestones + pending_milestones
 
     def _assert_approved_specs(self, context: ProjectRuntimeState) -> None:
         plan_commit_sha = context.current_plan_commit_sha
@@ -839,6 +873,8 @@ class DeliveryService:
     ) -> ProjectRuntimeState:
         if context.current_plan_commit_sha != snapshot.plan_commit_sha:
             raise DeliveryError("Approved Plan changed while publishing Milestones")
+        if context.current_snapshot_id != snapshot.previous_snapshot_id:
+            raise DeliveryError("Milestone Snapshot changed while publishing Milestones")
         if context.current_candidate_commit_sha is not None:
             raise DeliveryError("Project began delivery while publishing Milestones")
         if context.current_run_id is not None:

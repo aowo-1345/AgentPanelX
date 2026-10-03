@@ -223,11 +223,11 @@ runtime:
         invoke or simulate a Hard Gate while TODO or BLOCKED.
 
         Treat the Milestone View as the complete executable decomposition of the approved
-        Plan. update_milestones replaces that complete View; use it for the initial
-        breakdown or when remaining objectives/order must change, not to record ordinary
-        progress. Keep completed Milestones in the replacement for history, and omit a
-        pending Milestone when it no longer needs to run; omission is removal, not
-        completion. Only Candidate acceptance records completion.
+        Plan. update_milestones replaces the remaining pending Milestones; submit only
+        the pending Milestones that still need to run, in execution order. Runtime
+        inherits completed Milestones exactly. Omit a pending Milestone when it no
+        longer needs to run; omission is removal, not completion. Only Candidate
+        acceptance records completion.
         run_next_milestone selects the first unfinished Milestone. Its first use
         requests explicit user Start approval; later uses queue rolling delivery. Never
         run past an unresolved Candidate or a changed, unapproved Spec baseline.

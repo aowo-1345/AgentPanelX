@@ -1,8 +1,8 @@
-"""Project Runtime execution for publishing a complete Milestone View."""
+"""Project Runtime execution for publishing remaining Milestones."""
 
-from typing import Literal, Self
+from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
 from agentplanex.project_owner_agent.contracts import ToolExecutionResult
@@ -21,13 +21,12 @@ from agentplanex.services.delivery.models import Milestone, MilestoneState, Stag
 
 UPDATE_MILESTONES_TOOL_NAME = "update_milestones"
 UPDATE_MILESTONES_DESCRIPTION = (
-    "Replace the complete Milestone View derived from the approved canonical Plan. "
-    "This is a full replacement, not a patch. Use it for the initial delivery "
-    "breakdown or when remaining objectives/order must change. Keep completed "
-    "Milestones in the replacement for history; omit a pending Milestone when it "
-    "no longer needs to run. Do not mark an omitted pending Milestone completed: "
-    "Candidate acceptance alone records completion. Runtime invokes the Milestone "
-    "Hard Gate only while rolling delivery is IN_PROGRESS."
+    "Replace the remaining pending Milestones derived from the approved canonical "
+    "Plan. This is a full replacement of future work, not a patch: provide only "
+    "the pending Milestones that still need to run, in execution order. Runtime "
+    "inherits completed Milestones exactly and omitting a pending Milestone removes "
+    "it; Candidate acceptance alone records completion. Runtime invokes the "
+    "Milestone Hard Gate only while rolling delivery is IN_PROGRESS."
 )
 
 
@@ -42,8 +41,8 @@ class StageArguments(ToolArgumentsModel):
 class MilestoneArguments(ToolArgumentsModel):
     key: ToolIdentifier = Field(description="Stable Milestone identifier.")
     objective: NonBlankText = Field(description="Observable Milestone outcome.")
-    state: Literal["pending", "completed"] = Field(
-        description="Current delivery state represented by the complete View."
+    state: Literal["pending"] = Field(
+        description="This update accepts pending Milestones only; completion is Runtime-owned."
     )
     stages: list[StageArguments] = Field(
         min_length=1,
@@ -54,30 +53,23 @@ class MilestoneArguments(ToolArgumentsModel):
         return Milestone(
             key=self.key,
             objective=self.objective,
-            state=MilestoneState(self.state),
+            state=MilestoneState.PENDING,
             stages=tuple(stage.to_domain() for stage in self.stages),
         )
 
 
 class UpdateMilestonesArguments(ToolArgumentsModel):
     reason: NonBlankText = Field(
-        description="Why the complete Milestone View is being replaced."
+        description="Why the remaining pending Milestones are being replaced."
     )
     milestones: list[MilestoneArguments] = Field(
         min_length=1,
         description=(
-            "The complete ordered replacement View: retain completed history, include "
-            "the pending Milestones that still need to run, and omit pending "
-            "Milestones that no longer need to run. Include at least one pending "
-            "Milestone."
+            "The complete ordered list of pending Milestones that still need to run. "
+            "Runtime inherits completed history; omit a pending Milestone to remove "
+            "it. Include at least one pending Milestone."
         ),
     )
-
-    @model_validator(mode="after")
-    def require_pending_milestone(self) -> Self:
-        if not any(milestone.state == "pending" for milestone in self.milestones):
-            raise ValueError("Milestone View must contain a pending Milestone")
-        return self
 
     def domain_milestones(self) -> tuple[Milestone, ...]:
         return tuple(milestone.to_domain() for milestone in self.milestones)
@@ -92,7 +84,7 @@ UPDATE_MILESTONES_TOOL = ToolDefinition(
 
 @project_execution(UPDATE_MILESTONES_TOOL)
 class UpdateMilestonesExecution(ProjectExecution[UpdateMilestonesArguments]):
-    """Validate a Tool Action and publish its complete Milestone View."""
+    """Validate a Tool Action and publish the complete Runtime-owned View."""
 
     def execute(
         self,

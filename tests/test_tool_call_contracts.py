@@ -76,7 +76,7 @@ def test_provider_schema_omits_runtime_owned_session_identity(
     )
 
 
-def test_tool_catalog_rejects_invalid_complete_milestone_views(
+def test_tool_catalog_rejects_invalid_pending_milestone_updates(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -138,12 +138,7 @@ def test_tool_catalog_rejects_invalid_complete_milestone_views(
         provider_errors = list(
             Draft202012Validator(provider_schema).iter_errors(arguments)
         )
-        if index == 2:
-            # OpenAI's strict JSON Schema subset cannot express array `contains`;
-            # the authoritative Runtime validator still enforces this invariant.
-            assert not provider_errors
-        else:
-            assert provider_errors
+        assert provider_errors
         with pytest.raises(ToolArgumentError):
             tools.create_action(
                 name="update_milestones",
