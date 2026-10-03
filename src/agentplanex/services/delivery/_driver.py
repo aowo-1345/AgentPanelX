@@ -14,6 +14,7 @@ from agentplanex.domains.execution_event import (
     RuntimeContextChangeReason,
 )
 from agentplanex.domains.project_runtime_state import ProjectRuntimeState
+from agentplanex.infrastructure.codex import CodexTransportUnsafeTimeout
 from agentplanex.infrastructure.git_repository import GitRepository, GitRepositoryError
 from agentplanex.infrastructure.sqlite.repositories import (
     SQLiteMilestoneSnapshotRepository,
@@ -272,7 +273,7 @@ class _StageDriver:
                 reason="lease_expired",
             )
             self._publish_stage_failed(completion.stage_run)
-            self._restore_or_remove_worktree(active)
+            self._restore_or_remove_worktree(active, preserve_worktree=False)
             return DeliveryDriveOutcome.STAGE_FAILED
 
         claim = self._claim_next_stage(
@@ -838,7 +839,10 @@ class _StageDriver:
                 )
             )
         self._publish_stage_failed(completion.stage_run)
-        self._restore_or_remove_worktree(claim.stage_run)
+        self._restore_or_remove_worktree(
+            claim.stage_run,
+            preserve_worktree=not isinstance(error, CodexTransportUnsafeTimeout),
+        )
         return DeliveryDriveOutcome.STAGE_FAILED
 
     def _close_stage_terminal(self, stage_run_id: str, *, reason: str) -> None:
@@ -979,6 +983,12 @@ class _StageDriver:
 
     def _prepare_stage_worktree(self, stage_run: StageRun) -> Path:
         if stage_run.revision_of_stage_run_id is None:
+            path = self.git.delivery_worktree_path(stage_run.run_id)
+            if path.exists():
+                worktree = GitRepository(path)
+                if worktree.head_sha() != stage_run.input_commit_sha:
+                    raise DeliveryError("Delivery worktree HEAD does not match Stage input commit")
+                return path
             return self.git.prepare_delivery_worktree(
                 stage_run.run_id,
                 stage_run.input_commit_sha,
@@ -992,9 +1002,21 @@ class _StageDriver:
         worktree.assert_clean()
         return path
 
-    def _restore_or_remove_worktree(self, stage_run: StageRun) -> None:
+    def _restore_or_remove_worktree(
+        self,
+        stage_run: StageRun,
+        *,
+        preserve_worktree: bool = True,
+    ) -> None:
         try:
             if stage_run.revision_of_stage_run_id is None:
+                path = self.git.delivery_worktree_path(stage_run.run_id)
+                if preserve_worktree and path.exists():
+                    try:
+                        if GitRepository(path).head_sha() == stage_run.input_commit_sha:
+                            return
+                    except GitRepositoryError:
+                        pass
                 self.git.remove_delivery_worktree(stage_run.run_id)
             else:
                 for ref in (

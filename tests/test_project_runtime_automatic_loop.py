@@ -144,12 +144,6 @@ class _SuccessfulStageExecutor:
     def execute(self, request: StageExecutionRequest) -> None:
         self.executed_stage_keys.append(request.stage.key)
         self.executor_session_stage_run_ids.append(request.executor_session_stage_run_id)
-        if (
-            self.fail_stage_key == request.stage.key
-            and request.stage.key not in self.failed_stage_keys
-        ):
-            self.failed_stage_keys.add(request.stage.key)
-            raise RuntimeError(f"{request.stage.key} failed once")
         request.delivery_document.parent.mkdir(parents=True, exist_ok=True)
         request.delivery_document.write_text(
             (
@@ -175,6 +169,12 @@ class _SuccessfulStageExecutor:
             ),
             encoding="utf-8",
         )
+        if (
+            self.fail_stage_key == request.stage.key
+            and request.stage.key not in self.failed_stage_keys
+        ):
+            self.failed_stage_keys.add(request.stage.key)
+            raise RuntimeError(f"{request.stage.key} failed once")
 
 
 class _FailingRevisionStageExecutor(_SuccessfulStageExecutor):
@@ -1235,6 +1235,12 @@ def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
     assert context.status == "BLOCKED"
     assert context.current_stage_key == "stage-2"
     assert executor.executed_stage_keys == ["stage-1", "stage-2"]
+    worktree = GitRepository(project_path).delivery_worktree_path(context.current_run_id)
+    assert worktree.exists()
+    assert (
+        worktree / "docs/agentplanex/deliveries" / context.current_run_id / "stage-2.md"
+    ).exists()
+    assert (worktree / "src" / "stage-2.txt").exists()
     control = create_project_control_query(project_path=project_path).get_current()
     assert [stage.status.value for stage in control.stage_runs] == ["SUCCEEDED", "FAILED"]
     assert control.owner_activation is None
