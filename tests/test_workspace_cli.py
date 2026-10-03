@@ -1,7 +1,6 @@
 """Critical user-visible Project and Feature workspace behavior."""
 
 import json
-import shutil
 import sqlite3
 import subprocess
 import sys
@@ -58,11 +57,11 @@ def _write_settings(path: Path, data_home: Path, model_base_url: str) -> None:
 
 
 def _prepare_case(
+    tmp_path: Path,
     name: str,
     model_base_url: str = "http://127.0.0.1:1/v1",
 ) -> tuple[Path, Path]:
-    case_path = Path(__file__).resolve().parents[1] / ".agentplanex" / "tests" / name
-    shutil.rmtree(case_path, ignore_errors=True)
+    case_path = tmp_path / name
     repository_path = case_path / "repository"
     _initialize_repository(repository_path)
     config_path = case_path / "settings.yaml"
@@ -144,8 +143,10 @@ def _database_schema(database_path: Path) -> dict[str, tuple[str, ...]]:
         connection.close()
 
 
-def test_workspace_deletes_managed_feature_worktrees_and_preserves_branches() -> None:
-    repository_path, config_path = _prepare_case("workspace-feature-deletion")
+def test_workspace_deletes_managed_feature_worktrees_and_preserves_branches(
+    tmp_path: Path,
+) -> None:
+    repository_path, config_path = _prepare_case(tmp_path, "workspace-feature-deletion")
     workspace = create_workspace(
         load_settings(config_path),
         settings_path=config_path,
@@ -202,9 +203,11 @@ def test_workspace_deletes_managed_feature_worktrees_and_preserves_branches() ->
 
 def test_installed_cli_runs_two_isolated_features_end_to_end(
     recording_model_endpoint: tuple[str, list[str]],
+    tmp_path: Path,
 ) -> None:
     model_base_url, model_requests = recording_model_endpoint
     repository_path, config_path = _prepare_case(
+        tmp_path,
         "workspace-critical-path",
         model_base_url,
     )
@@ -423,8 +426,10 @@ def test_installed_cli_runs_two_isolated_features_end_to_end(
     assert _run_installed_cli(config_path, "project", "list") == [project]
 
 
-def test_installed_cli_rejects_registering_another_worktree_of_same_repository() -> None:
-    repository_path, config_path = _prepare_case("workspace-duplicate-project")
+def test_installed_cli_rejects_registering_another_worktree_of_same_repository(
+    tmp_path: Path,
+) -> None:
+    repository_path, config_path = _prepare_case(tmp_path, "workspace-duplicate-project")
     project = _run_installed_cli(
         config_path,
         "project",
@@ -463,8 +468,8 @@ def test_installed_cli_rejects_registering_another_worktree_of_same_repository()
     assert _run_installed_cli(config_path, "project", "list") == [project]
 
 
-def test_installed_cli_rejects_missing_project_main_branch() -> None:
-    repository_path, config_path = _prepare_case("workspace-missing-main")
+def test_installed_cli_rejects_missing_project_main_branch(tmp_path: Path) -> None:
+    repository_path, config_path = _prepare_case(tmp_path, "workspace-missing-main")
 
     result = _invoke_installed_cli(
         config_path,

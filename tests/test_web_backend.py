@@ -2,7 +2,6 @@
 
 import json
 import os
-import shutil
 import socket
 import subprocess
 import sys
@@ -32,9 +31,8 @@ def _git(project_path: Path, *arguments: str) -> str:
     return result.stdout.strip()
 
 
-def _prepare_case(model_base_url: str) -> tuple[Path, Path]:
-    case_path = Path(__file__).resolve().parents[1] / ".agentplanex" / "tests" / "web-e2e"
-    shutil.rmtree(case_path, ignore_errors=True)
+def _prepare_case(tmp_path: Path, model_base_url: str) -> tuple[Path, Path]:
+    case_path = tmp_path / "web-e2e"
     repository_path = case_path / "repository"
     repository_path.mkdir(parents=True)
     subprocess.run(
@@ -220,9 +218,9 @@ def _web_server(config_path: Path, port: int) -> Iterator[str]:
 
 
 @pytest.mark.e2e
-def test_installed_web_backend_runs_and_fails_interrupted_work() -> None:
+def test_installed_web_backend_runs_and_fails_interrupted_work(tmp_path: Path) -> None:
     with _model_endpoint() as model_endpoint:
-        repository_path, config_path = _prepare_case(model_endpoint.base_url)
+        repository_path, config_path = _prepare_case(tmp_path, model_endpoint.base_url)
         port = _free_port()
 
         with _web_server(config_path, port) as base_url:
