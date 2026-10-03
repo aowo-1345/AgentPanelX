@@ -2,7 +2,6 @@
 
 import json
 import sqlite3
-from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
@@ -55,6 +54,7 @@ class _StageClaim:
     milestone: Milestone
     stage: Stage
     stage_run: StageRun
+    executor_session_stage_run_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,9 +249,13 @@ class _StageDriver:
                 failure="Stage execution lease expired before a terminal result",
                 finished_at=now,
             )
-            self._close_stage_terminal(active.stage_run_id, reason="lease_expired")
+            session_stage_run_id = self._executor_session_stage_run_id_current(active)
+            self._close_stage_terminal(
+                session_stage_run_id,
+                reason="lease_expired",
+            )
             self._publish_stage_failed(completion.stage_run)
-            self._remove_worktree(active.run_id)
+            self._restore_or_remove_worktree(active)
             return DeliveryDriveOutcome.STAGE_FAILED
 
         claim = self._claim_next_stage(
@@ -260,13 +264,10 @@ class _StageDriver:
         )
         invocation_id = uuid4().hex
         invocation_started = False
-        candidate_ref_created = False
+        candidate_ref_changed = False
         output_commit_sha: str | None = None
         try:
-            worktree = self.git.prepare_delivery_worktree(
-                claim.stage_run.run_id,
-                claim.stage_run.input_commit_sha,
-            )
+            worktree = self._prepare_stage_worktree(claim.stage_run)
             delivery_document = _delivery_document_path(
                 worktree,
                 claim.stage_run.run_id,
@@ -293,6 +294,7 @@ class _StageDriver:
                     stage=claim.stage,
                     worktree=worktree,
                     delivery_document=delivery_document,
+                    executor_session_stage_run_id=claim.executor_session_stage_run_id,
                 )
             )
             worktree_git = GitRepository(worktree)
@@ -303,22 +305,34 @@ class _StageDriver:
             )
             output_commit_sha = worktree_git.commit_all(
                 message=(
-                    f"stage: {claim.milestone.key}/{claim.stage.key} ({claim.stage_run.run_id})"
+                    f"revise: {claim.milestone.key}/{claim.stage.key} "
+                    f"({claim.stage_run.run_id})"
+                    if claim.stage_run.revision_of_stage_run_id is not None
+                    else f"stage: {claim.milestone.key}/{claim.stage.key} "
+                    f"({claim.stage_run.run_id})"
                 )
             )
             first_stage = claim.milestone.stages[0].key == claim.stage.key
             self.git.compare_and_swap_ref(
                 delivery_run_ref(claim.stage_run.run_id),
                 output_commit_sha,
-                expected_sha=(None if first_stage else claim.stage_run.input_commit_sha),
+                expected_sha=(
+                    claim.stage_run.input_commit_sha
+                    if claim.stage_run.revision_of_stage_run_id is not None
+                    else (None if first_stage else claim.stage_run.input_commit_sha)
+                ),
             )
             if _is_final_stage(claim.milestone, claim.stage.key):
                 self.git.compare_and_swap_ref(
                     delivery_candidate_ref(claim.stage_run.run_id),
                     output_commit_sha,
-                    expected_sha=None,
+                    expected_sha=(
+                        claim.stage_run.input_commit_sha
+                        if claim.stage_run.revision_of_stage_run_id is not None
+                        else None
+                    ),
                 )
-                candidate_ref_created = True
+                candidate_ref_changed = True
             completion = self._succeed_stage(
                 claim.stage_run.stage_run_id,
                 output_commit_sha=output_commit_sha,
@@ -330,11 +344,14 @@ class _StageDriver:
                 error,
                 invocation_id=invocation_id,
                 invocation_started=invocation_started,
-                candidate_ref_created=candidate_ref_created,
+                candidate_ref_changed=candidate_ref_changed,
                 candidate_commit_sha=output_commit_sha,
             )
 
-        self._close_stage_terminal(claim.stage_run.stage_run_id, reason="succeeded")
+        self._close_stage_terminal(
+            claim.executor_session_stage_run_id,
+            reason="succeeded",
+        )
         self._publish_invocation_completed(invocation_id, completion.stage_run)
         self._publish_stage_succeeded(completion)
         if completion.candidate_commit_sha is not None:
@@ -347,7 +364,7 @@ class _StageDriver:
         finished_at: datetime,
         failure: str,
     ) -> bool:
-        """Atomically terminalize active Stage work and block this delivery."""
+        """Atomically terminalize active Stage work and preserve revision Candidates."""
         with self.context.transaction() as transaction:
             state = transaction.state()
             failed = self.stage_runs.fail_active(
@@ -358,15 +375,31 @@ class _StageDriver:
             )
             if not failed:
                 return False
+            keep_candidate = all(
+                stage_run.revision_of_stage_run_id is not None for stage_run in failed
+            )
             transaction.transition(
                 reason=RuntimeContextChangeReason.INTERRUPTED_WORK_FAILED,
-                mutate=_block_runtime_execution,
+                mutate=(lambda latest: latest) if keep_candidate else _block_runtime_execution,
             )
+            for stage_run in failed:
+                if stage_run.revision_of_stage_run_id is not None:
+                    transaction.submit_owner_input(
+                        ProjectOwnerTask(
+                            type=ProjectOwnerTaskType.EXECUTION_RESULT,
+                            content=_candidate_revision_failed_message(
+                                stage_run,
+                                failure,
+                            ),
+                        )
+                    )
         for stage_run in failed:
-            self._close_stage_terminal(stage_run.stage_run_id, reason="interrupted")
+            self._close_stage_terminal(
+                self._executor_session_stage_run_id_current(stage_run),
+                reason="interrupted",
+            )
             self.event_bus.publish(_interrupted_stage_event(stage_run))
-        for run_id in {stage_run.run_id for stage_run in failed}:
-            self._remove_worktree(run_id)
+            self._restore_or_remove_worktree(stage_run)
         return True
 
     def candidate_contract(
@@ -375,9 +408,13 @@ class _StageDriver:
         expected: CandidateIdentity,
         *,
         connection: sqlite3.Connection | None = None,
-    ) -> tuple[MilestoneSnapshot, Milestone, str]:
+    ) -> tuple[MilestoneSnapshot, Milestone, str, StageRun]:
         """Validate the complete successful Stage chain for one Candidate."""
-        if context.status not in {"IN_PROGRESS", "BLOCKED"} or context.pending_action is not None:
+        if (
+            context.status not in {"IN_PROGRESS", "BLOCKED"}
+            or context.pending_action is not None
+            or context.blocked_reason is not None
+        ):
             raise DeliveryError("Candidate decision requires an active delivery project")
         if (
             context.current_snapshot_id != expected.snapshot_id
@@ -389,44 +426,99 @@ class _StageDriver:
         if context.git_main_version is None:
             raise DeliveryError("Candidate has no fixed Git baseline")
 
-        def load(opened: sqlite3.Connection) -> tuple[MilestoneSnapshot, Milestone, str]:
+        def load(
+            opened: sqlite3.Connection,
+        ) -> tuple[MilestoneSnapshot, Milestone, str, StageRun]:
             snapshot = self._snapshot_for_context(context, connection=opened)
             milestone = self._first_pending(snapshot)
             if milestone.key != context.current_milestone_key:
                 raise DeliveryError("Candidate is not for the first pending Milestone")
             if context.current_stage_key != milestone.stages[-1].key:
                 raise DeliveryError("Candidate cursor is not at the final Stage")
-            stage_runs = self.stage_runs.list_by_run_id(opened, expected.run_id)
+            all_stage_runs = self.stage_runs.list_by_run_id(opened, expected.run_id)
             if any(
                 stage_run.triage_id != context.triage_id
                 or stage_run.snapshot_id != expected.snapshot_id
                 or stage_run.run_id != expected.run_id
                 or stage_run.milestone_key != expected.milestone_key
-                for stage_run in stage_runs
+                for stage_run in all_stage_runs
             ):
                 raise DeliveryError("Candidate Run provenance is inconsistent")
+            if any(
+                stage_run.status in {StageRunStatus.QUEUED, StageRunStatus.RUNNING}
+                and stage_run.revision_of_stage_run_id is not None
+                for stage_run in all_stage_runs
+            ):
+                raise DeliveryError("Candidate revision is still running")
+            stage_runs = _effective_candidate_stage_runs(all_stage_runs, milestone)
             if tuple(stage_run.stage_key for stage_run in stage_runs) != tuple(
                 stage.key for stage in milestone.stages
             ):
                 raise DeliveryError("Candidate Run does not contain every ordered Stage")
             if any(stage_run.status is not StageRunStatus.SUCCEEDED for stage_run in stage_runs):
                 raise DeliveryError("Candidate Run contains a non-succeeded Stage")
-            if stage_runs and stage_runs[0].input_commit_sha != context.git_main_version:
+            runs_by_id = {stage_run.stage_run_id: stage_run for stage_run in all_stage_runs}
+            base = stage_runs[0] if stage_runs else None
+            while base is not None and base.revision_of_stage_run_id is not None:
+                base = runs_by_id.get(base.revision_of_stage_run_id)
+            if base is None or base.input_commit_sha != context.git_main_version:
                 raise DeliveryError("Candidate Run does not start at the Git baseline")
-            if any(
-                current.input_commit_sha != previous.output_commit_sha
-                for previous, current in pairwise(stage_runs)
-            ):
-                raise DeliveryError("Candidate Run commit chain is discontinuous")
+            for previous, current in pairwise(stage_runs):
+                expected_input = previous.output_commit_sha
+                if current.revision_of_stage_run_id is not None:
+                    source = runs_by_id.get(current.revision_of_stage_run_id)
+                    if source is None or source.status is not StageRunStatus.SUCCEEDED:
+                        raise DeliveryError("Candidate revision source is not succeeded")
+                    expected_input = source.output_commit_sha
+                if current.input_commit_sha != expected_input:
+                    raise DeliveryError("Candidate Run commit chain is discontinuous")
             candidate = expected.candidate_commit_sha
             if not stage_runs or stage_runs[-1].output_commit_sha != candidate:
                 raise DeliveryError("Candidate does not match the final Stage output")
-            return snapshot, milestone, candidate
+            return snapshot, milestone, candidate, stage_runs[-1]
 
         if connection is not None:
             return load(connection)
         with self.context.transaction() as transaction:
             return load(transaction.connection)
+
+    def queue_candidate_revision(
+        self,
+        *,
+        expected: CandidateIdentity,
+        source_stage_run: StageRun,
+        feedback: str,
+    ) -> StageRun:
+        """Persist one revision attempt while retaining the accepted Candidate evidence."""
+        now = datetime.now(UTC)
+        revision = StageRun(
+            stage_run_id=uuid4().hex,
+            triage_id=source_stage_run.triage_id,
+            run_id=expected.run_id,
+            snapshot_id=expected.snapshot_id,
+            milestone_key=expected.milestone_key,
+            stage_key=source_stage_run.stage_key,
+            status=StageRunStatus.QUEUED,
+            input_commit_sha=expected.candidate_commit_sha,
+            output_commit_sha=None,
+            failure=None,
+            created_at=now,
+            revision_of_stage_run_id=source_stage_run.stage_run_id,
+            revision_feedback=feedback,
+        )
+        with self.context.transaction() as transaction:
+            latest = transaction.state()
+            if (
+                latest.current_snapshot_id != expected.snapshot_id
+                or latest.current_run_id != expected.run_id
+                or latest.current_milestone_key != expected.milestone_key
+                or latest.current_candidate_commit_sha != expected.candidate_commit_sha
+            ):
+                raise DeliveryError("Candidate changed while queuing its revision")
+            if self.stage_runs.get_active(transaction.connection, latest.triage_id) is not None:
+                raise DeliveryError("Candidate already has an active revision")
+            self.stage_runs.insert(transaction.connection, revision)
+        return revision
 
     def assert_retryable_blocked(
         self,
@@ -470,6 +562,30 @@ class _StageDriver:
             state = transaction.state()
             return self.stage_runs.get_active(transaction.connection, state.triage_id)
 
+    def _executor_session_stage_run_id(
+        self,
+        connection: sqlite3.Connection,
+        stage_run: StageRun,
+    ) -> str:
+        current = stage_run
+        seen: set[str] = set()
+        while current.revision_of_stage_run_id is not None:
+            if current.stage_run_id in seen:
+                raise DeliveryError("StageRun revision chain contains a cycle")
+            seen.add(current.stage_run_id)
+            parent = self.stage_runs.get(connection, current.revision_of_stage_run_id)
+            if parent is None:
+                raise DeliveryError("StageRun revision parent is missing")
+            current = parent
+        return current.stage_run_id
+
+    def _executor_session_stage_run_id_current(self, stage_run: StageRun) -> str:
+        with self.context.transaction() as transaction:
+            return self._executor_session_stage_run_id(
+                transaction.connection,
+                stage_run,
+            )
+
     def _claim_next_stage(
         self,
         *,
@@ -489,6 +605,10 @@ class _StageDriver:
             snapshot, milestone, stage = self._stage_contract(
                 transaction.connection,
                 current,
+                active,
+            )
+            executor_session_stage_run_id = self._executor_session_stage_run_id(
+                transaction.connection,
                 active,
             )
             claimed = self.stage_runs.claim_next(
@@ -520,6 +640,7 @@ class _StageDriver:
             milestone=milestone,
             stage=stage,
             stage_run=claimed,
+            executor_session_stage_run_id=executor_session_stage_run_id,
         )
 
     def _succeed_stage(
@@ -630,6 +751,16 @@ class _StageDriver:
                 reason=RuntimeContextChangeReason.STAGE_RUN_FAILED,
                 mutate=lambda latest: _stage_failed(latest, running),
             )
+            if running.revision_of_stage_run_id is not None:
+                transaction.submit_owner_input(
+                    ProjectOwnerTask(
+                        type=ProjectOwnerTaskType.EXECUTION_RESULT,
+                        content=_candidate_revision_failed_message(
+                            running,
+                            normalized_failure,
+                        ),
+                    )
+                )
         return _StageCompletion(
             state=updated,
             stage_run=failed,
@@ -644,7 +775,7 @@ class _StageDriver:
         *,
         invocation_id: str,
         invocation_started: bool,
-        candidate_ref_created: bool,
+        candidate_ref_changed: bool,
         candidate_commit_sha: str | None,
     ) -> DeliveryDriveOutcome:
         completion = self._fail_stage(
@@ -652,14 +783,21 @@ class _StageDriver:
             failure=_failure_message(error),
             finished_at=datetime.now(UTC),
         )
-        self._close_stage_terminal(claim.stage_run.stage_run_id, reason="failed")
-        if candidate_ref_created:
+        self._close_stage_terminal(
+            claim.executor_session_stage_run_id,
+            reason="failed",
+        )
+        if candidate_ref_changed and claim.stage_run.revision_of_stage_run_id is None:
             if candidate_commit_sha is None:
-                raise RuntimeError("Created Candidate ref has no known commit")
-            with suppress(GitRepositoryError):
+                raise RuntimeError("Changed Candidate ref has no known commit")
+            try:
                 self.git.delete_ref(
                     delivery_candidate_ref(claim.stage_run.run_id),
                     expected_sha=candidate_commit_sha,
+                )
+            except GitRepositoryError as rollback_error:
+                self._block_compensation_failure(
+                    f"Candidate ref cleanup failed: {rollback_error}"
                 )
         if invocation_started:
             self.event_bus.publish(
@@ -676,7 +814,7 @@ class _StageDriver:
                 )
             )
         self._publish_stage_failed(completion.stage_run)
-        self._remove_worktree(claim.stage_run.run_id)
+        self._restore_or_remove_worktree(claim.stage_run)
         return DeliveryDriveOutcome.STAGE_FAILED
 
     def _close_stage_terminal(self, stage_run_id: str, *, reason: str) -> None:
@@ -692,7 +830,8 @@ class _StageDriver:
     ) -> tuple[MilestoneSnapshot, Milestone, Stage]:
         if context.status != "IN_PROGRESS" or context.pending_action is not None:
             raise DeliveryError("Stage execution requires an active IN_PROGRESS project")
-        if context.current_candidate_commit_sha is not None:
+        is_revision = stage_run.revision_of_stage_run_id is not None
+        if context.current_candidate_commit_sha is not None and not is_revision:
             raise DeliveryError("Stage execution cannot continue with a pending Candidate")
         if (
             context.current_run_id != stage_run.run_id
@@ -705,6 +844,11 @@ class _StageDriver:
         milestone = self._first_pending(snapshot)
         if milestone.key != stage_run.milestone_key:
             raise DeliveryError("StageRun is not for the first pending Milestone")
+        if is_revision:
+            if stage_run.input_commit_sha != context.current_candidate_commit_sha:
+                raise DeliveryError("Candidate revision does not start at the current Candidate")
+            if stage_run.stage_key != milestone.stages[-1].key:
+                raise DeliveryError("Candidate revision must target the final Stage")
         stage = next(
             (item for item in milestone.stages if item.key == stage_run.stage_key),
             None,
@@ -809,11 +953,58 @@ class _StageDriver:
             )
         )
 
-    def _remove_worktree(self, run_id: str) -> None:
+    def _prepare_stage_worktree(self, stage_run: StageRun) -> Path:
+        if stage_run.revision_of_stage_run_id is None:
+            return self.git.prepare_delivery_worktree(
+                stage_run.run_id,
+                stage_run.input_commit_sha,
+            )
+        path = self.git.delivery_worktree_path(stage_run.run_id)
+        if not path.exists():
+            raise DeliveryError("Retained Candidate worktree is missing")
+        worktree = GitRepository(path)
+        if worktree.head_sha() != stage_run.input_commit_sha:
+            raise DeliveryError("Retained Candidate worktree is not at the Candidate commit")
+        worktree.assert_clean()
+        return path
+
+    def _restore_or_remove_worktree(self, stage_run: StageRun) -> None:
         try:
-            self.git.remove_delivery_worktree(run_id)
-        except GitRepositoryError:
-            return
+            if stage_run.revision_of_stage_run_id is None:
+                self.git.remove_delivery_worktree(stage_run.run_id)
+            else:
+                for ref in (
+                    delivery_run_ref(stage_run.run_id),
+                    delivery_candidate_ref(stage_run.run_id),
+                ):
+                    current_sha = self.git.resolve_ref(ref)
+                    if current_sha != stage_run.input_commit_sha:
+                        self.git.compare_and_swap_ref(
+                            ref,
+                            stage_run.input_commit_sha,
+                            expected_sha=current_sha,
+                        )
+                self.git.restore_delivery_worktree(
+                    stage_run.run_id,
+                    stage_run.input_commit_sha,
+                )
+        except GitRepositoryError as error:
+            if stage_run.revision_of_stage_run_id is not None:
+                self._block_compensation_failure(
+                    f"Candidate revision recovery failed: {error}"
+                )
+
+    def _block_compensation_failure(self, failure: str) -> None:
+        self.context.transition(
+            reason=RuntimeContextChangeReason.USER_INTERVENTION_REQUIRED,
+            mutate=lambda latest: replace(
+                latest,
+                status="BLOCKED",
+                blocked_reason=failure,
+                blocked_capability="delivery_compensation",
+                blocked_previous_status="IN_PROGRESS",
+            ),
+        )
 
 
 def _validate_stage_output(
@@ -859,8 +1050,16 @@ def _candidate_ready(
     candidate_commit_sha: str,
 ) -> ProjectRuntimeState:
     _assert_current_stage(context, completed)
-    if context.current_candidate_commit_sha is not None:
+    if (
+        context.current_candidate_commit_sha is not None
+        and completed.revision_of_stage_run_id is None
+    ):
         raise DeliveryError("Project already has a pending Candidate")
+    if (
+        completed.revision_of_stage_run_id is not None
+        and completed.input_commit_sha != context.current_candidate_commit_sha
+    ):
+        raise DeliveryError("Candidate revision started from a different Candidate")
     return replace(context, current_candidate_commit_sha=candidate_commit_sha)
 
 
@@ -869,6 +1068,10 @@ def _stage_failed(
     failed: StageRun,
 ) -> ProjectRuntimeState:
     _assert_current_stage(context, failed)
+    if failed.revision_of_stage_run_id is not None:
+        if context.current_candidate_commit_sha != failed.input_commit_sha:
+            raise DeliveryError("Candidate revision failed against a different Candidate")
+        return context
     return replace(context, status="BLOCKED")
 
 
@@ -918,6 +1121,23 @@ def _delivery_document_path(worktree: Path, run_id: str, stage_key: str) -> Path
     return worktree / "docs" / "agentplanex" / "deliveries" / run_id / f"{stage_key}.md"
 
 
+def _effective_candidate_stage_runs(
+    stage_runs: tuple[StageRun, ...],
+    milestone: Milestone,
+) -> tuple[StageRun, ...]:
+    """Select the latest successful attempt for each ordered Stage."""
+    effective: list[StageRun] = []
+    for stage in milestone.stages:
+        attempts = tuple(item for item in stage_runs if item.stage_key == stage.key)
+        successful = tuple(
+            item for item in attempts if item.status is StageRunStatus.SUCCEEDED
+        )
+        if not successful:
+            raise DeliveryError(f"Candidate has no successful Stage: {stage.key}")
+        effective.append(max(successful, key=lambda item: (item.created_at, item.stage_run_id)))
+    return tuple(effective)
+
+
 def _is_final_stage(milestone: Milestone, stage_key: str) -> bool:
     return milestone.stages[-1].key == stage_key
 
@@ -956,9 +1176,30 @@ def _candidate_ready_message(
             },
             "required_decision": (
                 "Inspect the fixed Candidate, delegate a Reviewer when useful, then "
-                "accept or reject it with decide_milestone_candidate. Afterwards "
+                "accept, reject, or revise it with decide_milestone_candidate. Afterwards "
                 "reassess whether to run next, update Milestones, revise Specs, or "
                 "return control to the user."
+            ),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _candidate_revision_failed_message(stage_run: StageRun, failure: str) -> str:
+    return json.dumps(
+        {
+            "event": "MILESTONE_CANDIDATE_REVISION_FAILED",
+            "work_object": {
+                "run_id": stage_run.run_id,
+                "milestone_key": stage_run.milestone_key,
+                "stage_key": stage_run.stage_key,
+                "candidate_commit_sha": stage_run.input_commit_sha,
+            },
+            "failure": failure,
+            "required_decision": (
+                "Inspect the failed revision evidence and either request another "
+                "revision with decide_milestone_candidate or reject the Candidate."
             ),
         },
         ensure_ascii=False,

@@ -148,9 +148,9 @@ def _sandbox_environment(overrides: Mapping[str, str] | None) -> dict[str, str]:
     environment.update(
         {
             "GIT_OPTIONAL_LOCKS": "0",
-            "HOME": "/tmp/home",
-            "UV_CACHE_DIR": "/tmp/uv-cache",
-            "XDG_CACHE_HOME": "/tmp/cache",
+            "HOME": "/run/agentplanex-home",
+            "UV_CACHE_DIR": "/run/agentplanex-uv-cache",
+            "XDG_CACHE_HOME": "/run/agentplanex-cache",
         }
     )
     return environment
@@ -180,8 +180,10 @@ def _sandbox_command(
         "/run",
     ]
     if project_root.is_relative_to(Path("/tmp")):
-        for directory in _directory_chain(Path("/tmp"), project_root):
+        parent = project_root.parent
+        for directory in _directory_chain(Path("/tmp"), parent):
             arguments.extend(("--dir", str(directory)))
+        arguments.extend(("--ro-bind", str(parent), str(parent)))
     arguments.extend(
         (
             "--bind",
@@ -207,11 +209,11 @@ def _sandbox_command(
     arguments.extend(
         (
             "--dir",
-            "/tmp/home",
+            "/run/agentplanex-home",
             "--dir",
-            "/tmp/cache",
+            "/run/agentplanex-cache",
             "--dir",
-            "/tmp/uv-cache",
+            "/run/agentplanex-uv-cache",
             "--chdir",
             root,
             "--",

@@ -133,21 +133,38 @@ class _SuccessfulStageExecutor:
     """A local Stage adapter that produces the declared delivery artifacts."""
 
     executed_stage_keys: list[str]
+    executor_session_stage_run_ids: list[str | None]
 
     def __init__(self) -> None:
         self.executed_stage_keys = []
+        self.executor_session_stage_run_ids = []
 
     def execute(self, request: StageExecutionRequest) -> None:
         self.executed_stage_keys.append(request.stage.key)
+        self.executor_session_stage_run_ids.append(request.executor_session_stage_run_id)
         request.delivery_document.parent.mkdir(parents=True, exist_ok=True)
         request.delivery_document.write_text(
-            f"# {request.stage.key}\n\nDeterministic delivery evidence.\n",
+            (
+                f"# {request.stage.key}\n\nDeterministic delivery evidence.\n"
+                + (
+                    f"Revision feedback: {request.stage_run.revision_feedback}\n"
+                    if request.stage_run.revision_of_stage_run_id is not None
+                    else ""
+                )
+            ),
             encoding="utf-8",
         )
         implementation = request.worktree / "src" / f"{request.stage.key}.txt"
         implementation.parent.mkdir(parents=True, exist_ok=True)
         implementation.write_text(
-            f"implemented {request.stage.key}\n",
+            (
+                f"implemented {request.stage.key}\n"
+                + (
+                    f"revision feedback: {request.stage_run.revision_feedback}\n"
+                    if request.stage_run.revision_of_stage_run_id is not None
+                    else ""
+                )
+            ),
             encoding="utf-8",
         )
 
@@ -155,6 +172,13 @@ class _SuccessfulStageExecutor:
 class _FailingStageExecutor:
     def execute(self, _request: StageExecutionRequest) -> None:
         raise RuntimeError("unexpected deterministic Stage failure")
+
+
+class _FailingRevisionStageExecutor(_SuccessfulStageExecutor):
+    def execute(self, request: StageExecutionRequest) -> None:
+        if request.stage_run.revision_of_stage_run_id is not None:
+            raise RuntimeError("revision failed")
+        super().execute(request)
 
 
 class _BlockingStageExecutor:
@@ -256,8 +280,13 @@ def _request_first_run(
     assert queued.exit.status.value == "FirstRunApprovalRequested"
 
 
-def _queue_first_run(runtime: RuntimePair, project_path: Path) -> None:
-    _request_first_run(runtime, project_path)
+def _queue_first_run(
+    runtime: RuntimePair,
+    project_path: Path,
+    *,
+    milestones: list[dict[str, object]] | None = None,
+) -> None:
+    _request_first_run(runtime, project_path, milestones=milestones)
     runtime.runtime.start_first_run()
 
 
@@ -527,6 +556,155 @@ def test_drive_until_waiting_runs_all_stages_then_delivers_candidate_to_owner(
     assert create_project_workspace_query(project_path=project_path).get(
         context.triage_id
     ).conversation[-1].content == ("Owner reached a human waiting point.")
+
+
+def test_revise_reuses_candidate_worktree_and_preserves_stage_evidence(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    executor = _SuccessfulStageExecutor()
+    runtime = compose_test_runtime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=executor,
+    )
+    runtime.runtime.initialize()
+    runtime.runtime.begin_feature()
+    _queue_first_run(
+        runtime,
+        project_path,
+        milestones=[
+            {
+                "key": "milestone-1",
+                "objective": "Produce one reviewable Candidate.",
+                "state": "pending",
+                "stages": [{"key": "stage-1", "objective": "Implement the feature."}],
+            }
+        ],
+    )
+    runtime.runtime.drive_until_waiting()
+
+    before = runtime.runtime.state()
+    assert before.current_candidate_commit_sha is not None
+    assert before.current_run_id is not None
+    worktree = GitRepository(project_path).delivery_worktree_path(before.current_run_id)
+    assert worktree.is_dir()
+    revision = runtime.control.execute_tool(
+        {
+            "tool": "decide_milestone_candidate",
+            "arguments": _candidate_decision_arguments(
+                runtime,
+                decision="revise",
+                reason="Add the requested validation evidence.",
+            ),
+        }
+    )
+
+    assert revision.output["ok"] is True
+    assert revision.output["decision"] == "revise"
+    assert revision.output["completed"] is False
+    assert (
+        runtime.runtime.state().current_candidate_commit_sha
+        == before.current_candidate_commit_sha
+    )
+    control = create_project_control_query(project_path=project_path).get_current()
+    revision_run = control.stage_runs[-1]
+    assert revision_run.revision_of_stage_run_id is not None
+    assert revision_run.status.value == "QUEUED"
+    assert revision_run.input_commit_sha == before.current_candidate_commit_sha
+    assert revision_run.revision_feedback == "Add the requested validation evidence."
+    assert worktree.is_dir()
+    assert GitRepository(worktree).head_sha() == before.current_candidate_commit_sha
+
+    assert runtime.control.drive_delivery() == "candidate_ready"
+    after = runtime.runtime.state()
+    assert after.current_candidate_commit_sha is not None
+    assert after.current_candidate_commit_sha != before.current_candidate_commit_sha
+    control = create_project_control_query(project_path=project_path).get_current()
+    assert [run.status.value for run in control.stage_runs] == ["SUCCEEDED", "SUCCEEDED"]
+    assert control.stage_runs[1].revision_of_stage_run_id == control.stage_runs[0].stage_run_id
+    assert control.stage_runs[1].input_commit_sha == before.current_candidate_commit_sha
+    assert control.stage_runs[1].output_commit_sha == after.current_candidate_commit_sha
+    assert not any(
+        event.event_type is ExecutionEventType.CANDIDATE_REJECTED
+        for event in control.timeline
+    )
+
+    runtime.runtime.drive_until_waiting()
+    second_revision = runtime.control.execute_tool(
+        {
+            "tool": "decide_milestone_candidate",
+            "arguments": _candidate_decision_arguments(
+                runtime,
+                decision="revise",
+                reason="Apply one more review note.",
+            ),
+        }
+    )
+    assert second_revision.output["ok"] is True
+    assert runtime.control.drive_delivery() == "candidate_ready"
+    second_after = runtime.runtime.state()
+    assert second_after.current_candidate_commit_sha is not None
+    assert second_after.current_candidate_commit_sha != after.current_candidate_commit_sha
+    assert len(set(executor.executor_session_stage_run_ids)) == 1
+
+    runtime.runtime.drive_until_waiting()
+    accepted = runtime.control.execute_tool(
+        {
+            "tool": "decide_milestone_candidate",
+            "arguments": _candidate_decision_arguments(
+                runtime,
+                decision="accept",
+                reason="The revised Candidate now includes the requested evidence.",
+            ),
+        }
+    )
+    assert accepted.output["ok"] is True, accepted.output
+    assert accepted.output["completed"] is True
+
+
+def test_failed_revision_restores_original_candidate_for_another_revision(
+    initialize_git_project: Callable[[], Path],
+) -> None:
+    project_path = initialize_git_project()
+    runtime = compose_test_runtime(
+        project_path=project_path,
+        settings=_settings(),
+        approval_mode="yolo",
+        responses_transport=_ReplyingOwner(),
+        stage_executor=_FailingRevisionStageExecutor(),
+    )
+    runtime.runtime.initialize()
+    runtime.runtime.begin_feature()
+    _queue_first_run(runtime, project_path)
+    runtime.runtime.drive_until_waiting()
+    before = runtime.runtime.state()
+    assert before.current_candidate_commit_sha is not None
+    assert before.current_run_id is not None
+    runtime.control.execute_tool(
+        {
+            "tool": "decide_milestone_candidate",
+            "arguments": _candidate_decision_arguments(
+                runtime,
+                decision="revise",
+                reason="Try the implementation again.",
+            ),
+        }
+    )
+
+    assert runtime.control.drive_delivery() == "stage_failed"
+    after = runtime.runtime.state()
+    assert after.status == "IN_PROGRESS"
+    assert after.current_candidate_commit_sha == before.current_candidate_commit_sha
+    control = create_project_control_query(project_path=project_path).get_current()
+    failed_revision = control.stage_runs[-1]
+    assert failed_revision.status.value == "FAILED"
+    assert failed_revision.revision_of_stage_run_id == control.stage_runs[-2].stage_run_id
+    worktree = GitRepository(project_path).delivery_worktree_path(before.current_run_id)
+    assert GitRepository(worktree).head_sha() == before.current_candidate_commit_sha
+    assert control.owner_activation is not None
 
 
 def test_first_run_rejects_git_identity_changed_after_plan_approval(

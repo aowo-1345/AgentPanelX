@@ -186,6 +186,15 @@ class GitRepository:
             self._run("worktree", "remove", "--force", str(path))
         self._run("worktree", "prune")
 
+    def restore_delivery_worktree(self, run_id: str, commit_sha: str) -> None:
+        """Restore a retained Candidate worktree after a failed revision attempt."""
+        path = self.delivery_worktree_path(run_id)
+        if not path.exists():
+            raise GitRepositoryError("Candidate worktree does not exist")
+        repository = GitRepository(path)
+        repository._run("reset", "--hard", commit_sha)
+        repository._run("clean", "-fd")
+
     def delivery_worktree_path(self, run_id: str) -> Path:
         """Return the deterministic Runtime-owned path for a Run worktree."""
         self._require_identifier("run_id", run_id)

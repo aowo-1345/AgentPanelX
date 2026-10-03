@@ -37,4 +37,5 @@ def test_candidate_decision_receipt_does_not_expose_snapshot_entity() -> None:
         "result_snapshot_id",
         "next_milestone_key",
         "completed",
+        "revision_stage_run_id",
     } == receipt_fields

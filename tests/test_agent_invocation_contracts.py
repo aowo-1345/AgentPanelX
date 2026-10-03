@@ -761,6 +761,32 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
     )
     executor.execute(execution_request)
     executor.execute(execution_request)
+    revision_run = replace(
+        stage_run,
+        stage_run_id="stage-revision-1",
+        revision_of_stage_run_id=stage_run.stage_run_id,
+        revision_feedback="Address the missing validation evidence.",
+    )
+    executor.execute(
+        replace(
+            execution_request,
+            stage_run=revision_run,
+            executor_session_stage_run_id=stage_run.stage_run_id,
+        )
+    )
+    second_revision_run = replace(
+        revision_run,
+        stage_run_id="stage-revision-2",
+        revision_of_stage_run_id=revision_run.stage_run_id,
+        revision_feedback="Apply the remaining review note.",
+    )
+    executor.execute(
+        replace(
+            execution_request,
+            stage_run=second_revision_run,
+            executor_session_stage_run_id=stage_run.stage_run_id,
+        )
+    )
 
     request = recorded[0]
     assert request.thread_id is None
@@ -787,3 +813,9 @@ def test_stage_executor_records_one_fixed_stage_and_observation_boundary(
     assert request.workspace == worktree
     assert request.mentions == ()
     assert request.output_schema is None
+    revision_request = recorded[1]
+    assert revision_request.thread_id == "fresh-stage-thread"
+    assert revision_request.message.startswith("Candidate revision assignment:")
+    assert "Address the missing validation evidence." in revision_request.message
+    assert recorded[-1].thread_id == "fresh-stage-thread"
+    assert "Apply the remaining review note." in recorded[-1].message

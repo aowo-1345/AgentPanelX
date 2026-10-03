@@ -39,6 +39,7 @@ from agentplanex.services.delivery.models import (
     Milestone,
     MilestoneSnapshot,
     MilestoneState,
+    StageRun,
     delivery_candidate_ref,
     milestone_view_digest,
 )
@@ -341,17 +342,17 @@ class DeliveryService:
         self,
         *,
         expected: CandidateIdentity,
-        decision: Literal["accept", "reject"],
+        decision: Literal["accept", "reject", "revise"],
         reason: str,
     ) -> CandidateDecision:
-        """Accept or reject the fixed Candidate without letting the Owner mutate Git."""
+        """Accept, reject, or queue a revision of the fixed Candidate."""
         normalized_reason = " ".join(reason.split())
         if not normalized_reason:
             raise DeliveryError("Candidate decision reason must not be empty")
-        if decision not in {"accept", "reject"}:
-            raise DeliveryError("Candidate decision must be accept or reject")
+        if decision not in {"accept", "reject", "revise"}:
+            raise DeliveryError("Candidate decision must be accept, reject, or revise")
         current = self.context.state()
-        snapshot, milestone, candidate_commit_sha = self._candidate_contract(
+        snapshot, milestone, candidate_commit_sha, source_stage_run = self._candidate_contract(
             current,
             expected,
         )
@@ -360,12 +361,43 @@ class DeliveryService:
         if decision == "accept":
             self._assert_candidate_preserves_specs(current, candidate_commit_sha)
             integrated_commit_sha = self._integrate_candidate(current, expected)
+        elif decision == "reject":
+            self._assert_candidate_target(current, expected, accepted=False)
         else:
             self._assert_candidate_target(current, expected, accepted=False)
+            revision = self._driver.queue_candidate_revision(
+                expected=expected,
+                source_stage_run=source_stage_run,
+                feedback=normalized_reason,
+            )
+            updated = self.context.state()
+            self.event_bus.publish(
+                ExecutionEvent(
+                    triage_id=updated.triage_id,
+                    event_type=ExecutionEventType.CANDIDATE_REVISION_REQUESTED,
+                    payload={
+                        "run_id": expected.run_id,
+                        "milestone_key": milestone.key,
+                        "candidate_commit_sha": candidate_commit_sha,
+                        "revision_stage_run_id": revision.stage_run_id,
+                        "source_stage_run_id": source_stage_run.stage_run_id,
+                        "reason": normalized_reason,
+                    },
+                )
+            )
+            return CandidateDecision(
+                state=updated,
+                identity=expected,
+                decision="revise",
+                result_snapshot_id=snapshot.snapshot_id,
+                next_milestone_key=milestone.key,
+                completed=False,
+                revision_stage_run_id=revision.stage_run_id,
+            )
 
         with self.context.transaction() as transaction:
             latest = transaction.state()
-            latest_snapshot, latest_milestone, latest_candidate = self._candidate_contract(
+            latest_snapshot, latest_milestone, latest_candidate, _ = self._candidate_contract(
                 latest,
                 expected,
                 connection=transaction.connection,
@@ -465,6 +497,7 @@ class DeliveryService:
                 else (milestone.key if decision == "reject" else None)
             ),
             completed=completed,
+            revision_stage_run_id=None,
         )
 
     @staticmethod
@@ -541,7 +574,7 @@ class DeliveryService:
         expected: CandidateIdentity,
         *,
         connection: sqlite3.Connection | None = None,
-    ) -> tuple[MilestoneSnapshot, Milestone, str]:
+    ) -> tuple[MilestoneSnapshot, Milestone, str, StageRun]:
         return self._driver.candidate_contract(
             context,
             expected,

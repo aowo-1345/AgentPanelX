@@ -34,6 +34,7 @@ class StageExecutionRequest:
     stage: Stage
     worktree: Path
     delivery_document: Path
+    executor_session_stage_run_id: str | None = None
 
 
 class StageExecutor(Protocol):
@@ -54,6 +55,7 @@ class _StagePayload(BaseModel):
     stage_key: str
     stage_objective: str
     input_commit_sha: str
+    revision_feedback: str | None = None
 
 
 class _StageOutput(BaseModel):
@@ -100,9 +102,15 @@ class _StageOperation:
             "input_commit_sha": payload.input_commit_sha,
             "delivery_document": relative_document.as_posix(),
         }
+        if payload.revision_feedback is not None:
+            contract["candidate_revision_feedback"] = payload.revision_feedback
         return PreparedAgentTurn(
             task_text=(
-                f"Fixed Stage assignment:\nExecute Stage {payload.stage_key}: "
+                f"Candidate revision assignment:\nRevise the existing Candidate for "
+                f"Stage {payload.stage_key}: {payload.stage_objective}\n"
+                f"Revision feedback: {payload.revision_feedback}"
+                if payload.revision_feedback is not None
+                else f"Fixed Stage assignment:\nExecute Stage {payload.stage_key}: "
                 f"{payload.stage_objective}"
             ),
             runtime_context_text=(
@@ -177,7 +185,10 @@ class CodexStageExecutor:
                 request_key=stage_run.stage_run_id,
                 scope=ManagedAgentScope(
                     triage_id=stage_run.triage_id,
-                    stage_run_id=stage_run.stage_run_id,
+                    stage_run_id=(
+                        request.executor_session_stage_run_id
+                        or stage_run.stage_run_id
+                    ),
                 ),
                 payload=_StagePayload(
                     triage_id=stage_run.triage_id,
@@ -189,6 +200,7 @@ class CodexStageExecutor:
                     stage_key=request.stage.key,
                     stage_objective=request.stage.objective,
                     input_commit_sha=stage_run.input_commit_sha,
+                    revision_feedback=stage_run.revision_feedback,
                 ),
             ),
         )

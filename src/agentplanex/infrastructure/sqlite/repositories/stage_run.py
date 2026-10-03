@@ -27,9 +27,11 @@ class SQLiteStageRunRepository:
                 created_at,
                 started_at,
                 lease_expires_at,
-                finished_at
+                finished_at,
+                revision_of_stage_run_id,
+                revision_feedback
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             self._values(stage_run),
         )
@@ -233,7 +235,9 @@ class SQLiteStageRunRepository:
         created_at,
         started_at,
         lease_expires_at,
-        finished_at
+        finished_at,
+        revision_of_stage_run_id,
+        revision_feedback
     """
     _SELECT = f"SELECT {_COLUMNS} FROM stage_run"
 
@@ -254,6 +258,8 @@ class SQLiteStageRunRepository:
             _encode_datetime(stage_run.started_at),
             _encode_datetime(stage_run.lease_expires_at),
             _encode_datetime(stage_run.finished_at),
+            stage_run.revision_of_stage_run_id,
+            stage_run.revision_feedback,
         )
 
     @staticmethod
@@ -273,6 +279,8 @@ class SQLiteStageRunRepository:
             started_at=_decode_optional_datetime(row["started_at"]),
             lease_expires_at=_decode_optional_datetime(row["lease_expires_at"]),
             finished_at=_decode_optional_datetime(row["finished_at"]),
+            revision_of_stage_run_id=cast(str | None, row["revision_of_stage_run_id"]),
+            revision_feedback=cast(str | None, row["revision_feedback"]),
         )
 
 

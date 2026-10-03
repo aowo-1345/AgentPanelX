@@ -25,10 +25,11 @@ from agentplanex.services.delivery.models import CandidateIdentity
 
 DECIDE_MILESTONE_CANDIDATE_TOOL_NAME = "decide_milestone_candidate"
 DECIDE_MILESTONE_CANDIDATE_DESCRIPTION = (
-    "Accept or reject the exact current Milestone Candidate after inspecting its "
-    "fixed Git evidence and any delegated review. Accept integrates it and records "
-    "Milestone completion; reject preserves it for audit and leaves the Milestone "
-    "unfinished."
+    "Accept, reject, or revise the exact current Milestone Candidate after inspecting "
+    "its fixed Git evidence and any delegated review. Accept integrates it and records "
+    "Milestone completion; reject leaves it unfinished for a later Run; revise keeps "
+    "the Candidate unfinished and queues the same Executor session with the feedback "
+    "for a new Candidate."
 )
 
 
@@ -37,8 +38,8 @@ class DecideMilestoneCandidateArguments(ToolArgumentsModel):
     run_id: ToolIdentifier
     milestone_key: ToolIdentifier
     candidate_commit_sha: ToolIdentifier
-    decision: Literal["accept", "reject"] = Field(
-        description="Whether to accept or reject the exact current Candidate."
+    decision: Literal["accept", "reject", "revise"] = Field(
+        description="Whether to accept, reject, or request a revision of the exact Candidate."
     )
     reason: NonBlankText = Field(
         description="Concise evidence-based reason for the decision."
@@ -56,7 +57,7 @@ DECIDE_MILESTONE_CANDIDATE_TOOL = ToolDefinition(
 class DecideMilestoneCandidateExecution(
     ProjectExecution[DecideMilestoneCandidateArguments]
 ):
-    """Apply a typed accept or reject decision to the exact current Candidate."""
+    """Apply a typed decision to the exact current Candidate."""
 
     def execute(
         self,
@@ -90,6 +91,12 @@ class DecideMilestoneCandidateExecution(
             "next_milestone_key": result.next_milestone_key,
             "completed": result.completed,
         }
+        if result.revision_stage_run_id is not None:
+            output["revision_stage_run_id"] = result.revision_stage_run_id
+            output["follow_up"] = (
+                "Revision queued. Drive Delivery to reactivate the Executor, then inspect "
+                "the new Candidate before deciding again."
+            )
         if result.decision == "reject":
             output["follow_up"] = (
                 "Review the rejection reason and adjust the Milestone tasks when "

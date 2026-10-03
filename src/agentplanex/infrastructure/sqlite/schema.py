@@ -2,7 +2,7 @@
 
 from agentplanex.infrastructure.sqlite.database import SQLiteDatabase
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 _INITIAL_SCHEMA = (
     """
@@ -107,7 +107,9 @@ _INITIAL_SCHEMA = (
         created_at TEXT NOT NULL,
         started_at TEXT,
         lease_expires_at TEXT,
-        finished_at TEXT
+        finished_at TEXT,
+        revision_of_stage_run_id TEXT,
+        revision_feedback TEXT
     )
     """,
     """
@@ -241,57 +243,6 @@ def initialize_schema(database: SQLiteDatabase) -> None:
         if current_version == 0:
             for statement in _INITIAL_SCHEMA:
                 connection.execute(statement)
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-            return
-
-        if current_version == 14:
-            connection.execute(
-                "ALTER TABLE auto_takeover_run ADD COLUMN issue_number INTEGER"
-            )
-            connection.execute(
-                "ALTER TABLE auto_takeover_run ADD COLUMN issue_url TEXT"
-            )
-            current_version = 15
-
-        if current_version == 15:
-            # Rebuild to extend the status CHECK constraint, preserving all rows.
-            connection.execute("ALTER TABLE owner_activation RENAME TO owner_activation_v15")
-            table_sql = next(
-                statement for statement in _INITIAL_SCHEMA
-                if "CREATE TABLE owner_activation (" in statement
-            )
-            connection.execute(table_sql)
-            connection.execute(
-                """
-                INSERT INTO owner_activation (
-                    activation_id, triage_id, task_type, message_id, summary_id,
-                    status, driver_mode, created_at, started_at, finished_at, failure
-                )
-                SELECT activation_id, triage_id, task_type, message_id, summary_id,
-                       status, driver_mode, created_at, started_at, finished_at, failure
-                FROM owner_activation_v15
-                """
-            )
-            connection.execute("DROP TABLE owner_activation_v15")
-            connection.execute(
-                """
-                CREATE INDEX owner_activation_triage_status_idx
-                ON owner_activation (triage_id, status, created_at, activation_id)
-                """
-            )
-            connection.execute(
-                """
-                CREATE UNIQUE INDEX owner_activation_one_unfinished_idx
-                ON owner_activation (triage_id)
-                WHERE status IN ('PENDING', 'RUNNING')
-                """
-            )
-            connection.execute(
-                """
-                CREATE UNIQUE INDEX owner_activation_message_idx
-                ON owner_activation (triage_id, message_id)
-                """
-            )
             connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             return
 

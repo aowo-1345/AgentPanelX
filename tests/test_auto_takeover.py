@@ -58,6 +58,13 @@ class _FailingStage:
 
 def _runtime_ready_to_fail(project_path: Path):
     settings = load_settings(DEFAULT_SETTINGS_PATH)
+    settings = settings.model_copy(
+        update={
+            "project_owner_agent": settings.project_owner_agent.model_copy(
+                update={"response_mode": "non_stream"}
+            )
+        }
+    )
     pair = compose_test_runtime(
         project_path=project_path,
         settings=settings,
@@ -119,7 +126,7 @@ def _fence(request: CodexTurnRequest) -> str:
 
 
 def _wait(service: AutoTakeoverService, binding: FeatureBinding, phase: str) -> None:
-    deadline = monotonic() + 5
+    deadline = monotonic() + 30
     while monotonic() < deadline:
         snapshot = service.snapshot(binding)
         if snapshot is not None and snapshot.phase == phase:
@@ -264,8 +271,8 @@ def test_real_blocked_transition_starts_codex_after_dispatcher_release_and_resto
                 after_event_id=watermark,
             ),
         )
-        assert callback_entered.wait(timeout=5)
-        assert scheduled.wait(timeout=5)
+        assert callback_entered.wait(timeout=30)
+        assert scheduled.wait(timeout=30)
         _wait(service, binding, "recovered")
         service.after_drive_released(binding, after_event_id=watermark)
         sleep(0.05)

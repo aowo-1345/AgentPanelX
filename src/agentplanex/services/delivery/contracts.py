@@ -115,11 +115,12 @@ class MilestoneRunQueued:
 
 @dataclass(frozen=True, slots=True)
 class CandidateDecision:
-    """The controlled outcome of accepting or rejecting one Candidate."""
+    """The controlled outcome of deciding one Candidate."""
 
     state: ProjectRuntimeState
     identity: CandidateIdentity
-    decision: Literal["accept", "reject"]
+    decision: Literal["accept", "reject", "revise"]
     result_snapshot_id: str
     next_milestone_key: str | None
     completed: bool
+    revision_stage_run_id: str | None = None

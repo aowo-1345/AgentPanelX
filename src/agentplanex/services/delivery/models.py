@@ -156,6 +156,8 @@ class StageRun:
     started_at: datetime | None = None
     lease_expires_at: datetime | None = None
     finished_at: datetime | None = None
+    revision_of_stage_run_id: str | None = None
+    revision_feedback: str | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -168,6 +170,12 @@ class StageRun:
             "input_commit_sha",
         ):
             _require_text(name, str(getattr(self, name)))
+        if self.revision_of_stage_run_id is None:
+            if self.revision_feedback is not None:
+                raise ValueError("A normal StageRun cannot contain revision feedback")
+        else:
+            _require_text("revision_of_stage_run_id", self.revision_of_stage_run_id)
+            _require_text("revision feedback", self.revision_feedback or "")
         if self.status is StageRunStatus.QUEUED:
             if any(
                 value is not None
