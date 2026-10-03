@@ -138,10 +138,18 @@ class _SuccessfulStageExecutor:
     def __init__(self) -> None:
         self.executed_stage_keys = []
         self.executor_session_stage_run_ids = []
+        self.fail_stage_key: str | None = None
+        self.failed_stage_keys: set[str] = set()
 
     def execute(self, request: StageExecutionRequest) -> None:
         self.executed_stage_keys.append(request.stage.key)
         self.executor_session_stage_run_ids.append(request.executor_session_stage_run_id)
+        if (
+            self.fail_stage_key == request.stage.key
+            and request.stage.key not in self.failed_stage_keys
+        ):
+            self.failed_stage_keys.add(request.stage.key)
+            raise RuntimeError(f"{request.stage.key} failed once")
         request.delivery_document.parent.mkdir(parents=True, exist_ok=True)
         request.delivery_document.write_text(
             (
@@ -167,11 +175,6 @@ class _SuccessfulStageExecutor:
             ),
             encoding="utf-8",
         )
-
-
-class _FailingStageExecutor:
-    def execute(self, _request: StageExecutionRequest) -> None:
-        raise RuntimeError("unexpected deterministic Stage failure")
 
 
 class _FailingRevisionStageExecutor(_SuccessfulStageExecutor):
@@ -1214,12 +1217,14 @@ def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
+    executor = _SuccessfulStageExecutor()
+    executor.fail_stage_key = "stage-2"
     runtime = compose_test_runtime(
         project_path=project_path,
         settings=_settings(),
         approval_mode="yolo",
         responses_transport=_ReplyingOwner(),
-        stage_executor=_FailingStageExecutor(),
+        stage_executor=executor,
     )
     runtime.runtime.initialize()
     runtime.runtime.begin_feature()
@@ -1228,8 +1233,10 @@ def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
     context = runtime.runtime.drive_until_waiting()
 
     assert context.status == "BLOCKED"
+    assert context.current_stage_key == "stage-2"
+    assert executor.executed_stage_keys == ["stage-1", "stage-2"]
     control = create_project_control_query(project_path=project_path).get_current()
-    assert [stage.status.value for stage in control.stage_runs] == ["FAILED"]
+    assert [stage.status.value for stage in control.stage_runs] == ["SUCCEEDED", "FAILED"]
     assert control.owner_activation is None
     conversation = (
         create_project_workspace_query(project_path=project_path)
@@ -1266,6 +1273,8 @@ def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
 
     queued = runtime.control.approve_blocked_run()
     assert queued.state.status == "IN_PROGRESS"
+    assert queued.stage_key == "stage-2"
+    assert queued.run_id == context.current_run_id
     resumed = runtime.runtime.initialize()
     assert resumed.status == "IN_PROGRESS"
     with database.read_only_connection() as connection:
@@ -1275,14 +1284,20 @@ def test_stage_failure_blocks_without_feedback_and_retries_only_by_owner_action(
         )
     assert restored_owner is not None
     assert restored_owner.project_owner_session_id == owner_session_id
+    assert runtime.control.drive_delivery() == "candidate_ready"
+    assert executor.executed_stage_keys == ["stage-1", "stage-2", "stage-2"]
+    assert executor.executor_session_stage_run_ids[1] == (
+        executor.executor_session_stage_run_ids[2]
+    )
     assert [
         stage.status.value
         for stage in create_project_control_query(project_path=project_path)
         .get_current()
         .stage_runs
     ] == [
+        "SUCCEEDED",
         "FAILED",
-        "QUEUED",
+        "SUCCEEDED",
     ]
 
 

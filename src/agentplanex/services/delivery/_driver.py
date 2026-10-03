@@ -110,10 +110,11 @@ class _StageDriver:
         except GitRepositoryError as error:
             raise DeliveryError(str(error)) from error
         retry_from_blocked = not first_run and current.status == "BLOCKED"
+        failed_stage_run: StageRun | None = None
         if first_run and current.current_plan_commit_sha != input_commit_sha:
             raise DeliveryError("Project target Git state changed after Plan approval")
         if retry_from_blocked:
-            self.assert_retryable_blocked(
+            failed_stage_run = self.assert_retryable_blocked(
                 current,
                 allow_pending_approval=blocked_approval,
             )
@@ -134,8 +135,19 @@ class _StageDriver:
             raise DeliveryError("Current Candidate must be decided before another Run")
 
         now = datetime.now(UTC)
-        run_id = uuid4().hex
+        run_id = (
+            current.current_run_id
+            if retry_from_blocked and current.current_run_id is not None
+            else uuid4().hex
+        )
         stage = milestone.stages[0]
+        if failed_stage_run is not None:
+            stage = next(
+                stage
+                for stage in milestone.stages
+                if stage.key == failed_stage_run.stage_key
+            )
+            input_commit_sha = failed_stage_run.input_commit_sha
         stage_run = StageRun(
             stage_run_id=uuid4().hex,
             triage_id=current.triage_id,
@@ -169,11 +181,16 @@ class _StageDriver:
                 ):
                     raise DeliveryError("Project is no longer waiting for first Run approval")
             elif retry_from_blocked:
-                self.assert_retryable_blocked(
+                latest_failed_stage_run = self.assert_retryable_blocked(
                     latest,
                     connection=transaction.connection,
                     allow_pending_approval=blocked_approval,
                 )
+                if (
+                    failed_stage_run is None
+                    or latest_failed_stage_run.stage_run_id != failed_stage_run.stage_run_id
+                ):
+                    raise DeliveryError("Blocked delivery cursor changed while queueing its retry")
             elif (
                 latest.status != "IN_PROGRESS"
                 or latest.pending_action is not None
@@ -526,7 +543,7 @@ class _StageDriver:
         *,
         connection: sqlite3.Connection | None = None,
         allow_pending_approval: bool = False,
-    ) -> None:
+    ) -> StageRun:
         """Validate that BLOCKED identifies one terminal failed delivery cursor."""
         if (
             context.status != "BLOCKED"
@@ -539,7 +556,7 @@ class _StageDriver:
         if context.current_run_id is None:
             raise DeliveryError("BLOCKED delivery has no failed Run cursor")
 
-        def validate(opened: sqlite3.Connection) -> None:
+        def validate(opened: sqlite3.Connection) -> StageRun:
             runs = self.stage_runs.list_by_run_id(opened, context.current_run_id or "")
             failed = runs[-1] if runs else None
             if (
@@ -550,12 +567,13 @@ class _StageDriver:
                 or failed.snapshot_id != context.current_snapshot_id
             ):
                 raise DeliveryError("BLOCKED delivery does not point to a terminal failed Stage")
+            assert failed is not None
+            return failed
 
         if connection is not None:
-            validate(connection)
-            return
+            return validate(connection)
         with self.context.transaction() as transaction:
-            validate(transaction.connection)
+            return validate(transaction.connection)
 
     def _active_stage_run(self) -> StageRun | None:
         with self.context.transaction() as transaction:
@@ -577,7 +595,13 @@ class _StageDriver:
             if parent is None:
                 raise DeliveryError("StageRun revision parent is missing")
             current = parent
-        return current.stage_run_id
+        attempts = tuple(
+            item
+            for item in self.stage_runs.list_by_run_id(connection, current.run_id)
+            if item.stage_key == current.stage_key
+            and item.revision_of_stage_run_id is None
+        )
+        return attempts[0].stage_run_id if attempts else current.stage_run_id
 
     def _executor_session_stage_run_id_current(self, stage_run: StageRun) -> str:
         with self.context.transaction() as transaction:
