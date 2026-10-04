@@ -364,7 +364,7 @@ class _StageDriver:
             )
 
         self._close_stage_terminal(
-            claim.executor_session_stage_run_id,
+            claim.stage_run.stage_run_id,
             reason="succeeded",
         )
         self._publish_invocation_completed(invocation_id, completion.stage_run)
@@ -805,7 +805,7 @@ class _StageDriver:
             finished_at=datetime.now(UTC),
         )
         self._close_stage_terminal(
-            claim.executor_session_stage_run_id,
+            claim.stage_run.stage_run_id,
             reason="failed",
         )
         if invocation_started:

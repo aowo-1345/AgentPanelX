@@ -189,6 +189,7 @@ class CodexStageExecutor:
                         request.executor_session_stage_run_id
                         or stage_run.stage_run_id
                     ),
+                    stage_output_key=stage_run.stage_run_id,
                 ),
                 payload=_StagePayload(
                     triage_id=stage_run.triage_id,

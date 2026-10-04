@@ -54,6 +54,9 @@ class ManagedAgentScope:
 
     triage_id: str
     stage_run_id: str | None = None
+    # Web-facing StageRun whose terminal output is observed; stage_run_id may
+    # instead anchor a shared Session from an earlier attempt of the Stage.
+    stage_output_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

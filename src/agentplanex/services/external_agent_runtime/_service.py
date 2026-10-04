@@ -197,9 +197,9 @@ class ExternalAgentRuntime:
             prepared.execution_workspace,
         )
         thread_id = self.workspaces.load_managed_thread(workspace)
-        stage_run_id = request.scope.stage_run_id
-        if self.stage_output_observer is not None and stage_run_id is not None:
-            self.stage_output_observer.begin(stage_run_id)
+        stage_output_key = request.scope.stage_output_key or request.scope.stage_run_id
+        if self.stage_output_observer is not None and stage_output_key is not None:
+            self.stage_output_observer.begin(stage_output_key)
         try:
             turn = self.transport.run(
                 CodexTurnRequest(
@@ -221,7 +221,7 @@ class ExternalAgentRuntime:
                     ),
                     skills=tuple((skill.name, skill.path) for skill in definition.bound_skills),
                     output_schema=operation.output_schema,
-                    observer_key=stage_run_id,
+                    observer_key=stage_output_key,
                 ),
                 on_thread_opened=lambda opened: self.workspaces.save_managed_thread(
                     workspace,
@@ -232,8 +232,8 @@ class ExternalAgentRuntime:
             self.workspaces.quarantine_session(workspace, str(error))
             raise
         finally:
-            if self.stage_output_observer is not None and stage_run_id is not None:
-                self.stage_output_observer.finish(stage_run_id)
+            if self.stage_output_observer is not None and stage_output_key is not None:
+                self.stage_output_observer.finish(stage_output_key)
         output = operation.validate(request.payload, context, turn)
         dumped = operation.dump_result(output)
         self.workspaces.publish_managed_result(
