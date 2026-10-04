@@ -39,6 +39,7 @@ _CAPACITY_RETRY_ATTEMPTS = 3
 _CAPACITY_RETRY_INITIAL_DELAY_SECONDS = 30.0
 _CAPACITY_RETRY_MAX_DELAY_SECONDS = 120.0
 _OVERLOAD_PROBE_TIMEOUT_SECONDS = 10.0
+_OVERLOAD_PROBE_INTERVAL_SECONDS = 0.1
 _CAPACITY_CONTINUATION_MESSAGE = (
     "The previous Turn ended because the model service was temporarily overloaded. "
     "Continue only the unfinished work in the current worktree; do not repeat completed "
@@ -427,25 +428,45 @@ class CodexTurnTransport:
         *,
         timeout_seconds: float,
     ) -> bool:
-        """Recognize only the SDK's structured overload result for a completed Turn."""
-        try:
+        """Recognize a failed overload turn after the SDK loses its error type.
+
+        ``TurnHandle.run`` currently raises ``RuntimeError`` for every failed
+        turn, even when the persisted turn contains structured retry metadata.
+        The completion event and ``thread/read`` are not guaranteed to become
+        observable at exactly the same time, so poll the specific turn within a
+        single bounded deadline.
+        """
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+        while True:
             state = CodexTurnTransport._read_thread_with_timeout(
                 thread,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=max(0.0, deadline - time.monotonic()),
             )
-            if state is None:
+            result = CodexTurnTransport._classify_failed_turn(state, turn_id)
+            if result is not None:
+                return result
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 return False
-            state = state.thread
-            if getattr(getattr(state.status, "root", None), "type", None) != "idle":
-                return False
-            turn = next((item for item in state.turns if item.id == turn_id), None)
-            if turn is None or getattr(turn.status, "value", None) != "failed":
-                return False
+            time.sleep(min(_OVERLOAD_PROBE_INTERVAL_SECONDS, remaining))
+
+    @staticmethod
+    def _classify_failed_turn(state: Any | None, turn_id: str) -> bool | None:
+        """Return overload status, or ``None`` while the turn is not terminal."""
+        if state is None:
+            return None
+        try:
+            thread = state.thread
+            turn = next((item for item in thread.turns if item.id == turn_id), None)
+            if turn is None:
+                return None
+            if getattr(turn.status, "value", None) != "failed":
+                return None
             root = getattr(getattr(turn.error, "codex_error_info", None), "root", None)
             value = getattr(root, "value", root)
             return value in {"serverOverloaded", "server_overloaded"}
         except Exception:
-            return False
+            return None
 
     @staticmethod
     def _read_thread_with_timeout(
@@ -453,6 +474,8 @@ class CodexTurnTransport:
         *,
         timeout_seconds: float,
     ) -> Any | None:
+        if timeout_seconds <= 0:
+            return None
         result_box: list[Any] = []
 
         def read() -> None:
