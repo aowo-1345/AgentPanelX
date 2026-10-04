@@ -38,6 +38,7 @@ from openai_codex import (
 _CAPACITY_RETRY_ATTEMPTS = 3
 _CAPACITY_RETRY_INITIAL_DELAY_SECONDS = 30.0
 _CAPACITY_RETRY_MAX_DELAY_SECONDS = 120.0
+_OVERLOAD_PROBE_TIMEOUT_SECONDS = 10.0
 _CAPACITY_CONTINUATION_MESSAGE = (
     "The previous Turn ended because the model service was temporarily overloaded. "
     "Continue only the unfinished work in the current worktree; do not repeat completed "
@@ -371,7 +372,14 @@ class CodexTurnTransport:
                 except CodexTransportError as error:
                     if isinstance(error, CodexTransportTimeout):
                         raise
-                    if not self._turn_is_server_overloaded(thread, turn.id):
+                    if not self._turn_is_server_overloaded(
+                        thread,
+                        turn.id,
+                        timeout_seconds=min(
+                            self.timeout_seconds,
+                            _OVERLOAD_PROBE_TIMEOUT_SECONDS,
+                        ),
+                    ):
                         raise
                     retry_input_items = [TextInput(_CAPACITY_CONTINUATION_MESSAGE)]
                     raise ServerBusyError(
@@ -413,10 +421,21 @@ class CodexTurnTransport:
                 native_terminal.close()
 
     @staticmethod
-    def _turn_is_server_overloaded(thread: Any, turn_id: str) -> bool:
+    def _turn_is_server_overloaded(
+        thread: Any,
+        turn_id: str,
+        *,
+        timeout_seconds: float,
+    ) -> bool:
         """Recognize only the SDK's structured overload result for a completed Turn."""
         try:
-            state = thread.read(include_turns=True).thread
+            state = CodexTurnTransport._read_thread_with_timeout(
+                thread,
+                timeout_seconds=timeout_seconds,
+            )
+            if state is None:
+                return False
+            state = state.thread
             if getattr(getattr(state.status, "root", None), "type", None) != "idle":
                 return False
             turn = next((item for item in state.turns if item.id == turn_id), None)
@@ -427,6 +446,31 @@ class CodexTurnTransport:
             return value in {"serverOverloaded", "server_overloaded"}
         except Exception:
             return False
+
+    @staticmethod
+    def _read_thread_with_timeout(
+        thread: Any,
+        *,
+        timeout_seconds: float,
+    ) -> Any | None:
+        result_box: list[Any] = []
+
+        def read() -> None:
+            try:
+                result_box.append(thread.read(include_turns=True))
+            except Exception:
+                return
+
+        worker = Thread(
+            target=read,
+            name="agentplanex-codex-overload-probe",
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout_seconds)
+        if worker.is_alive() or not result_box:
+            return None
+        return result_box[0]
 
     def _run_with_timeout(
         self,
@@ -457,7 +501,13 @@ class CodexTurnTransport:
             )
         if error_box:
             error = error_box[0]
-            if isinstance(error, (CodexError, OSError, RuntimeError)):
+            if isinstance(error, CodexError):
+                # Keep the SDK's overload exception visible to the surrounding
+                # retry_on_overload call.  Wrapping it here would turn a
+                # ServerBusyError into CodexTransportError before the SDK
+                # retry classifier can inspect it.
+                raise error
+            if isinstance(error, (OSError, RuntimeError)):
                 raise CodexTransportError(f"Codex turn failed: {error}") from error
             raise error
         if not result_box:

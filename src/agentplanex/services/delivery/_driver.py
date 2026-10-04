@@ -282,7 +282,6 @@ class _StageDriver:
         )
         invocation_id = uuid4().hex
         invocation_started = False
-        candidate_ref_changed = False
         output_commit_sha: str | None = None
         try:
             worktree = self._prepare_stage_worktree(claim.stage_run)
@@ -350,7 +349,6 @@ class _StageDriver:
                         else None
                     ),
                 )
-                candidate_ref_changed = True
             completion = self._succeed_stage(
                 claim.stage_run.stage_run_id,
                 output_commit_sha=output_commit_sha,
@@ -362,8 +360,7 @@ class _StageDriver:
                 error,
                 invocation_id=invocation_id,
                 invocation_started=invocation_started,
-                candidate_ref_changed=candidate_ref_changed,
-                candidate_commit_sha=output_commit_sha,
+                output_commit_sha=output_commit_sha,
             )
 
         self._close_stage_terminal(
@@ -800,8 +797,7 @@ class _StageDriver:
         *,
         invocation_id: str,
         invocation_started: bool,
-        candidate_ref_changed: bool,
-        candidate_commit_sha: str | None,
+        output_commit_sha: str | None,
     ) -> DeliveryDriveOutcome:
         completion = self._fail_stage(
             claim.stage_run.stage_run_id,
@@ -812,18 +808,6 @@ class _StageDriver:
             claim.executor_session_stage_run_id,
             reason="failed",
         )
-        if candidate_ref_changed and claim.stage_run.revision_of_stage_run_id is None:
-            if candidate_commit_sha is None:
-                raise RuntimeError("Changed Candidate ref has no known commit")
-            try:
-                self.git.delete_ref(
-                    delivery_candidate_ref(claim.stage_run.run_id),
-                    expected_sha=candidate_commit_sha,
-                )
-            except GitRepositoryError as rollback_error:
-                self._block_compensation_failure(
-                    f"Candidate ref cleanup failed: {rollback_error}"
-                )
         if invocation_started:
             self.event_bus.publish(
                 ExecutionEvent(
@@ -842,6 +826,7 @@ class _StageDriver:
         self._restore_or_remove_worktree(
             claim.stage_run,
             preserve_worktree=not isinstance(error, CodexTransportUnsafeTimeout),
+            output_commit_sha=output_commit_sha,
         )
         return DeliveryDriveOutcome.STAGE_FAILED
 
@@ -1007,8 +992,10 @@ class _StageDriver:
         stage_run: StageRun,
         *,
         preserve_worktree: bool = True,
+        output_commit_sha: str | None = None,
     ) -> None:
         try:
+            self._restore_stage_refs(stage_run, output_commit_sha=output_commit_sha)
             if stage_run.revision_of_stage_run_id is None:
                 path = self.git.delivery_worktree_path(stage_run.run_id)
                 if preserve_worktree and path.exists():
@@ -1019,26 +1006,82 @@ class _StageDriver:
                         pass
                 self.git.remove_delivery_worktree(stage_run.run_id)
             else:
-                for ref in (
-                    delivery_run_ref(stage_run.run_id),
-                    delivery_candidate_ref(stage_run.run_id),
-                ):
-                    current_sha = self.git.resolve_ref(ref)
-                    if current_sha != stage_run.input_commit_sha:
-                        self.git.compare_and_swap_ref(
-                            ref,
-                            stage_run.input_commit_sha,
-                            expected_sha=current_sha,
-                        )
                 self.git.restore_delivery_worktree(
                     stage_run.run_id,
                     stage_run.input_commit_sha,
                 )
         except GitRepositoryError as error:
-            if stage_run.revision_of_stage_run_id is not None:
-                self._block_compensation_failure(
-                    f"Candidate revision recovery failed: {error}"
+            self._block_compensation_failure(f"Delivery recovery failed: {error}")
+
+    def _restore_stage_refs(
+        self,
+        stage_run: StageRun,
+        *,
+        output_commit_sha: str | None,
+    ) -> None:
+        """Restore refs to the commits visible before one failed Stage attempt."""
+        refs = self._stage_ref_targets(stage_run)
+        if output_commit_sha is None:
+            path = self.git.delivery_worktree_path(stage_run.run_id)
+            if path.exists():
+                try:
+                    output_commit_sha = GitRepository(path).head_sha()
+                except GitRepositoryError:
+                    output_commit_sha = None
+        for ref_name, expected_sha in refs:
+            try:
+                current_sha = self.git.resolve_ref(ref_name)
+            except GitRepositoryError:
+                if expected_sha is None:
+                    continue
+                raise
+            if current_sha == expected_sha:
+                continue
+            if output_commit_sha is None or current_sha != output_commit_sha:
+                raise GitRepositoryError(
+                    f"Cannot safely restore {ref_name}: current ref is not the failed Stage output"
                 )
+            if expected_sha is None:
+                self.git.delete_ref(ref_name, expected_sha=current_sha)
+            else:
+                self.git.compare_and_swap_ref(
+                    ref_name,
+                    expected_sha,
+                    expected_sha=current_sha,
+                )
+
+    def _stage_ref_targets(self, stage_run: StageRun) -> tuple[tuple[str, str | None], ...]:
+        with self.context.database.connection() as connection:
+            snapshot = self.snapshots.get(connection, stage_run.snapshot_id)
+        if snapshot is None:
+            raise GitRepositoryError(
+                f"Milestone Snapshot not found while restoring Stage refs: {stage_run.snapshot_id}"
+            )
+        milestone = next(
+            (item for item in snapshot.milestones if item.key == stage_run.milestone_key),
+            None,
+        )
+        if milestone is None:
+            raise GitRepositoryError(
+                f"Milestone not found while restoring Stage refs: {stage_run.milestone_key}"
+            )
+        is_revision = stage_run.revision_of_stage_run_id is not None
+        first_stage = milestone.stages[0].key == stage_run.stage_key
+        final_stage = milestone.stages[-1].key == stage_run.stage_key
+        if is_revision:
+            return (
+                (delivery_run_ref(stage_run.run_id), stage_run.input_commit_sha),
+                (delivery_candidate_ref(stage_run.run_id), stage_run.input_commit_sha),
+            )
+        refs: list[tuple[str, str | None]] = [
+            (
+                delivery_run_ref(stage_run.run_id),
+                None if first_stage else stage_run.input_commit_sha,
+            )
+        ]
+        if final_stage:
+            refs.append((delivery_candidate_ref(stage_run.run_id), None))
+        return tuple(refs)
 
     def _block_compensation_failure(self, failure: str) -> None:
         self.context.transition(
