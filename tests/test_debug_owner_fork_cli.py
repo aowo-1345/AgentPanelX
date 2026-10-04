@@ -220,10 +220,17 @@ def test_owner_fork_cli_keeps_two_interrogation_turns_in_memory_only(
     assert isinstance(transport, ModelGateway)
     assert transport.adapter.base_url == configured_model.selected_model.base_url
     assert transport.adapter.api_key_env == configured_model.selected_model.api_key_env
-    assert "Historical Project Owner Fork" in str(
-        _WitnessModel.queries[0][0]["content"]
-    )
-    assert _WitnessModel.queries[0][-1]["content"] == lines[1]["question"]
+    configured_prompts = load_settings(DEFAULT_SETTINGS_PATH).runtime.prompts
+    first_query = _WitnessModel.queries[0]
+    assert first_query[0] == {
+        "role": "system",
+        "content": configured_prompts.project_owner.role.strip(),
+    }
+    assert first_query[-2] == {
+        "role": "user",
+        "content": configured_prompts.historical_owner.role.strip(),
+    }
+    assert first_query[-1]["content"] == lines[1]["question"]
     assert [message.get("content") for message in _WitnessModel.queries[1][-3:]] == [
         lines[1]["question"],
         lines[1]["answer"],

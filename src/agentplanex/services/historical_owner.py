@@ -51,8 +51,9 @@ class HistoricalOwnerFork:
         system = self._messages[0]
         if system.get("role") != "system":
             raise ValueError("Restored Owner context must start with System Prompt")
-        original = str(system.get("content", "")).strip()
-        system["content"] = f"{original}\n\n{self.role_instructions.strip()}"
+        self._messages.append(
+            {"role": "user", "content": self.role_instructions.strip()}
+        )
 
     @property
     def transcript(self) -> tuple[HistoricalOwnerExchange, ...]:
