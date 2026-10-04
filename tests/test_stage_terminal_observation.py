@@ -70,3 +70,17 @@ def test_observer_preserves_native_terminal_bytes() -> None:
 
     chunks, _ = observer.read_since("stage-1")
     assert [chunk.data for chunk in chunks] == [native_output]
+
+
+def test_observer_keeps_the_latest_2000_chunks() -> None:
+    observer = StageOutputObserver()
+    observer.begin("stage-1")
+
+    for sequence in range(1, 2_002):
+        observer.publish("stage-1", f"chunk-{sequence}")
+
+    chunks, _ = observer.read_since("stage-1")
+
+    assert len(chunks) == 2_000
+    assert chunks[0].sequence == 2
+    assert chunks[-1].sequence == 2_001

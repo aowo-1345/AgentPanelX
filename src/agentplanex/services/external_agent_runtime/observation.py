@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import Any
 
+STAGE_OUTPUT_CHUNK_CACHE_SIZE = 2_000
+
 
 @dataclass(frozen=True, slots=True)
 class StageOutputChunk:
@@ -22,7 +24,7 @@ class _StageOutputSession:
     chunks: deque[StageOutputChunk] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
-        self.chunks = deque(maxlen=500)
+        self.chunks = deque(maxlen=STAGE_OUTPUT_CHUNK_CACHE_SIZE)
 
 
 class StageOutputObserver:
