@@ -66,9 +66,8 @@ class _OpenAICompatibleResponsesAdapter:
         client = self._client()
         params = cast(ResponseCreateParamsStreaming, self._params(request, stream=True))
         try:
-            stream_client = client.with_options(max_retries=0)
             calls: dict[str, tuple[str, str]] = {}
-            with stream_client.responses.create(**params) as response_stream:
+            with client.responses.create(**params) as response_stream:
                 for event in response_stream:
                     event_type = _event_type(event)
                     if event_type == "response.output_text.delta":
