@@ -17,7 +17,7 @@ from agentplanex.infrastructure.logging import configure_logging
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
 from tests.fixtures import initialize_git_project
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _CACHE_USAGE = re.compile(r"(?:^| )cached_tokens=(\d+)(?: |$)")
 _FIRST_CACHE_CONTEXT = "first-cache-history-padding " * 800
 _SECOND_CACHE_CONTEXT = "second-cache-history-padding " * 800

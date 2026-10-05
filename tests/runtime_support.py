@@ -9,7 +9,6 @@ from agentplanex.project_owner_agent.models.responses import (
     ResponsesRequest,
     ResponsesTransport,
 )
-from agentplanex.project_runtime.composition import _compose_command_graph
 from agentplanex.project_runtime.control import ProjectRuntimeControl
 from agentplanex.project_runtime.executions import ProjectExecutions
 from agentplanex.project_runtime.runtime import ProjectRuntime
@@ -23,6 +22,7 @@ from agentplanex.settings import (
     Settings,
     load_settings,
 )
+from tests.support.runtime import compose_test_graph
 
 
 class _UnusedResponsesTransport(ResponsesTransport):
@@ -56,7 +56,7 @@ def compose_test_runtime(
     stage_executor: StageExecutor | None = None,
     mutation_fence_token: str | None = None,
 ) -> RuntimePair:
-    graph = _compose_command_graph(
+    graph = compose_test_graph(
         project_path=project_path,
         settings=settings,
         approval_mode=approval_mode,
@@ -80,7 +80,7 @@ def compose_test_executions(
     settings = load_settings(DEFAULT_SETTINGS_PATH)
     if runtime_settings is not None:
         settings = settings.model_copy(update={"runtime": runtime_settings})
-    graph = _compose_command_graph(
+    graph = compose_test_graph(
         project_path=project_path,
         settings=settings,
         approval_mode="yolo",

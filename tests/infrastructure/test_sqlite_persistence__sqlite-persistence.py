@@ -1,6 +1,5 @@
 """Observable SQLite persistence behavior."""
 
-import shutil
 import sqlite3
 import subprocess
 from collections.abc import Callable, Iterator
@@ -41,17 +40,12 @@ from agentplanex.services.project_runtime_context.models import (
 
 
 @pytest.fixture
-def project_path(request: pytest.FixtureRequest) -> Iterator[Path]:
-    directory = (
-        Path(__file__).resolve().parent.parent
-        / ".agentplanex"
-        / "tests"
-        / request.node.name
-    )
-    shutil.rmtree(directory, ignore_errors=True)
-    directory.mkdir(parents=True)
+def project_path(tmp_path: Path) -> Iterator[Path]:
+    """Provide an isolated SQLite project below pytest's owned temp root."""
+
+    directory = tmp_path / "sqlite-project"
+    directory.mkdir()
     yield directory
-    shutil.rmtree(directory, ignore_errors=True)
 
 
 def test_state_and_owner_history_can_be_reloaded_independently(
@@ -252,10 +246,13 @@ def test_read_only_connection_rejects_runtime_writes(project_path: Path) -> None
 
 def test_git_project_fixture_initializes_project_database(
     initialize_git_project: Callable[[], Path],
+    tmp_path: Path,
 ) -> None:
     fixture_project = initialize_git_project()
     database = SQLiteDatabase.for_project(fixture_project)
 
+    assert fixture_project.is_relative_to(tmp_path)
+    assert not fixture_project.is_relative_to(Path(__file__).resolve().parents[2])
     assert database.path == fixture_project / ".agentplanex" / "agentplanex.sqlite3"
     assert database.path.is_file()
     with database.connection() as connection:

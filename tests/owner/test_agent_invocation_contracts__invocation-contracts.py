@@ -317,7 +317,11 @@ def test_runtime_uses_packaged_observation_skill_independent_of_target_project(
         / "SKILL.md"
     )
     repository_skill = (
-        Path(__file__).parents[1] / ".codex" / "skills" / "agentplanex-project-observe" / "SKILL.md"
+        Path(__file__).parents[2]
+        / ".codex"
+        / "skills"
+        / "agentplanex-project-observe"
+        / "SKILL.md"
     )
     assert skill_path.read_bytes() == repository_skill.read_bytes()
     assert (skill_path.parent / "references" / "detail.md").read_bytes() == (
@@ -529,8 +533,8 @@ def test_talk_to_agent_reanchors_configured_agents_to_runtime_context(
     assert '"snapshot_id": "snapshot-2"' in resumed_planner.message
     assert '"stage_key": "stage-2"' in resumed_planner.message
     assert reviewer.thread_id is None
-    assert reviewer_again.thread_id is None
-    assert reviewer_again.workspace != reviewer.workspace
+    assert reviewer_again.thread_id == "recorded-thread"
+    assert reviewer_again.workspace == reviewer.workspace
 
 
 def test_hard_gates_record_distinct_fixed_subject_contracts(
