@@ -561,7 +561,7 @@ def test_drive_until_waiting_runs_all_stages_then_delivers_candidate_to_owner(
     ).conversation[-1].content == ("Owner reached a human waiting point.")
 
 
-def test_revise_reuses_candidate_worktree_and_preserves_stage_evidence(
+def test_second_consecutive_candidate_revision_fails_owner_and_blocks_runtime(
     initialize_git_project: Callable[[], Path],
 ) -> None:
     project_path = initialize_git_project()
@@ -635,10 +635,10 @@ def test_revise_reuses_candidate_worktree_and_preserves_stage_evidence(
         for event in control.timeline
     )
 
-    runtime.runtime.drive_until_waiting()
-    second_revision = runtime.control.execute_tool(
+    second_revision = runtime.control.drive_owner_tool(
         {
             "tool": "decide_milestone_candidate",
+            "call_id": "revise-second-candidate",
             "arguments": _candidate_decision_arguments(
                 runtime,
                 decision="revise",
@@ -646,26 +646,25 @@ def test_revise_reuses_candidate_worktree_and_preserves_stage_evidence(
             ),
         }
     )
-    assert second_revision.output["ok"] is True
-    assert runtime.control.drive_delivery() == "candidate_ready"
-    second_after = runtime.runtime.state()
-    assert second_after.current_candidate_commit_sha is not None
-    assert second_after.current_candidate_commit_sha != after.current_candidate_commit_sha
+    assert second_revision.tool_result is not None
+    assert second_revision.tool_result.output["ok"] is True
+    assert second_revision.tool_result.output["decision"] == "revise"
+    assert second_revision.tool_result.output["status"] == "BLOCKED"
+    assert "revision_stage_run_id" not in second_revision.tool_result.output
+    assert runtime.runtime.state().current_candidate_commit_sha is None
     assert len(set(executor.executor_session_stage_run_ids)) == 1
-
-    runtime.runtime.drive_until_waiting()
-    accepted = runtime.control.execute_tool(
-        {
-            "tool": "decide_milestone_candidate",
-            "arguments": _candidate_decision_arguments(
-                runtime,
-                decision="accept",
-                reason="The revised Candidate now includes the requested evidence.",
-            ),
-        }
-    )
-    assert accepted.output["ok"] is True, accepted.output
-    assert accepted.output["completed"] is True
+    assert second_revision.exit is not None
+    assert second_revision.exit.status.value == "RepeatedCandidateRevision"
+    assert second_revision.activation.status.value == "FAILED"
+    control = create_project_control_query(project_path=project_path).get_current()
+    assert sum(
+        event.event_type is ExecutionEventType.CANDIDATE_REVISION_REQUESTED
+        for event in control.timeline
+    ) == 1
+    assert sum(
+        event.event_type is ExecutionEventType.CANDIDATE_REVISION_BLOCKED
+        for event in control.timeline
+    ) == 1
 
 
 def test_failed_revision_restores_original_candidate_for_another_revision(
@@ -708,6 +707,21 @@ def test_failed_revision_restores_original_candidate_for_another_revision(
     worktree = GitRepository(project_path).delivery_worktree_path(before.current_run_id)
     assert GitRepository(worktree).head_sha() == before.current_candidate_commit_sha
     assert control.owner_activation is not None
+    retry = runtime.control.drive_owner_tool(
+        {
+            "tool": "decide_milestone_candidate",
+            "call_id": "revise-after-stage-failure",
+            "arguments": _candidate_decision_arguments(
+                runtime,
+                decision="revise",
+                reason="Retry after the executor failure.",
+            ),
+        }
+    )
+    assert retry.tool_result is not None
+    assert retry.tool_result.output["ok"] is True
+    assert retry.tool_result.output["decision"] == "revise"
+    assert "revision_stage_run_id" in retry.tool_result.output
 
 
 def test_first_run_rejects_git_identity_changed_after_plan_approval(

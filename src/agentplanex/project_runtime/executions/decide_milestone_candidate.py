@@ -113,6 +113,18 @@ class DecideMilestoneCandidateExecution(
                     content=AgentExitStatus.REPEATED_CANDIDATE_REJECTION.value,
                 ),
             )
+        if result.decision == "revise" and result.state.status == "BLOCKED":
+            output["follow_up"] = (
+                "Repeated Candidate revisions are blocked. Inspect the revision chain "
+                "and resolve the underlying issue before retrying the Run."
+            )
+            return ToolExecutionResult(
+                output=output,
+                exit=AgentExit(
+                    status=AgentExitStatus.REPEATED_CANDIDATE_REVISION,
+                    content=AgentExitStatus.REPEATED_CANDIDATE_REVISION.value,
+                ),
+            )
         if not result.completed:
             return ToolExecutionResult(output=output)
         return ToolExecutionResult(

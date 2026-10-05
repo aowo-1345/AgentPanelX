@@ -365,6 +365,61 @@ class DeliveryService:
             self._assert_candidate_target(current, expected, accepted=False)
         else:
             self._assert_candidate_target(current, expected, accepted=False)
+            if self._has_unaccepted_candidate_revision(current.triage_id):
+                with self.context.transaction() as transaction:
+                    latest = transaction.state()
+                    (
+                        latest_snapshot,
+                        latest_milestone,
+                        latest_candidate,
+                        _,
+                    ) = self._candidate_contract(
+                        latest,
+                        expected,
+                        connection=transaction.connection,
+                    )
+                    if (
+                        latest_snapshot.snapshot_id != snapshot.snapshot_id
+                        or latest_milestone.key != milestone.key
+                        or latest_candidate != candidate_commit_sha
+                    ):
+                        raise DeliveryError("Candidate changed while applying its decision")
+                    successor = self._candidate_successor_snapshot(
+                        latest_snapshot,
+                        normalized_reason,
+                        transaction.owner_message_id(),
+                    )
+                    self.snapshots.insert(transaction.connection, successor)
+                    updated = transaction.transition(
+                        reason=RuntimeContextChangeReason.CANDIDATE_REVISION_BLOCKED,
+                        mutate=lambda saved: self._block_candidate_revision(
+                            saved,
+                            candidate_commit_sha,
+                            successor,
+                        ),
+                    )
+                self.event_bus.publish(
+                    ExecutionEvent(
+                        triage_id=updated.triage_id,
+                        event_type=ExecutionEventType.CANDIDATE_REVISION_BLOCKED,
+                        payload={
+                            "run_id": expected.run_id,
+                            "milestone_key": milestone.key,
+                            "candidate_commit_sha": candidate_commit_sha,
+                            "successor_snapshot_id": successor.snapshot_id,
+                            "reason": normalized_reason,
+                        },
+                    )
+                )
+                return CandidateDecision(
+                    state=updated,
+                    identity=expected,
+                    decision="revise",
+                    result_snapshot_id=successor.snapshot_id,
+                    next_milestone_key=milestone.key,
+                    completed=False,
+                    revision_stage_run_id=None,
+                )
             revision = self._driver.queue_candidate_revision(
                 expected=expected,
                 source_stage_run=source_stage_run,
@@ -437,15 +492,10 @@ class DeliveryService:
                     transaction.connection,
                     latest.triage_id,
                 )
-                successor = MilestoneSnapshot(
-                    snapshot_id=uuid4().hex,
-                    triage_id=latest_snapshot.triage_id,
-                    previous_snapshot_id=latest_snapshot.snapshot_id,
-                    plan_commit_sha=latest_snapshot.plan_commit_sha,
-                    milestones=latest_snapshot.milestones,
-                    reason=normalized_reason,
-                    message_id=transaction.owner_message_id(),
-                    created_at=datetime.now(UTC),
+                successor = self._candidate_successor_snapshot(
+                    latest_snapshot,
+                    normalized_reason,
+                    transaction.owner_message_id(),
                 )
                 self.snapshots.insert(transaction.connection, successor)
                 updated = transaction.transition(
@@ -685,6 +735,41 @@ class DeliveryService:
             current_candidate_commit_sha=None,
         )
 
+    @staticmethod
+    def _block_candidate_revision(
+        context: ProjectRuntimeState,
+        candidate_commit_sha: str,
+        successor: MilestoneSnapshot,
+    ) -> ProjectRuntimeState:
+        if context.current_candidate_commit_sha != candidate_commit_sha:
+            raise DeliveryError("Candidate changed while blocking repeated revision")
+        return replace(
+            context,
+            status="BLOCKED",
+            current_snapshot_id=successor.snapshot_id,
+            current_run_id=None,
+            current_milestone_key=None,
+            current_stage_key=None,
+            current_candidate_commit_sha=None,
+        )
+
+    @staticmethod
+    def _candidate_successor_snapshot(
+        snapshot: MilestoneSnapshot,
+        reason: str,
+        message_id: str | None,
+    ) -> MilestoneSnapshot:
+        return MilestoneSnapshot(
+            snapshot_id=uuid4().hex,
+            triage_id=snapshot.triage_id,
+            previous_snapshot_id=snapshot.snapshot_id,
+            plan_commit_sha=snapshot.plan_commit_sha,
+            milestones=snapshot.milestones,
+            reason=reason,
+            message_id=message_id,
+            created_at=datetime.now(UTC),
+        )
+
     def _has_unaccepted_candidate_rejection(
         self,
         connection: sqlite3.Connection,
@@ -695,6 +780,22 @@ class DeliveryService:
                 return False
             if event.event_type is ExecutionEventType.CANDIDATE_REJECTED:
                 return True
+        return False
+
+    def _has_unaccepted_candidate_revision(self, triage_id: str) -> bool:
+        with self.context.database.read_only_connection() as connection:
+            candidate_ready = False
+            for event in reversed(self.events.list_by_triage_id(connection, triage_id)):
+                if event.event_type in {
+                    ExecutionEventType.CANDIDATE_ACCEPTED,
+                    ExecutionEventType.CANDIDATE_REJECTED,
+                }:
+                    return False
+                if event.event_type is ExecutionEventType.CANDIDATE_READY:
+                    candidate_ready = True
+                    continue
+                if event.event_type is ExecutionEventType.CANDIDATE_REVISION_REQUESTED:
+                    return candidate_ready
         return False
 
     def _prepare_milestone_view(

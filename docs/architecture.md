@@ -426,6 +426,11 @@ Owner message checkpoint 的后继 Snapshot。决策结果只返回业务收据�
 `RepeatedCandidateRejection` 失败退出并进入 `BLOCKED`。Milestone View 更新不会重置这项
 连续性；只有 Candidate Accepted 代表取得了新的已接受进展。
 
+若最近一次 `CANDIDATE_ACCEPTED` 或 `CANDIDATE_REJECTED` 之后已存在一次
+`CANDIDATE_REVISION_REQUESTED`，下一次 Revise 不再排队新的 StageRun，而是记录
+`CANDIDATE_REVISION_BLOCKED`，以 `RepeatedCandidateRevision` 失败退出并进入
+`BLOCKED`，避免 Revision 链无限增长。
+
 ## 8. Feature 生命周期
 
 ### Ultra Mode AutoTakeover

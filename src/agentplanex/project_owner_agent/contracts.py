@@ -26,6 +26,7 @@ class AgentExitStatus(StrEnum):
     MANUAL_DRIVE_FAILED = "ManualDriveFailed"
     REPEATED_FORMAT_ERROR = "RepeatedFormatError"
     REPEATED_CANDIDATE_REJECTION = "RepeatedCandidateRejection"
+    REPEATED_CANDIDATE_REVISION = "RepeatedCandidateRevision"
     STEP_LIMIT_EXCEEDED = "StepLimitExceeded"
     UNHANDLED_EXCEPTION = "UnhandledException"
 
