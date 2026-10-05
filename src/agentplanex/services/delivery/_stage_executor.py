@@ -120,7 +120,9 @@ class _StageOperation:
             control_text=(
                 "Activation output contract:\nLeave all Candidate changes uncommitted, write "
                 "the declared non-empty delivery document. After completing the work, "
-                "provide a brief summary."
+                "provide a brief summary. Runtime creates the output commit after this "
+                "activation; do not write a future output or Candidate commit SHA into "
+                "the delivery document."
             ),
             execution_workspace=worktree,
         )
