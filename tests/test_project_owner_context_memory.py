@@ -86,6 +86,7 @@ class _OwnerTransport(ResponsesTransport):
                 "bash",
                 "large-observation",
                 {"command": ("for i in $(seq 1 500); do printf 'observation '; done")},
+                text="do",
             )
         return _text_response("owner-finished")
 
@@ -107,17 +108,29 @@ def _tool_response(
     name: str,
     call_id: str,
     arguments: dict[str, object],
+    *,
+    text: str | None = None,
 ) -> object:
+    output: list[dict[str, object]] = []
+    if text is not None:
+        output.append(
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text}],
+            }
+        )
+    output.append(
+        {
+            "type": "function_call",
+            "name": name,
+            "call_id": call_id,
+            "arguments": json.dumps(arguments),
+        }
+    )
     return {
         "object": "response",
-        "output": [
-            {
-                "type": "function_call",
-                "name": name,
-                "call_id": call_id,
-                "arguments": json.dumps(arguments),
-            }
-        ],
+        "output": output,
     }
 
 
@@ -264,14 +277,20 @@ def test_workspace_conversation_projects_model_tool_as_one_completed_activity(
     conversation = create_project_workspace_query(project_path=project_path).get(
         activation.triage_id
     ).conversation
-    assert [message.role for message in conversation] == ["user", "tool", "assistant"]
-    activity = conversation[1].tool_activity
+    assert [message.role for message in conversation] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    activity = conversation[2].tool_activity
     assert activity is not None
     assert activity.name == "bash"
     assert activity.status == "completed"
     assert "for i in" in activity.input_preview
     assert "observation" in (activity.output_preview or "")
-    assert conversation[2].content == "owner-finished"
+    assert conversation[1].content == "do"
+    assert conversation[3].content == "owner-finished"
 
 
 def test_context_memory_crosses_the_threshold_via_bash_and_survives_restart(

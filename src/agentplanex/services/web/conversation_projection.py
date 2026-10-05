@@ -235,6 +235,33 @@ class ConversationProjection:
 
     def _append_message(self, history: MessageHistory, index: int, message: Message) -> None:
         calls = tool_calls(message)
+        response_text = assistant_response_text(message)
+        if response_text:
+            self._has_reply = True
+            message_id = f"{history.message_id}:{index}"
+            if self._current_activation is not None:
+                response_id = _response_id(message)
+                message_id = (
+                    f"stream:{self._current_activation.activation_id}:{response_id}"
+                    if response_id is not None
+                    else self._stream_message_ids.get(
+                        self._current_activation.activation_id,
+                        message_id,
+                    )
+                )
+            replacement = VisibleMessage(message_id, "assistant", response_text)
+            existing_index = next(
+                (
+                    index
+                    for index, item in enumerate(self._visible)
+                    if item.message_id == message_id
+                ),
+                None,
+            )
+            if existing_index is None:
+                self._visible.append(replacement)
+            else:
+                self._visible[existing_index] = replacement
         for call_id, tool_name, arguments in calls:
             message_id = f"{history.message_id}:{index}:tool:{call_id}"
             if self._current_activation is not None:
@@ -276,33 +303,7 @@ class ConversationProjection:
             else:
                 self._visible[existing_index] = row
                 self._tool_indices[call_id] = existing_index
-        response_text = assistant_response_text(message)
         if response_text:
-            self._has_reply = True
-            message_id = f"{history.message_id}:{index}"
-            if self._current_activation is not None:
-                response_id = _response_id(message)
-                message_id = (
-                    f"stream:{self._current_activation.activation_id}:{response_id}"
-                    if response_id is not None
-                    else self._stream_message_ids.get(
-                        self._current_activation.activation_id,
-                        message_id,
-                    )
-                )
-            replacement = VisibleMessage(message_id, "assistant", response_text)
-            existing_index = next(
-                (
-                    index
-                    for index, item in enumerate(self._visible)
-                    if item.message_id == message_id
-                ),
-                None,
-            )
-            if existing_index is None:
-                self._visible.append(replacement)
-            else:
-                self._visible[existing_index] = replacement
             return
         if calls:
             return
