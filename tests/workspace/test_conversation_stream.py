@@ -13,7 +13,7 @@ import agentplanex.web.app as web_app
 from agentplanex.domains.conversation_event import ConversationResponseUpdated
 from agentplanex.services.web.conversation_hub import ConversationHub, ConversationSubscriber
 from agentplanex.settings import DEFAULT_SETTINGS_PATH, load_settings
-from tests.test_conversation_hub import _UnusedResponsesTransport
+from tests.support import UnusedResponsesTransport
 
 
 def test_stream_snapshot_patch_reconnect_and_disconnect_cleanup(
@@ -22,7 +22,7 @@ def test_stream_snapshot_patch_reconnect_and_disconnect_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        bootstrap, "create_responses_transport", lambda _: _UnusedResponsesTransport()
+        bootstrap, "create_responses_transport", lambda _: UnusedResponsesTransport()
     )
     settings = load_settings(DEFAULT_SETTINGS_PATH)
     settings = settings.model_copy(

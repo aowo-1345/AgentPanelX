@@ -181,6 +181,8 @@ def _compose_command_graph(
     approval_mode: ApprovalMode,
     responses_transport: ResponsesTransport,
     stage_executor: StageExecutor | None,
+    git: GitRepository | None = None,
+    database: SQLiteDatabase | None = None,
     stage_output_observer: StageOutputObserver | None = None,
     conversation_hub: ConversationHub | None = None,
 ) -> _ProjectCommandGraph:
@@ -188,9 +190,16 @@ def _compose_command_graph(
     project_path = project_path.resolve()
     if not project_path.is_dir():
         raise ValueError(f"Project path is not a directory: {project_path}")
-    git = GitRepository(project_path)
+    if git is None:
+        git = GitRepository(project_path)
+    if git.project_path.resolve() != project_path:
+        raise ValueError("Git resource must belong to the composed project")
+    if database is None:
+        database = SQLiteDatabase.for_project(project_path)
+    expected_database_path = SQLiteDatabase.for_project(project_path).path.resolve()
+    if database.path.resolve() != expected_database_path:
+        raise ValueError("SQLite resource must belong to the composed project")
     git.ensure_runtime_excluded()
-    database = SQLiteDatabase.for_project(project_path)
     initialize_schema(database)
     takeover_runs = SQLiteAutoTakeoverRepository()
     runtime_settings = settings.runtime
